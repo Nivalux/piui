@@ -1,0 +1,283 @@
+const std = @import("std");
+const Io = std.Io;
+
+pub const max_diff_bytes = 2 << 20;
+pub const max_status_files = 500;
+
+pub const Base = union(enum) {
+    working,
+    staged,
+    branch: []const u8,
+    commit: []const u8,
+
+    pub fn parse(input: ?[]const u8) Base {
+        const value = input orelse return .working;
+        if (value.len == 0 or std.mem.eql(u8, value, "working")) return .working;
+        if (std.mem.eql(u8, value, "staged")) return .staged;
+        if (std.mem.startsWith(u8, value, "branch:")) return .{ .branch = value["branch:".len..] };
+        if (std.mem.startsWith(u8, value, "commit:")) return .{ .commit = value["commit:".len..] };
+        return .working;
+    }
+
+    pub fn text(self: Base) []const u8 {
+        return switch (self) {
+            .working => "working",
+            .staged => "staged",
+            .branch => |name| name,
+            .commit => |sha| sha,
+        };
+    }
+
+    pub fn label(self: Base) []const u8 {
+        return switch (self) {
+            .working => "Working changes",
+            .staged => "Staged changes",
+            .branch => |name| name,
+            .commit => |sha| short(sha),
+        };
+    }
+
+    pub fn refName(self: Base) ?[]const u8 {
+        return switch (self) {
+            .working => null,
+            .staged => "HEAD",
+            .branch => |name| name,
+            .commit => |sha| sha,
+        };
+    }
+};
+
+pub const FileStatus = struct {
+    path: []const u8,
+    display: []const u8,
+    status: []const u8,
+    staged: bool,
+    untracked: bool,
+};
+
+pub const Status = struct {
+    base: []const u8,
+    label: []const u8,
+    branch: []const u8 = "",
+    ahead: u32 = 0,
+    behind: u32 = 0,
+    files: []const FileStatus = &.{},
+    truncated: bool = false,
+    errorMessage: ?[]const u8 = null,
+};
+
+pub const Error = error{ GitFailed, NotRepository, TooLarge, OutOfMemory };
+
+/// Said in one place, because the browser shows it.
+pub const not_a_repository = "not a git repository";
+
+/// Git's own letters. A status is handed over as a slice of this string so a
+/// `FileStatus` never owns memory it has to free.
+const codes = "MADRCTU?!";
+
+fn codeText(code: u8) []const u8 {
+    if (std.mem.indexOfScalar(u8, codes, code)) |at| return codes[at .. at + 1];
+    return "?";
+}
+
+pub fn isRepository(allocator: std.mem.Allocator, io: Io, cwd: []const u8) bool {
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    _ = git(arena.allocator(), io, cwd, &.{ "rev-parse", "--is-inside-work-tree" }, .limited(1024)) catch return false;
+    return true;
+}
+
+pub fn validRef(allocator: std.mem.Allocator, io: Io, cwd: []const u8, name: []const u8) bool {
+    if (name.len == 0) return false;
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    _ = git(arena.allocator(), io, cwd, &.{ "rev-parse", "--verify", "--quiet", name }, .limited(1024)) catch return false;
+    return true;
+}
+
+pub const Collector = struct {
+    allocator: std.mem.Allocator,
+    files: std.ArrayList(FileStatus) = .empty,
+    truncated: bool = false,
+
+    fn add(self: *Collector, path: []const u8, display: []const u8, code: u8, staged: bool, untracked: bool) void {
+        if (self.files.items.len >= max_status_files) {
+            self.truncated = true;
+            return;
+        }
+        const a = self.allocator;
+        self.files.append(a, .{
+            .path = a.dupe(u8, path) catch return,
+            .display = a.dupe(u8, display) catch return,
+            .status = codeText(code),
+            .staged = staged,
+            .untracked = untracked,
+        }) catch {};
+    }
+};
+
+/// Everything returned lives on `allocator`; the caller owns it as a block.
+pub fn status(allocator: std.mem.Allocator, io: Io, cwd: []const u8, base: Base) Status {
+    // Git's own complaint about a missing repository is translated and, outside
+    // of a repository, followed by the whole `--no-index` usage page, so neither
+    // the exit code nor the text can be relied on to say what happened.
+    if (!isRepository(allocator, io, cwd)) {
+        return .{ .base = base.text(), .label = base.label(), .errorMessage = not_a_repository };
+    }
+    const a = allocator;
+    var result = Status{ .base = base.text(), .label = base.label() };
+
+    if (git(a, io, cwd, &.{ "branch", "--show-current" }, .limited(4096))) |branch| {
+        result.branch = trim(branch);
+    } else |_| {}
+
+    if (base == .branch) {
+        const spec = std.fmt.allocPrint(a, "{s}...HEAD", .{base.refName().?}) catch return result;
+        if (git(a, io, cwd, &.{ "rev-list", "--left-right", "--count", spec }, .limited(4096))) |counts| {
+            var parts = std.mem.tokenizeAny(u8, trim(counts), " \t");
+            if (parts.next()) |behind| result.behind = parseCount(behind);
+            if (parts.next()) |ahead| result.ahead = parseCount(ahead);
+        } else |_| {}
+    }
+
+    const argv: []const []const u8 = switch (base) {
+        .working => &.{ "status", "--porcelain=v1", "-z", "--untracked-files=all" },
+        .staged => &.{ "diff", "--name-status", "-z", "--cached", "HEAD" },
+        else => &.{ "diff", "--name-status", "-z", base.refName().? },
+    };
+
+    var collector = Collector{ .allocator = a };
+    if (git(a, io, cwd, argv, .limited(8 << 20))) |output| {
+        switch (base) {
+            .working => parsePorcelain(&collector, output),
+            else => parseNameStatus(&collector, output),
+        }
+    } else |err| {
+        result.errorMessage = @errorName(err);
+        return result;
+    }
+
+    result.files = collector.files.items;
+    result.truncated = collector.truncated;
+    return result;
+}
+
+fn parsePorcelain(collector: *Collector, output: []const u8) void {
+    var fields = std.mem.splitScalar(u8, output, 0);
+    while (fields.next()) |field| {
+        if (field.len < 4) continue;
+        const index = field[0];
+        const worktree = field[1];
+        const path = field[3..];
+
+        var display = path;
+        if (index == 'R' or index == 'C') {
+            if (fields.next()) |origin| display = origin;
+        }
+
+        const untracked = index == '?' and worktree == '?';
+        const code = if (worktree != ' ') worktree else index;
+        const staged = index != ' ' and index != '?';
+        collector.add(path, display, code, staged, untracked);
+    }
+}
+
+fn parseNameStatus(collector: *Collector, output: []const u8) void {
+    var fields = std.mem.splitScalar(u8, output, 0);
+    while (fields.next()) |field| {
+        if (field.len == 0) continue;
+        const code = field[0];
+        var path = field;
+        if (field.len > 1 and field[1] == '\t') path = field[2..];
+
+        var display = path;
+        if (code == 'R' or code == 'C') {
+            if (fields.next()) |origin| display = origin;
+        }
+        collector.add(path, display, code, true, false);
+    }
+}
+
+/// `path` null means the whole worktree. A file that git does not track yet is
+/// diffed against /dev/null, so the browser renders one kind of patch text.
+pub fn diff(allocator: std.mem.Allocator, io: Io, cwd: []const u8, base: Base, path: ?[]const u8) Error![]u8 {
+    const a = allocator;
+    if (!isRepository(a, io, cwd)) return error.NotRepository;
+    var argv: std.ArrayList([]const u8) = .empty;
+    try argv.append(a, "diff");
+    try argv.append(a, "--no-ext-diff");
+    try argv.append(a, "--no-color");
+    switch (base) {
+        .working => {},
+        .staged => try argv.append(a, "--cached"),
+        else => try argv.append(a, base.refName().?),
+    }
+
+    const untracked_new_file = base == .working and path != null and !tracked(a, io, cwd, path.?);
+    if (untracked_new_file) {
+        argv.clearRetainingCapacity();
+        try argv.append(a, "diff");
+        try argv.append(a, "--no-ext-diff");
+        try argv.append(a, "--no-color");
+        try argv.append(a, "--no-index");
+        try argv.append(a, "/dev/null");
+        try argv.append(a, path.?);
+    } else if (path) |target| {
+        try argv.append(a, "--");
+        try argv.append(a, target);
+    }
+
+    return gitOutput(a, io, cwd, argv.items, .limited(max_diff_bytes));
+}
+
+fn tracked(allocator: std.mem.Allocator, io: Io, cwd: []const u8, path: []const u8) bool {
+    const argv = [_][]const u8{ "ls-files", "--error-unmatch", "--", path };
+    _ = git(allocator, io, cwd, &argv, .limited(1024)) catch return false;
+    return true;
+}
+
+fn git(allocator: std.mem.Allocator, io: Io, cwd: []const u8, argv: []const []const u8, limit: Io.Limit) ![]u8 {
+    return invoke(allocator, io, cwd, argv, limit, false);
+}
+
+fn gitOutput(allocator: std.mem.Allocator, io: Io, cwd: []const u8, argv: []const []const u8, limit: Io.Limit) Error![]u8 {
+    return invoke(allocator, io, cwd, argv, limit, true);
+}
+
+fn invoke(allocator: std.mem.Allocator, io: Io, cwd: []const u8, argv: []const []const u8, limit: Io.Limit, allow_diff_exit: bool) Error![]u8 {
+    var full: std.ArrayList([]const u8) = .empty;
+    try full.append(allocator, "git");
+    for (argv) |item| try full.append(allocator, item);
+
+    const result = std.process.run(allocator, io, .{
+        .argv = full.items,
+        .cwd = .{ .path = cwd },
+        .stdout_limit = limit,
+        // Enough for a real complaint, short enough to stop a chatty hook.
+        .stderr_limit = .limited(64 << 10),
+    }) catch |err| switch (err) {
+        error.StreamTooLong => return error.TooLarge,
+        else => return error.GitFailed,
+    };
+
+    if (!result.term.success()) {
+        const exited = result.term == .exited and result.term.exited == 1;
+        if (!(allow_diff_exit and exited)) {
+            allocator.free(result.stdout);
+            return error.GitFailed;
+        }
+    }
+    return result.stdout;
+}
+
+fn trim(text: []const u8) []const u8 {
+    return std.mem.trim(u8, text, " \r\n\t");
+}
+
+fn short(sha: []const u8) []const u8 {
+    return if (sha.len > 8) sha[0..8] else sha;
+}
+
+fn parseCount(text: []const u8) u32 {
+    return std.fmt.parseInt(u32, text, 10) catch 0;
+}

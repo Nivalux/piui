@@ -1,0 +1,1547 @@
+:root,
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --spin-period: 0.9s;
+  --bg: #14151a;
+  --bg-soft: #1b1d24;
+  --bg-raise: #22252e;
+  --line: #2c303b;
+  --fg: #dfe2ea;
+  --fg-muted: #b8bfcd;
+  --fg-soft: #9aa1b1;
+  --fg-dim: #757c8c;
+  --ok: #3fbf7f;
+  --warn: #d9a441;
+  --accent: #e06c4a;
+  --add: #3fbf7f;
+  --del: #e0605f;
+  --add-text: #86e3b4;
+  --del-text: #ff9d97;
+  --add-bg: rgba(63, 191, 127, 0.13);
+  --del-bg: rgba(224, 96, 95, 0.13);
+  --add-mark: rgba(63, 191, 127, 0.28);
+  --del-mark: rgba(224, 96, 95, 0.26);
+  --scrim: rgba(0, 0, 0, 0.45);
+  --shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+  --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  --sans: system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+  --bg: #f6f6f4;
+  --bg-soft: #ffffff;
+  --bg-raise: #ececeb;
+  --line: #dcdcd7;
+  --fg: #23252b;
+  --fg-muted: #464b57;
+  --fg-soft: #6c7180;
+  --fg-dim: #8b909c;
+  --ok: #177d4b;
+  --warn: #96660f;
+  --accent: #c1502c;
+  --add: #177d4b;
+  --del: #c2362f;
+  --add-text: #12683e;
+  --del-text: #a5271f;
+  --add-bg: rgba(23, 125, 75, 0.11);
+  --del-bg: rgba(194, 54, 47, 0.1);
+  --add-mark: rgba(23, 125, 75, 0.22);
+  --del-mark: rgba(194, 54, 47, 0.2);
+  --scrim: rgba(40, 40, 45, 0.32);
+  --shadow: 0 10px 30px rgba(40, 40, 45, 0.18);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+/* The page hides the gate, the shell, the settings modal and the attachment
+   strip with the `hidden` attribute, and several of them carry a `display` rule
+   of their own. Without this, `#settings-modal` would sit over the whole page
+   as an invisible click blocker and the token gate would flash on every reload. */
+[hidden] {
+  display: none !important;
+}
+
+html,
+body {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--bg);
+  color: var(--fg);
+  font: 14px/1.55 var(--sans);
+}
+
+code,
+pre,
+.mono {
+  font-family: var(--mono);
+}
+
+.muted {
+  color: var(--fg-soft);
+}
+
+.error-text {
+  color: var(--del);
+}
+
+.spacer {
+  flex: 1;
+}
+
+/* ------------------------------------------------------------------ gate */
+
+.gate {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: var(--bg);
+  z-index: 30;
+}
+
+.gate-card {
+  width: min(380px, 90vw);
+}
+
+.gate-card input {
+  width: 100%;
+  margin: 10px 0;
+  padding: 9px 11px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--mono);
+}
+
+/* ----------------------------------------------------------------- shell */
+
+.shell {
+  display: grid;
+  grid-template-columns: 260px 1fr;
+  height: 100vh;
+}
+
+.sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  border-right: 1px solid var(--line);
+  background: var(--bg-soft);
+  min-height: 0;
+}
+
+.side-head {
+  display: flex;
+  gap: 6px;
+}
+
+.side-head .button {
+  flex: 1;
+}
+
+.filter {
+  padding: 6px 9px;
+  border-radius: 7px;
+  border: 1px solid var(--line);
+  background: var(--bg);
+  color: var(--fg);
+}
+
+.tab-list {
+  overflow: auto;
+  min-height: 0;
+  flex: 1;
+}
+
+.group-label {
+  margin: 12px 4px 4px;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--fg-soft);
+}
+
+.side-sub {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 4px 3px;
+  border-top: 1px solid var(--line);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--fg-soft);
+}
+
+.project-filter {
+  margin-left: auto;
+  max-width: 62%;
+  padding: 2px 6px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--fg-soft);
+  font-size: 11px;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+/* A group is a header you fold, so it carries its own count. */
+.group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 5px 6px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--fg-soft);
+  font: 11px var(--mono);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.group:hover {
+  color: var(--fg);
+}
+
+.group .caret {
+  margin-left: auto;
+}
+
+.tab {
+  display: grid;
+  gap: 2px;
+  width: 100%;
+  padding: 7px 9px;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.tab:hover {
+  background: var(--bg-raise);
+}
+
+.tab.active {
+  border-color: var(--line);
+  background: var(--bg-raise);
+}
+
+.tab-top {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font: 11px var(--mono);
+  color: var(--fg-soft);
+}
+
+.tab-top .badge {
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: color-mix(in oklab, var(--accent) 22%, transparent);
+  color: var(--accent);
+  font-size: 10px;
+}
+
+.tab-top .tab-proj {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tab-status {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+}
+
+.tab-status .live {
+  color: var(--accent);
+}
+
+.tab-status .idle {
+  opacity: 0.7;
+}
+
+.tab-status .done {
+  color: var(--accent);
+}
+
+/* A run that finished while the reader was elsewhere asks to be looked at. */
+.tab.unread {
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+}
+
+.tab.unread .tab-title {
+  color: var(--fg);
+}
+
+.tab.unread .badge::after {
+  content: "";
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-left: 5px;
+  border-radius: 50%;
+  background: var(--accent);
+  vertical-align: middle;
+}
+
+.tab-title {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tab-foot {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  font: 11px var(--mono);
+  color: var(--fg-soft);
+}
+
+.tab-foot .path {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tab-foot .model {
+  flex: 0 1 auto;
+  min-width: 0;
+  margin-left: auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  opacity: 0.75;
+}
+
+.dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--line);
+}
+
+.dot.running {
+  background: var(--accent);
+  animation: pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  50% {
+    opacity: 0.3;
+  }
+}
+
+.side-foot {
+  border-top: 1px solid var(--line);
+  padding-top: 8px;
+}
+
+/* ------------------------------------------------------------------ main */
+
+.main {
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.main > .top {
+  grid-row: 1;
+}
+
+.main > .diff {
+  grid-row: 2;
+}
+
+.main > .transcript {
+  grid-row: 3;
+}
+
+.main > .composer {
+  grid-row: 4;
+}
+
+.top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--line);
+}
+
+.top .title {
+  font-weight: 600;
+}
+
+.top .cwd {
+  font-family: var(--mono);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.button {
+  padding: 6px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: var(--bg-raise);
+  color: inherit;
+  cursor: pointer;
+}
+
+.button:hover {
+  border-color: var(--fg-soft);
+}
+
+.button.primary {
+  background: var(--accent);
+  border-color: transparent;
+  color: #fff;
+}
+
+.button.ghost {
+  background: transparent;
+}
+
+.button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.chip {
+  padding: 3px 9px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--fg-soft);
+  font: 12px var(--mono);
+  cursor: pointer;
+}
+
+.chip:hover {
+  color: var(--fg);
+}
+
+/* ------------------------------------------------------------ transcript */
+
+.transcript {
+  overflow: auto;
+  padding: 16px 18px 30px;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.block {
+  max-width: 900px;
+}
+
+.block .who {
+  display: block;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--fg-soft);
+  margin-bottom: 2px;
+}
+
+.block .body {
+  display: block;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* --------------------------------------------------------------------------
+   Markdown
+
+   Answers and thoughts are prose and get headings, lists and code blocks. A
+   tool body is a log and stays verbatim, so these rules live on `.md` only.
+   -------------------------------------------------------------------------- */
+
+.md {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.md > :first-child {
+  margin-top: 0;
+}
+
+.md > :last-child {
+  margin-bottom: 0;
+}
+
+.md p {
+  margin: 0 0 9px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+}
+
+/* How full the context window is. The arc is the share; the number says it
+   aloud for anyone who would rather read than judge an angle. */
+.context {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font: 11px/1 var(--mono);
+  color: var(--fg-dim);
+}
+
+.context .ring {
+  display: block;
+  width: 15px;
+  height: 15px;
+}
+
+.context .track {
+  fill: none;
+  stroke: var(--line);
+  stroke-width: 3;
+}
+
+.context .used {
+  fill: none;
+  stroke: var(--fg-dim);
+  stroke-width: 3;
+  stroke-linecap: round;
+  stroke-dasharray: 47.12;
+  stroke-dashoffset: calc(47.12 * (1 - var(--used, 0)));
+  transform: rotate(-90deg);
+  transform-origin: 50% 50%;
+  transition: stroke-dashoffset 0.3s ease;
+}
+
+.context[data-tone="warm"] .used {
+  stroke: var(--warn);
+}
+
+.context[data-tone="critical"] .used {
+  stroke: var(--del);
+}
+
+.context[data-tone="warm"],
+.context[data-tone="critical"] {
+  color: var(--fg-soft);
+}
+
+/* A task list keeps its box, drawn rather than sent as characters. */
+.md li.task {
+  list-style: none;
+  margin-left: -18px;
+}
+
+.md li.task::before {
+  content: "\2610";
+  margin-right: 7px;
+  color: var(--fg-dim);
+}
+
+.md li.task[data-done="1"]::before {
+  content: "\2611";
+  color: var(--ok);
+}
+
+.md h1,
+.md h2,
+.md h3,
+.md h4,
+.md h5,
+.md h6 {
+  margin: 16px 0 6px;
+  line-height: 1.3;
+  font-weight: 650;
+}
+
+.md h1 {
+  font-size: 17px;
+}
+
+.md h2 {
+  font-size: 16px;
+}
+
+.md h3 {
+  font-size: 15px;
+}
+
+.md h4,
+.md h5,
+.md h6 {
+  font-size: 13px;
+  color: var(--fg-muted);
+}
+
+.md ul,
+.md ol {
+  margin: 0 0 9px;
+  padding-left: 22px;
+}
+
+.md li {
+  margin: 3px 0;
+  line-height: 1.5;
+}
+
+.md ul ul,
+.md ol ol,
+.md ul ol,
+.md ol ul {
+  margin-bottom: 0;
+}
+
+.md code {
+  font: 12px/1.45 var(--mono);
+  background: var(--bg-raise);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  padding: 0 4px;
+}
+
+.md pre.md-code {
+  margin: 0 0 10px;
+  padding: 10px 12px;
+  background: var(--bg-soft);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  overflow-x: auto;
+}
+
+.md pre.md-code code {
+  background: none;
+  border: 0;
+  padding: 0;
+  white-space: pre;
+}
+
+.md blockquote {
+  margin: 0 0 9px;
+  padding-left: 11px;
+  border-left: 2px solid var(--line);
+  color: var(--fg-soft);
+}
+
+.md hr {
+  border: 0;
+  border-top: 1px solid var(--line);
+  margin: 14px 0;
+}
+
+.md a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.md a:hover {
+  text-decoration: underline;
+}
+
+.md table {
+  border-collapse: collapse;
+  margin: 0 0 10px;
+  font-size: 13px;
+}
+
+.md th,
+.md td {
+  border: 1px solid var(--line);
+  padding: 4px 9px;
+  text-align: left;
+}
+
+.md th {
+  background: var(--bg-raise);
+  font-weight: 600;
+}
+
+/* Arguments the summary line had no room for. */
+.fold-body .args {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin: 0 0 9px;
+  padding: 8px 10px;
+  background: var(--bg-soft);
+  border: 1px solid var(--line);
+  border-radius: 9px;
+}
+
+.fold-body .arg {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  font: 11px/1.5 var(--mono);
+}
+
+.fold-body .arg .k {
+  flex: none;
+  width: 92px;
+  color: var(--fg-dim);
+}
+
+.fold-body .arg .v {
+  color: var(--fg-muted);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* A command that did not fit the summary line keeps its shape here. */
+.fold-body .arg.full {
+  align-items: flex-start;
+}
+
+.fold-body .arg pre.v {
+  margin: 0;
+  color: var(--fg);
+  font: inherit;
+}
+
+.block.user .body {
+  border-left: 2px solid var(--line);
+  padding: 1px 0 1px 11px;
+}
+
+.block .foot {
+  margin-top: 4px;
+  font: 11px var(--mono);
+  color: var(--fg-soft);
+  display: flex;
+  gap: 8px;
+}
+
+.thumb {
+  max-height: 120px;
+  max-width: 200px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  margin-top: 6px;
+  display: inline-block;
+  cursor: zoom-in;
+}
+
+/* A closed tool or thought is one quiet line of the chat, not a box. Only what
+   the reader opens gets a surface, so detail is where the attention goes. */
+.block details {
+  border: 0;
+  background: transparent;
+  padding: 0;
+}
+
+.block details > summary {
+  cursor: pointer;
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  font: 12px var(--mono);
+  color: var(--fg-soft);
+  padding: 3px 8px;
+  margin: 0 -8px;
+  border-radius: 7px;
+  list-style: none;
+}
+
+.block details > summary::-webkit-details-marker {
+  display: none;
+}
+
+/* The marker is gone, so the caret that says "there is more here" is ours. */
+.block details > summary::before {
+  content: "›";
+  color: var(--fg-soft);
+  transform: translateY(-1px);
+  transition: transform 0.12s ease;
+}
+
+.block details[open] > summary::before {
+  transform: rotate(90deg);
+}
+
+.block details > summary:hover {
+  background: var(--bg-raise);
+}
+
+.block details[open] > summary {
+  color: var(--fg);
+}
+
+.block details[open] > summary .title {
+  white-space: normal;
+  overflow: visible;
+}
+
+.fold-body {
+  margin: 5px 0 9px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--bg-soft);
+}
+
+.fold-body > .pre,
+.fold-body .tool-diff {
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  border: 0;
+}
+
+.fold-body .chip-meta {
+  background: var(--bg);
+}
+
+.block details summary .name {
+  color: var(--fg-muted);
+  font-weight: 600;
+}
+
+.block details summary .title {
+  color: var(--fg-soft);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 70ch;
+}
+
+/* The name is what the machine called, the title is what it was pointed at.
+   A dot between them keeps the two from reading as one phrase. */
+.block details summary .title:not(:empty)::before {
+  content: "·";
+  margin-right: 7px;
+  opacity: 0.6;
+}
+
+.block details summary .hint {
+  color: var(--fg-soft);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+/* The one place a closed tool row may carry colour: what the call did. */
+.block details summary .hint .add {
+  color: var(--add-text);
+}
+
+.block details summary .hint .del {
+  color: var(--del-text);
+}
+
+.block details summary .flag {
+  color: var(--del);
+}
+
+.block details summary .state {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--fg-soft);
+  white-space: nowrap;
+}
+
+.block details.error > summary .state {
+  color: var(--del);
+}
+
+.block details.error > summary::before {
+  color: var(--del);
+}
+
+.block details > summary .spinner {
+  align-self: center;
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 6px 0 2px;
+}
+
+.chip-meta {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+  padding: 2px 8px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--bg-soft);
+  font: 11px var(--mono);
+}
+
+.chip-meta .key {
+  color: var(--fg-soft);
+}
+
+.chip-meta .value {
+  overflow-wrap: anywhere;
+}
+
+.tool-diff {
+  max-height: 320px;
+  margin-top: 6px;
+  padding: 2px 0;
+  border-radius: 8px;
+  background: var(--bg);
+  overflow: auto;
+  font-size: 12px;
+}
+
+.hunk-sep {
+  padding: 1px 10px;
+  color: var(--fg-soft);
+  background: var(--bg-soft);
+  font: 11px var(--mono);
+}
+
+.thinking-body {
+  color: var(--fg-soft);
+  font: 13px/1.6 var(--sans);
+}
+
+.block details.error {
+  border-color: var(--del);
+}
+
+.pre {
+  margin: 4px 0 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--bg);
+  overflow: auto;
+  font-size: 12px;
+  max-height: 320px;
+}
+
+.pre.wrap {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.block.status .body,
+.block.command .body {
+  color: var(--fg-soft);
+}
+
+/* ------------------------------------------------------------------ diff */
+
+.diff {
+  border-bottom: 1px solid var(--line);
+  max-height: 42vh;
+  overflow: auto;
+  background: var(--bg-soft);
+}
+
+.diff-head {
+  position: sticky;
+  top: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 8px 12px;
+  background: var(--bg-soft);
+  border-bottom: 1px solid var(--line);
+  font: 12px var(--mono);
+  color: var(--fg-soft);
+}
+
+.diff-body {
+  font: 12px/1.45 var(--mono);
+}
+
+.diff-empty {
+  padding: 10px 12px;
+  color: var(--fg-soft);
+  font: 12px var(--mono);
+}
+
+.diff-file {
+  padding-bottom: 10px;
+}
+
+.diff-name {
+  display: block;
+  padding: 6px 12px;
+  color: var(--fg);
+  background: var(--bg-raise);
+}
+
+.hunk-head {
+  display: block;
+  padding: 3px 12px;
+  color: var(--fg-soft);
+}
+
+.row {
+  display: grid;
+  grid-template-columns: 46px 46px 1fr;
+  gap: 8px;
+  padding: 0 12px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.row .no {
+  text-align: right;
+  color: var(--fg-soft);
+  opacity: 0.6;
+  user-select: none;
+}
+
+.row.add {
+  background: var(--add-bg);
+  color: var(--add-text);
+  box-shadow: inset 2px 0 0 var(--add-mark);
+}
+
+.row.del {
+  background: var(--del-bg);
+  color: var(--del-text);
+  box-shadow: inset 2px 0 0 var(--del-mark);
+}
+
+.row.add .no,
+.row.del .no {
+  color: inherit;
+  opacity: 0.55;
+}
+
+.row.meta {
+  color: var(--fg-soft);
+  font-style: italic;
+}
+
+.plus {
+  color: var(--add-text);
+}
+
+.minus {
+  color: var(--del-text);
+}
+
+/* -------------------------------------------------------------- composer */
+
+.composer {
+  border-top: 1px solid var(--line);
+  padding: 8px 14px 12px;
+  position: relative;
+  background: var(--bg);
+}
+
+.composer textarea {
+  width: 100%;
+  resize: none;
+  padding: 9px 11px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: var(--bg-soft);
+  color: var(--fg);
+  font: 14px/1.5 var(--sans);
+}
+
+.composer textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.queue {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  margin-bottom: 6px;
+  font-size: 12px;
+}
+
+.queued {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  width: 100%;
+  padding: 3px 9px;
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+  background: var(--bg-soft);
+  color: var(--fg-soft);
+}
+
+.queued .tag {
+  color: var(--accent);
+  font: 11px var(--mono);
+}
+
+.queued .text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.queue .button {
+  padding: 2px 9px;
+  font-size: 11px;
+}
+
+.composer-foot {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 6px;
+  font-size: 12px;
+}
+
+.composer-foot .button {
+  margin-left: auto;
+}
+
+.picker {
+  padding: 3px 6px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--bg-soft);
+  color: var(--fg-soft);
+  font: 12px var(--mono);
+  cursor: pointer;
+  max-width: 240px;
+}
+
+.picker:hover:not(:disabled) {
+  color: var(--fg);
+  border-color: var(--fg-soft);
+}
+
+.picker:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.composer-foot #abort + .button {
+  margin-left: 8px;
+}
+
+.rate {
+  font: 12px var(--mono);
+  color: var(--fg-soft);
+}
+
+.rate.live {
+  color: var(--accent);
+}
+
+.busy {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--accent);
+  font: 12px var(--mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.spinner {
+  width: 11px;
+  height: 11px;
+  border: 2px solid color-mix(in oklab, var(--accent) 25%, transparent);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: piui-spin var(--spin-period) linear infinite;
+}
+
+.pre.live::after {
+  content: "▍";
+  color: var(--accent);
+  animation: piui-blink 1s steps(2, start) infinite;
+}
+
+@keyframes piui-blink {
+  to {
+    visibility: hidden;
+  }
+}
+
+@keyframes piui-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --spin-period: 3.6s;
+  }
+}
+
+.attachments {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.attachment {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 6px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  font-size: 12px;
+}
+
+.attachment img {
+  height: 28px;
+  border-radius: 4px;
+}
+
+.palette {
+  position: absolute;
+  left: 14px;
+  right: 14px;
+  bottom: calc(100% - 4px);
+  max-height: 260px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--bg-raise);
+  box-shadow: var(--shadow);
+  z-index: 20;
+}
+
+.palette-item {
+  display: flex;
+  gap: 10px;
+  padding: 6px 12px;
+  cursor: pointer;
+  font: 13px var(--mono);
+}
+
+.palette-item.active {
+  background: var(--bg);
+}
+
+.palette-item span:nth-child(2),
+.palette-item span:nth-child(3) {
+  color: var(--fg-soft);
+  font-family: var(--sans);
+}
+
+/* ------------------------------------------------------------ overlays */
+
+.modal {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: var(--scrim);
+  z-index: 25;
+}
+
+.card {
+  width: min(420px, 92vw);
+  padding: 16px 18px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--bg-soft);
+}
+
+.card-title {
+  margin: 0 0 10px;
+  font-size: 16px;
+}
+
+.setting {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 0;
+  cursor: pointer;
+}
+
+.row-buttons {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+/* The folder picker: a path to type and the folders it completes. */
+.dir-field {
+  width: 100%;
+  padding: 7px 10px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--bg);
+  color: var(--fg);
+  font: 12px/1.4 var(--mono);
+}
+
+.dir-field:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.dir-hint {
+  margin: 8px 0 6px;
+  color: var(--fg-dim);
+  font: 11px/1.4 var(--mono);
+}
+
+.dir-list {
+  max-height: 236px;
+  overflow-y: auto;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--bg);
+}
+
+.dir-row {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  padding: 5px 10px;
+  border-bottom: 1px solid var(--line);
+  font: 12px/1.4 var(--mono);
+  cursor: pointer;
+}
+
+.dir-row:last-child {
+  border-bottom: none;
+}
+
+.dir-row:hover {
+  background: var(--bg-soft);
+}
+
+.dir-row.on {
+  background: var(--bg-raise);
+}
+
+.dir-glyph {
+  color: var(--fg-dim);
+}
+
+.dir-row b {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.dir-empty {
+  padding: 9px 10px;
+  color: var(--fg-dim);
+  font: 11px var(--mono);
+}
+
+.toast {
+  position: fixed;
+  left: 50%;
+  bottom: 22px;
+  transform: translateX(-50%);
+  padding: 8px 14px;
+  border-radius: 999px;
+  background: var(--bg-raise);
+  border: 1px solid var(--line);
+  z-index: 40;
+}
+
+:root[data-compact="1"] .transcript {
+  gap: 7px;
+}
+
+:root[data-compact="1"] .block .body {
+  line-height: 1.4;
+}
+
+.empty {
+  padding: 12px;
+  color: var(--fg-soft);
+}
+
+/* An empty transcript has to explain itself, or it reads as a broken page. */
+.empty-chat {
+  margin: auto;
+  display: grid;
+  gap: 10px;
+  justify-items: center;
+  text-align: center;
+}
+
+.empty-chat .empty-title {
+  font-size: 15px;
+  color: var(--fg);
+}
+
+.empty-chat .empty-hint {
+  font-size: 13px;
+  color: var(--fg-soft);
+  max-width: 38ch;
+}
+
+/* --------------------------------------------------------------- sessions */
+
+.session-list {
+  overflow: auto;
+  max-height: 38vh;
+  padding-top: 2px;
+  flex: 0 1 auto;
+}
+
+.session {
+  display: grid;
+  gap: 2px;
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.session:hover {
+  background: var(--bg-raise);
+}
+
+.session.open {
+  border-color: var(--line);
+  background: var(--bg-raise);
+}
+
+.session .session-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+}
+
+.session.running .session-title::before {
+  content: "● ";
+  color: var(--accent);
+}
+
+.session .session-meta {
+  font: 11px var(--mono);
+  color: var(--fg-soft);
+  opacity: 0.8;
+}
+
+.more {
+  width: 100%;
+  padding: 4px 8px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--accent);
+  font: 11px var(--mono);
+  text-align: left;
+  cursor: pointer;
+}
+
+.more:hover {
+  background: var(--bg-raise);
+}
+
+/* ------------------------------------------------------------------ misc */
+
+.cwd,
+.branch {
+  font: 11px var(--mono);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 34ch;
+}
+
+.warn {
+  color: var(--accent);
+}
+
+.palette-item .cmd {
+  color: var(--accent);
+  font-family: var(--mono);
+}
+
+
+
+.row .code {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.boot-error {
+  position: fixed;
+  left: 12px;
+  right: 12px;
+  bottom: 12px;
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--del);
+  border-radius: 10px;
+  background: var(--bg-soft);
+  color: var(--del-text);
+  font: 12px/1.4 var(--mono);
+  white-space: pre-wrap;
+  z-index: 40;
+}
+
+/* ------------------------------------------------------------- stream, jump */
+
+/* The transcript scrolls inside this so the jump button can float over its
+   bottom edge without knowing how tall the composer currently is. */
+.stream {
+  position: relative;
+  display: flex;
+  min-height: 0;
+}
+
+.jump {
+  position: absolute;
+  right: 24px;
+  bottom: 12px;
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  background: var(--bg-raise);
+  color: var(--fg-soft);
+  box-shadow: var(--shadow);
+  cursor: pointer;
+}
+
+.jump:hover {
+  color: var(--fg);
+  border-color: var(--fg-dim);
+}
+
+/* Typed-into letters of a sidebar row. */
+.session-title mark,
+.tab-title mark {
+  color: var(--fg);
+  background: var(--add-mark);
+  border-radius: 2px;
+}

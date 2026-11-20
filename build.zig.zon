@@ -1,0 +1,14 @@
+.{
+    .name = .piui,
+    .version = "0.1.0",
+    .fingerprint = 0x6b5bdb60d9d9c3c3,
+    .minimum_zig_version = "0.17.1",
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+        "web",
+        "tests",
+        "testdata",
+    },
+}

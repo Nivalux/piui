@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>piui</title>
+    <link rel="stylesheet" href="/style.css" />
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='4' fill='%23e06c4a'/%3E%3C/svg%3E"
+    />
+  </head>
+  <body>
+    <div id="gate" class="gate" hidden>
+      <form id="gate-form" class="card gate-card">
+        <h1 class="card-title">piui</h1>
+        <p class="muted">
+          The token lives in <code>~/.piui/token</code> and is printed when the server starts. The browser keeps it in a
+          cookie afterwards.
+        </p>
+        <input id="gate-token" type="password" autocomplete="off" spellcheck="false" placeholder="Token" />
+        <button class="button primary" type="submit">Sign in</button>
+        <p id="gate-error" class="error-text" hidden></p>
+      </form>
+    </div>
+
+    <div id="shell" class="shell" hidden>
+      <aside class="sidebar">
+        <div class="side-head">
+          <button id="new-chat" class="button primary" title="Chat without a project">+ Chat</button>
+          <button id="new-project" class="button" title="Chat inside a directory">+ Project</button>
+        </div>
+        <input id="filter" class="filter" type="search" placeholder="filter · /" spellcheck="false" />
+        <nav id="tab-list" class="tab-list"></nav>
+        <div class="side-sub">
+          <span>Sessions</span>
+          <select id="session-project" class="project-filter" hidden></select>
+        </div>
+        <nav id="session-list" class="session-list"></nav>
+        <div class="side-foot">
+          <button id="settings-button" class="button ghost">Settings</button>
+        </div>
+      </aside>
+
+      <main class="main">
+        <header class="top">
+          <div id="tab-title" class="title"></div>
+          <div id="tab-cwd" class="cwd muted"></div>
+          <div id="branch" class="muted"></div>
+          <div class="spacer"></div>
+          <button id="base" class="chip" title="Diff against what">working</button>
+          <button id="diff-toggle" class="chip" title="Collapse or expand the diff (Esc)">Diff</button>
+          <button id="kill" class="chip" title="Close this tab">✕</button>
+        </header>
+
+        <section id="diff-panel" class="diff" hidden>
+          <div id="diff-head" class="diff-head"></div>
+          <div id="diff-body" class="diff-body"></div>
+        </section>
+
+        <section class="stream">
+          <section id="transcript" class="transcript"></section>
+          <button id="jump" class="jump" hidden title="Jump to the newest message">
+            <svg
+              viewBox="0 0 24 24"
+              width="15"
+              height="15"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path d="M12 5v14M5 12l7 7 7-7" />
+            </svg>
+          </button>
+        </section>
+
+        <div class="composer">
+          <div id="queue" class="queue" hidden></div>
+          <div id="attachments" class="attachments" hidden></div>
+          <div id="palette" class="palette" hidden></div>
+          <textarea
+            id="input"
+            rows="2"
+            spellcheck="false"
+            placeholder="Message · / for commands · paste an image"
+          ></textarea>
+          <div class="composer-foot">
+            <select id="model" class="picker" title="Model"></select>
+            <select id="thinking" class="picker" title="Thinking level"></select>
+            <span id="busy" class="busy" hidden>
+              <span class="spinner"></span>
+              <span id="busy-time"></span>
+            </span>
+            <span id="status" class="muted"></span>
+            <span id="rate" class="rate"></span>
+            <span id="context" class="context" hidden>
+              <svg class="ring" viewBox="0 0 20 20" aria-hidden="true">
+                <circle class="track" cx="10" cy="10" r="7.5"></circle>
+                <circle id="context-ring" class="used" cx="10" cy="10" r="7.5"></circle>
+              </svg>
+              <span id="context-pct"></span>
+            </span>
+            <button id="abort" class="button" hidden>Cancel</button>
+            <button id="send" class="button primary">Send</button>
+          </div>
+        </div>
+      </main>
+    </div>
+
+    <div id="settings-modal" class="modal" hidden></div>
+    <div id="dir-modal" class="modal" hidden></div>
+    <div id="toast" class="toast" hidden></div>
+
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>

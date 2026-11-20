@@ -1,0 +1,20 @@
+{"type": "server_start", "pid": 4242}
+{"id": "req-1", "type": "response", "command": "get_state", "success": true, "data": {"model": "anthropic/claude-opus", "thinkingLevel": "off", "sessionId": "6f2c1a90-9c0f-4d3e-9b1a-2c7f5d8e1a34", "sessionFile": "/home/pi/.pi/agent/sessions/--cache-projects-piui--/2026-11-20T09-12-33-123Z_6f2c1a90-9c0f-4d3e-9b1a-2c7f5d8e1a34.jsonl", "isStreaming": false}}
+{"type": "agent_start"}
+{"type": "turn_start"}
+{"type": "message_start", "message": {"role": "user", "content": [{"type": "text", "text": "why is the framing test red?"}], "timestamp": 1763629953123}}
+{"type": "message_start", "message": {"role": "assistant", "content": [], "api": "anthropic", "model": "claude-opus", "usage": {"input": 0, "output": 0}, "timestamp": 1763629953200}}
+{"type": "message_update", "assistantMessageEvent": {"type": "thinking_delta", "contentIndex": 0, "delta": "the reader drops the last record", "timestamp": 1763629953400}, "message": {"role": "assistant", "content": []}}
+{"type": "message_update", "assistantMessageEvent": {"type": "text_delta", "contentIndex": 1, "delta": "Reading", "timestamp": 1763629953500}, "message": {"role": "assistant", "content": []}}
+{"type": "tool_execution_start", "toolCallId": "toolu_01A", "toolName": "bash", "args": {"command": "just test"}}
+{"type": "tool_execution_update", "toolCallId": "toolu_01A", "toolName": "bash", "partialResult": {"content": [{"type": "text", "text": "running framing test…"}]}}
+{"type": "tool_execution_end", "toolCallId": "toolu_01A", "toolName": "bash", "isError": false, "result": {"content": [{"type": "text", "text": "12 passing\n1 failing: expected 3 records, got 2"}, {"type": "image", "mimeType": "image/png", "data": "iVBORw0KGgoAAAANSUhEUg=="}]}}
+{"type": "message_update", "assistantMessageEvent": {"type": "text_delta", "contentIndex": 1, "delta": " the tail.", "timestamp": 1763629954050}, "message": {"role": "assistant", "content": []}}
+{"type": "message_end", "message": {"role": "assistant", "content": [{"type": "thinking", "thinking": "the reader drops the last record"}, {"type": "text", "text": "Reading the tail."}], "api": "anthropic", "model": "claude-opus", "usage": {"input": 912, "output": 41, "totalTokens": 1753, "cost": {"input": 0.014, "output": 0.002, "cacheRead": 0.001, "cacheWrite": 0.0, "total": 0.017}, "cacheRead": 800, "cacheWrite": 0}, "stopReason": "stop", "timestamp": 1763629954200}}
+{"type": "turn_end"}
+{"type": "agent_end", "messages": []}
+{"type": "agent_settled"}
+{"type": "session_info_changed", "name": "Fix the red framing test"}
+{"type": "extension_ui_request", "id": "ui-7", "method": "notify", "message": "compaction finished", "notifyType": "info"}
+{"id": "req-2", "type": "response", "command": "prompt", "success": true, "data": {"disposition": "started"}}
+{"id": "req-3", "type": "response", "command": "set_model", "success": false, "error": "Model not found: invalid/model"}

@@ -1,0 +1,15 @@
+# `zig build` output, and the scratch the test run leaves behind: the zig tests
+# build their fake session stores under .zig-cache on purpose so a run cannot
+# touch a real Pi store.
+.zig-cache/
+zig-out/
+
+# Screenshots the design was read from. Reference material, not part of the app.
+.work/
+
+# A server started from here keeps its login token in this directory.
+.piui/
+
+# Only appears if the browser tests get a local playwright-core rather than the
+# one the nix shell puts on NODE_PATH.
+node_modules/

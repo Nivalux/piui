@@ -1,0 +1,2205 @@
+// @ts-check
+
+/**
+ * The page.
+ *
+ * Everything in here is glue: fetch, SSE, DOM. The parts with real decisions in
+ * them — folding events into blocks, parsing a diff, the rate, the command
+ * filter — live in their own modules and are tested without a browser.
+ */
+
+import { Transcript } from "./transcript.js";
+import { filterCommands, parseCommands } from "./commands.js";
+import {
+  ago,
+  badge,
+  basename,
+  contextRing,
+  cost,
+  duration,
+  firstLine,
+  hintParts,
+  lastLine,
+  perSecond,
+  relativeTime,
+  shortPath,
+  tokens,
+  truncate,
+} from "./format.js";
+import { isUnread, splitTabs } from "./tabs.js";
+import { Meter } from "./rate.js";
+import { parseDiff } from "./diff.js";
+import { toolView } from "./toolview.js";
+import { markdownNode, parseMarkdown } from "./markdown.js";
+import { imageDataUrl, isPiuiEvent, parseFrame } from "./protocol.js";
+import { highlight, rank } from "./filter.js";
+import { chosen, splitTyping, step, suggestions } from "./dirview.js";
+
+/**
+ * @typedef {import("./protocol.js").Frame} Frame
+ * @typedef {import("./protocol.js").TabInfo} TabInfo
+ * @typedef {import("./protocol.js").Ui} Ui
+ * @typedef {import("./protocol.js").Command} Command
+ * @typedef {import("./protocol.js").PiModel} PiModel
+ * @typedef {import("./transcript.js").Block} Block
+ */
+
+/** @typedef {{id: string, path: string, name?: string | null, cwd?: string | null, created?: string | null, updated?: string | null, first_text?: string | null, messages: number, running: boolean}} SessionEntry */
+
+/** @typedef {{base: string, label: string, branch: string, ahead: number, behind: number, files: {path: string, display: string, status: string}[], truncated: boolean, errorMessage?: string | null}} GitStatus */
+
+const ids = {
+  gate: "gate",
+  gateForm: "gate-form",
+  gateToken: "gate-token",
+  gateError: "gate-error",
+  shell: "shell",
+  tabs: "tab-list",
+  sessions: "session-list",
+  sessionProject: "session-project",
+  filter: "filter",
+  newChat: "new-chat",
+  newProject: "new-project",
+  title: "tab-title",
+  cwd: "tab-cwd",
+  branch: "branch",
+  base: "base",
+  kill: "kill",
+  diffToggle: "diff-toggle",
+  diffHead: "diff-head",
+  diffBody: "diff-body",
+  transcript: "transcript",
+  jump: "jump",
+  attachments: "attachments",
+  queue: "queue",
+  palette: "palette",
+  input: "input",
+  status: "status",
+  rate: "rate",
+  context: "context",
+  contextRing: "context-ring",
+  contextPct: "context-pct",
+  busy: "busy",
+  busyTime: "busy-time",
+  model: "model",
+  thinking: "thinking",
+  send: "send",
+  abort: "abort",
+  settingsButton: "settings-button",
+  settingsModal: "settings-modal",
+  dirModal: "dir-modal",
+  toast: "toast",
+};
+
+/** @type {Record<string, any>} */
+const el = {};
+for (const [key, id] of Object.entries(ids)) {
+  const node = document.getElementById(id);
+  if (!node) throw new Error(`felt #${id}`);
+  el[key] = node;
+}
+
+/**
+ * @type {{tabs: TabInfo[], active: string | null, sessions: SessionEntry[], commands: Command[], ui: Ui,
+ *   base: string, model: string, modelKey: string, models: PiModel[], thinking: string, thinkingDefault: string,
+ *   thinkingLevels: string[], thinkingChoice: string, connected: boolean,
+ *   context: {used: number, size: number}, follow: boolean}}
+ */
+const state = {
+  tabs: [],
+  active: null,
+  sessions: [],
+  commands: [],
+  ui: {},
+  base: "working",
+  model: "",
+  modelKey: "",
+  models: [],
+  thinking: "",
+  thinkingDefault: "",
+  thinkingLevels: [],
+  thinkingChoice: "default",
+  connected: false,
+  context: { used: 0, size: 0 },
+  follow: true,
+};
+
+const transcript = new Transcript();
+const meter = new Meter();
+
+/** @type {EventSource | null} */
+let stream = null;
+/** @type {Map<number, HTMLElement>} */
+const painted = new Map();
+/** @type {Map<number, string>} */
+const signatures = new Map();
+/** @type {Map<number, boolean>} block id → whether the reader left this fold open */
+const folds = new Map();
+/** @type {HTMLElement | null} the transcript row the pointer is currently down on */
+let pressed = null;
+/** Which sidebar chat groups are unfolded. */
+const groups = /** @type {Record<string, boolean>} */ ({ Working: true, Settled: true });
+
+/**
+ * When the reader last looked at each chat, kept between visits so a run that
+ * finished while they were elsewhere is still waiting for them after a reload.
+ *
+ * @type {Record<string, number>}
+ */
+const seen = readSeen();
+
+function readSeen() {
+  try {
+    return /** @type {Record<string, number>} */ (JSON.parse(localStorage.getItem("piui:seen") ?? "{}"));
+  } catch {
+    return {};
+  }
+}
+
+/** @param {string} id */
+function markSeen(id) {
+  seen[id] = Date.now();
+  localStorage.setItem("piui:seen", JSON.stringify(seen));
+}
+/** Folder the session list is narrowed to, `all` for everything. */
+let sessionProject = "all";
+/** Folders whose full session list the reader asked for. */
+const expanded = new Set();
+/** Sessions per folder before a "+n more" appears. */
+const perProject = 6;
+/** @type {{type: "image", data: string, mimeType: string}[]} */
+const attachments = [];
+/** @type {GitStatus | null} */
+let status = null;
+
+let paletteIndex = 0;
+let scheduled = false;
+
+boot().catch((err) => {
+  // A half-wired page looks like a dead page; say what broke instead.
+  const pre = element("pre", "boot-error", String(err?.stack ?? err));
+  document.body.append(pre);
+});
+
+async function boot() {
+  const health = await getJSON("/api/health").catch(() => null);
+  if (!health?.signedIn) {
+    const ok = await askForToken();
+    if (!ok) return;
+  }
+
+  el.shell.hidden = false;
+  el.gate.remove();
+
+  wire();
+  await loadSettings();
+  await loadTabs();
+  poll();
+
+  const remembered = localStorage.getItem("piui:tab");
+  const first = state.tabs.find((tab) => tab.id === remembered) ?? state.tabs[0];
+  if (first) return openTab(first.id);
+
+  // A restart kills the Pi processes but not the sessions they were in: put the
+  // chat the reader was last in back on screen.
+  /** @type {{cwd: string, session?: string}[]} */
+  const saved = (await getJSON("/api/restore").catch(() => [])) ?? [];
+  const last = saved.length > 0 ? saved[saved.length - 1] : null;
+  if (last) {
+    await createTab(last.session ? { cwd: last.cwd, session: last.session } : { cwd: last.cwd });
+    if (state.active) return;
+  }
+
+  showEmptyState();
+  await loadSessions();
+}
+
+/**
+ * A page with no tab open looks broken: empty pane, empty pickers, a composer
+ * that swallows what you type. Say what is missing and offer the way in.
+ */
+function showEmptyState() {
+  el.transcript.replaceChildren();
+
+  const box = element("div", "empty-chat");
+  box.append(
+    element("p", "empty-title", "No chat open"),
+    element("p", "empty-hint", "Start one here, or pick a session from the list on the left."),
+  );
+
+  const button = element("button", "button primary", "New chat");
+  button.onclick = () => void createTab({});
+  box.append(button);
+
+  el.transcript.append(box);
+}
+
+// ---------------------------------------------------------------- fetching
+
+class AuthError extends Error {}
+
+/**
+ * @param {string} path
+ * @param {RequestInit} [init]
+ * @returns {Promise<Response>}
+ */
+async function request(path, init) {
+  const response = await fetch(path, { credentials: "same-origin", ...init });
+  if (response.status === 401) throw new AuthError();
+  if (!response.ok) throw new Error(`${response.status}: ${await response.text()}`);
+  return response;
+}
+
+/** @param {string} path */
+async function getJSON(path) {
+  return jsonOf(await request(path));
+}
+
+/**
+ * @param {string} path
+ * @param {unknown} body
+ */
+async function postJSON(path, body) {
+  return jsonOf(
+    await request(path, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+  );
+}
+
+/** @param {Response} response */
+async function jsonOf(response) {
+  const text = await response.text();
+  return text.length > 0 ? JSON.parse(text) : null;
+}
+
+// ----------------------------------------------------------------- sign-in
+
+/** The gate waits for the token once; the cookie then does the rest. */
+function askForToken() {
+  el.gate.hidden = false;
+  el.gateToken.focus();
+
+  return new Promise((resolve) => {
+    el.gateForm.onsubmit = async (/** @type {Event} */ event) => {
+      event.preventDefault();
+      const value = String(el.gateToken.value).trim();
+      if (value.length === 0) return;
+
+      try {
+        await postJSON("/api/login", { token: value });
+        resolve(true);
+      } catch (error) {
+        el.gateError.hidden = false;
+        el.gateError.textContent = error instanceof AuthError ? "wrong token" : "server unreachable";
+        el.gateToken.select();
+      }
+    };
+  });
+}
+
+// -------------------------------------------------------------------- wire
+
+function wire() {
+  el.newChat.onclick = () => void createTab({});
+  el.newProject.onclick = () => void createProject();
+  el.dirModal.onclick = /** @param {MouseEvent} event */ (event) => {
+    if (event.target === el.dirModal) el.dirModal.hidden = true;
+  };
+  // Escape closes the picker wherever the page happens to have put the caret.
+  document.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape" || el.dirModal.hidden) return;
+    event.preventDefault();
+    el.dirModal.hidden = true;
+  });
+  el.filter.oninput = () => renderSidebar();
+  el.filter.onkeydown = /** @param {KeyboardEvent} event */ (event) => {
+    if (event.key !== "Escape") return;
+    el.filter.value = "";
+    renderSidebar();
+    el.filter.blur();
+  };
+  window.addEventListener("keydown", (event) => {
+    if (event.key !== "/" || event.metaKey || event.ctrlKey || event.altKey) return;
+    const field = /** @type {HTMLElement | null} */ (/** @type {EventTarget | null} */ (event.target));
+    if (field?.tagName === "INPUT" || field?.tagName === "TEXTAREA" || field?.isContentEditable) return;
+    event.preventDefault();
+    el.filter.focus();
+    el.filter.select();
+  });
+  el.transcript.onscroll = () => watchScroll();
+  el.jump.onclick = () => jumpToEnd();
+  el.sessionProject.onchange = () => {
+    sessionProject = String(el.sessionProject.value);
+    expanded.clear();
+    renderSidebar();
+  };
+  el.base.onclick = () => cycleBase();
+  el.diffToggle.onclick = () => toggleDiff();
+  el.send.onclick = () => void send();
+  el.abort.onclick = () => void interrupt();
+  el.settingsButton.onclick = () => void showSettings();
+  el.kill.onclick = () => void closeTab();
+  el.model.onchange = () => void pickModel();
+  el.thinking.onchange = () => pickThinking();
+
+  for (const node of el.shell.querySelectorAll(".spinner")) turnTo(node);
+
+  window.addEventListener("pointerdown", (event) => {
+    pressed = event.target instanceof Element ? event.target.closest(".block") : null;
+  });
+  window.addEventListener("pointerup", () => {
+    pressed = null;
+  });
+  window.addEventListener("pointercancel", () => {
+    pressed = null;
+  });
+  window.addEventListener("blur", () => {
+    pressed = null;
+  });
+
+  el.input.addEventListener("keydown", onKey);
+  el.input.addEventListener("input", () => {
+    grow();
+    syncPalette();
+  });
+  el.input.addEventListener("paste", onPaste);
+
+  window.addEventListener("beforeunload", () => stream?.close());
+}
+
+/** @param {KeyboardEvent} event */
+function onKey(event) {
+  if (!el.palette.hidden) {
+    if (event.key === "ArrowDown") return stepPalette(1, event);
+    if (event.key === "ArrowUp") return stepPalette(-1, event);
+    if (event.key === "Tab" || (event.key === "Enter" && paletteIndex >= 0)) return acceptPalette(event);
+    if (event.key === "Escape") return hidePalette(event);
+  }
+
+  if (event.key === "Escape") return closeDiff(event);
+
+  if (event.key === "Enter" && !event.shiftKey && state.ui.send_on_enter !== false) {
+    event.preventDefault();
+    void send();
+  }
+}
+
+// -------------------------------------------------------------------- tabs
+
+async function loadTabs() {
+  const list = await getJSON("/api/tabs");
+  state.tabs = Array.isArray(list) ? list : [];
+  renderSidebar();
+}
+
+/**
+ * Past chats, for resuming. Everything comes back and the sidebar narrows it by
+ * folder, so switching tabs never has to refetch.
+ */
+async function loadSessions() {
+  const list = await getJSON("/api/sessions").catch(() => null);
+  state.sessions = Array.isArray(list) ? list : [];
+  renderSidebar();
+}
+
+/** Keep the sidebar honest about the tabs that are not streaming here. */
+function poll() {
+  let ticks = 0;
+  setInterval(() => {
+    if (document.hidden) return;
+    void loadTabs();
+    if (ticks++ % 6 !== 0) return;
+    void loadSessions();
+  }, 5000);
+}
+
+/**
+ * The folder picker. The field holds the path a new chat will run in and the
+ * rows underneath complete it: typing filters the folders of the directory the
+ * path names, the arrows choose one, return takes it.
+ */
+const picker = {
+  base: "",
+  needle: "",
+  dirs: /** @type {{name: string, path: string}[]} */ ([]),
+  rows: /** @type {{name: string, path: string}[]} */ ([]),
+  cursor: -1,
+};
+
+/** @type {{field: HTMLInputElement, list: HTMLElement} | null} */
+let pickerNodes = null;
+
+async function createProject() {
+  el.dirModal.hidden = false;
+  const listing = await readDirs(null);
+  if (!listing) return;
+  picker.base = String(listing.path ?? "");
+  picker.dirs = foldersOf(listing);
+  picker.needle = "";
+  picker.cursor = -1;
+  renderPicker(`${picker.base}/`);
+}
+
+/** @param {string | null} path */
+async function readDirs(path) {
+  try {
+    return await getJSON(path === null ? "/api/dirs" : `/api/dirs?path=${encodeURIComponent(path)}`);
+  } catch (error) {
+    toast(error instanceof Error ? error.message : "cannot read that folder");
+    return null;
+  }
+}
+
+/** @param {any} listing */
+function foldersOf(listing) {
+  const list = Array.isArray(listing?.dirs) ? listing.dirs : [];
+  return list.map((/** @type {any} */ dir) => ({ name: String(dir?.name ?? ""), path: String(dir?.path ?? "") }));
+}
+
+/** @param {string} value */
+function renderPicker(value) {
+  const field = /** @type {HTMLInputElement} */ (element("input", "dir-field"));
+  field.id = "dir-field";
+  field.type = "text";
+  field.spellcheck = false;
+  field.autocapitalize = "off";
+  field.autocomplete = "off";
+  field.value = value;
+  field.oninput = () => void pickTyped(field.value);
+  field.onkeydown = /** @param {KeyboardEvent} event */ (event) => void pickKey(event, field);
+
+  const list = element("div", "dir-list");
+  list.id = "dir-list";
+  pickerNodes = { field, list };
+
+  const buttons = element("div", "row-buttons");
+  buttons.append(
+    button("Use this folder", () => void pickChosen(field.value)),
+    button("Cancel", () => {
+      el.dirModal.hidden = true;
+    }),
+  );
+
+  el.dirModal.replaceChildren(
+    card(
+      "New project",
+      field,
+      element("div", "dir-hint", "↑↓ folder · ⏎ into a folder, or start the chat here · esc cancel"),
+      list,
+      buttons,
+    ),
+  );
+
+  renderFolders();
+  field.focus();
+  field.setSelectionRange(value.length, value.length);
+}
+
+/** @param {string} value */
+async function pickTyped(value) {
+  const { base, needle } = splitTyping(value);
+  picker.needle = needle;
+  picker.cursor = -1;
+  if (base === picker.base) return renderFolders();
+
+  const listing = await readDirs(base);
+  if (!listing) return;
+  picker.base = String(listing.path ?? base);
+  picker.dirs = foldersOf(listing);
+  renderFolders();
+}
+
+/**
+ * @param {KeyboardEvent} event
+ * @param {HTMLInputElement} field
+ */
+async function pickKey(event, field) {
+  if (event.key === "Escape") {
+    event.preventDefault();
+    el.dirModal.hidden = true;
+    return;
+  }
+
+  if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+    event.preventDefault();
+    picker.cursor = step(picker.rows.length, picker.cursor, event.key === "ArrowDown" ? 1 : -1);
+    renderFolders();
+    return;
+  }
+
+  if (event.key !== "Enter") return;
+  event.preventDefault();
+
+  const row = picker.cursor >= 0 ? picker.rows[picker.cursor] : null;
+  if (!row) return pickChosen(field.value);
+  field.value = `${row.path}/`;
+  await pickTyped(field.value);
+  field.focus();
+}
+
+/** @param {string} typed */
+async function pickChosen(typed) {
+  const cwd = chosen(picker.rows, picker.cursor, typed);
+  el.dirModal.hidden = true;
+  await createTab({ cwd });
+}
+
+function renderFolders() {
+  if (!pickerNodes) return;
+
+  const hits = suggestions(picker.dirs, picker.needle);
+  picker.rows = hits.map((hit) => hit.item);
+  if (picker.cursor >= picker.rows.length) picker.cursor = picker.rows.length - 1;
+
+  const nodes = hits.map((hit, index) => {
+    const row = element("div", `dir-row${index === picker.cursor ? " on" : ""}`);
+    row.dataset.path = hit.item.path;
+    row.append(span("▸", "dir-glyph"), highlight(hit.item.name, hit.ranges, "b"));
+    row.onclick = () => void pickRow(hit.item.path);
+    row.ondblclick = () => void pickChosen(hit.item.path);
+    return row;
+  });
+
+  pickerNodes.list.replaceChildren(...nodes);
+  if (nodes.length === 0) pickerNodes.list.append(element("div", "dir-empty", "no folder matches"));
+  const on = picker.cursor >= 0 ? nodes[picker.cursor] : undefined;
+  if (on) on.scrollIntoView({ block: "nearest" });
+}
+
+/** @param {string} path */
+async function pickRow(path) {
+  if (!pickerNodes) return;
+  pickerNodes.field.value = `${path}/`;
+  await pickTyped(pickerNodes.field.value);
+  pickerNodes.field.focus();
+}
+
+/** @param {{cwd?: string, session?: string}} body */
+async function createTab(body) {
+  try {
+    const tab = await postJSON("/api/tab", body);
+    state.tabs = [tab, ...state.tabs.filter((item) => item.id !== tab.id)];
+    renderSidebar();
+    await openTab(tab.id);
+  } catch (error) {
+    toast(error instanceof Error ? error.message : "could not open a tab");
+  }
+}
+
+/** @param {string} id */
+async function openTab(id) {
+  state.active = id;
+  localStorage.setItem("piui:tab", id);
+  markSeen(id);
+
+  stream?.close();
+  stream = null;
+  transcript.clear();
+  painted.clear();
+  signatures.clear();
+  renderQueue();
+  el.transcript.replaceChildren();
+  state.follow = true;
+  el.jump.hidden = true;
+
+  const tab = active();
+  el.title.textContent = tab ? labelOf(tab) : "";
+  el.cwd.textContent = tab ? tab.cwd : "";
+
+  state.model = "";
+  state.modelKey = "";
+  state.models = [];
+  state.context = { used: 0, size: 0 };
+  state.thinking = "";
+  state.thinkingDefault = "";
+  state.thinkingLevels = [];
+  state.thinkingChoice = "default";
+
+  connect(id);
+  render();
+  void refreshGit();
+  void loadSessions();
+}
+
+/** @param {string} id */
+function connect(id) {
+  const source = new EventSource(`/api/events?id=${encodeURIComponent(id)}`);
+  stream = source;
+
+  source.onopen = () => {
+    state.connected = true;
+    ask("get_state");
+    ask("get_commands");
+    ask("get_messages");
+    ask("get_available_models");
+    ask("get_available_thinking_levels");
+    ask("get_session_stats");
+    renderFooter();
+  };
+
+  source.onerror = () => {
+    state.connected = false;
+    source.close();
+    renderFooter();
+    if (state.active !== id) return;
+
+    // A retry is right for a network hiccup and wrong for a chat that is gone:
+    // the page would keep knocking on a door that was removed. EventSource
+    // cannot see the status, so the tab list decides.
+    void getJSON("/api/tabs")
+      .then((list) => {
+        if (state.active !== id) return;
+        const tabs = Array.isArray(list) ? list : [];
+        if (tabs.some((tab) => tab.id === id)) return void setTimeout(() => connect(id), 2000);
+
+        state.tabs = tabs;
+        state.active = null;
+        const next = tabs[0];
+        if (next) return void openTab(next.id);
+        showEmptyState();
+        void loadSessions();
+      })
+      .catch(() => setTimeout(() => connect(id), 2000));
+  };
+
+  source.onmessage = (message) => {
+    const frame = parseFrame(String(message.data));
+    if (frame) handle(frame);
+  };
+}
+
+/**
+ * Ask pi for something over the tab's command pipe.
+ *
+ * @param {string} type
+ */
+function ask(type) {
+  void sendCommand({ type });
+}
+
+/** @param {Record<string, unknown>} command */
+async function sendCommand(command) {
+  if (!state.active) return;
+  try {
+    await postJSON(`/api/cmd?id=${encodeURIComponent(state.active)}`, command);
+  } catch (error) {
+    toast(error instanceof Error ? error.message : "command failed");
+  }
+}
+
+/** @param {Frame} frame */
+function handle(frame) {
+  if (isPiuiEvent(frame)) {
+    if (frame.event === "running") {
+      const tab = active();
+      if (tab) tab.running = frame.running === true;
+      render();
+    } else if (frame.event === "tab") {
+      replaceTab(frame.tab);
+      render();
+    } else if (frame.event === "closed") {
+      const why = frame.reason || "closed";
+      const detail = frame.stderr ? `: ${String(frame.stderr).slice(-200)}` : "";
+      toast(why === "closed by user" ? "Tab closed" : `Pi exited (${why})${detail}`, 8000);
+      if (frame.stderr) console.warn(frame.stderr);
+      const tab = state.tabs.find((item) => item.id === state.active);
+      if (tab) tab.closed = true;
+      renderFooter();
+      renderSidebar();
+    }
+    return;
+  }
+
+  // The first frame of a stream is a bare TabInfo, without a type at all.
+  if (!frame.type && frame.id) {
+    replaceTab(/** @type {TabInfo} */ (/** @type {unknown} */ (frame)));
+    render();
+    return;
+  }
+
+  if (frame.type === "thinking_level_changed" && typeof frame.level === "string") {
+    state.thinking = frame.level;
+    if (state.thinkingChoice !== "default") state.thinkingChoice = frame.level;
+    renderPickers();
+  }
+
+  if (frame.type === "response") return response(frame);
+
+  if (frame.type === "agent_start") meter.start();
+  if (frame.type === "agent_settled") {
+    meter.stop();
+    void loadTabs();
+  }
+  if (frame.type === "message_update" && frame.assistantMessageEvent?.type === "text_delta") {
+    meter.addText(frame.assistantMessageEvent.delta ?? "");
+  }
+  if (frame.type === "message_end" && frame.message?.role === "assistant") meter.addUsage(frame.message.usage);
+  if (frame.type === "session_info_changed") {
+    const tab = active();
+    if (tab) tab.sessionName = frame.name ?? null;
+    renderSidebar();
+  }
+
+  retirePending(frame);
+  if (transcript.event(frame)) markDirty();
+  // Pi only knows what the next request will cost once a turn is through, and one
+  // answer can run several turns: asking at every one of them is what keeps the
+  // context ring moving during a long answer rather than only at its end.
+  if (frame.type === "agent_settled" || frame.type === "turn_end") {
+    ask("get_session_stats");
+    render();
+    void refreshGit();
+  }
+}
+
+/** @param {Frame} frame */
+function response(frame) {
+  const data = frame.data ?? {};
+
+  if (frame.command === "get_messages") {
+    transcript.replay(Array.isArray(data.messages) ? data.messages : []);
+    markDirty();
+    render();
+    return;
+  }
+
+  if (frame.command === "get_commands") {
+    state.commands = Array.isArray(data.commands) ? data.commands : [];
+    return;
+  }
+
+  if (frame.command === "get_state") {
+    const model = /** @type {PiModel | undefined} */ (data.model);
+    state.model = model ? modelLabel(model) : "";
+    state.modelKey = model ? modelKey(model) : "";
+
+    const level = typeof data.thinkingLevel === "string" ? data.thinkingLevel : "";
+    state.thinking = level;
+    if (!state.thinkingDefault) state.thinkingDefault = level;
+
+    renderPickers();
+    renderFooter();
+    return;
+  }
+
+  if (frame.command === "get_available_models") {
+    state.models = Array.isArray(data.models) ? /** @type {PiModel[]} */ (data.models) : [];
+    renderPickers();
+    return;
+  }
+
+  if (frame.command === "get_available_thinking_levels") {
+    state.thinkingLevels = Array.isArray(data.levels) ? data.levels.map((level) => String(level)) : [];
+    renderPickers();
+    return;
+  }
+
+  if (frame.command === "get_session_stats") {
+    const usage = /** @type {{tokens?: number | null, contextWindow?: number}} */ (data.contextUsage ?? {});
+    // Straight after a compaction Pi has no count to give yet. The number from
+    // before it would be the wrong kind of wrong, so the ring goes quiet until
+    // an answer arrives that knows.
+    const used = usage.tokens === null || usage.tokens === undefined ? 0 : Number(usage.tokens);
+    state.context = { used, size: Number(usage.contextWindow ?? 0) };
+    renderFooter();
+    return;
+  }
+
+  if (frame.success === false) toast(frame.errorMessage ?? `${frame.command} failed`);
+}
+
+/** @param {TabInfo} tab */
+function replaceTab(tab) {
+  const index = state.tabs.findIndex((item) => item.id === tab.id);
+  if (index >= 0) state.tabs[index] = tab;
+  else state.tabs.unshift(tab);
+  renderSidebar();
+}
+
+async function closeTab() {
+  if (!state.active) return;
+  const id = state.active;
+  await request(`/api/tab?id=${encodeURIComponent(id)}`, { method: "DELETE" }).catch(() => {});
+  state.tabs = state.tabs.filter((tab) => tab.id !== id);
+  state.active = null;
+  stream?.close();
+  stream = null;
+  renderSidebar();
+  const next = state.tabs[0];
+  if (next) return openTab(next.id);
+
+  showEmptyState();
+  await loadSessions();
+}
+
+// ----------------------------------------------------------------- sending
+
+async function send() {
+  const text = String(el.input.value);
+  if (text.trim().length === 0 && attachments.length === 0) return;
+
+  // Typing into a page with no tab is a wish to start a chat, not a mistake.
+  if (!state.active) await createTab({});
+  if (!state.active) return;
+
+  const running = active()?.running === true;
+  const type = running ? (state.ui.send_mode === "queue" ? "follow_up" : "steer") : "prompt";
+
+  /** @type {Record<string, unknown>} */
+  const command = { type, message: text };
+  if (attachments.length > 0) {
+    command.images = attachments.map((image) => ({ type: "image", data: image.data, mimeType: image.mimeType }));
+  }
+
+  const tabId = state.active;
+  el.input.value = "";
+  grow();
+  clearAttachments();
+  hidePalette();
+  hold(tabId, type, text);
+
+  try {
+    await postJSON(`/api/cmd?id=${encodeURIComponent(tabId)}`, command);
+  } catch (error) {
+    release(tabId, text);
+    el.input.value = el.input.value.length === 0 ? text : el.input.value;
+    grow();
+    toast(error instanceof Error ? error.message : "send failed");
+  }
+}
+
+/** @type {Map<string, {mode: string, text: string}[]>} */
+const pending = new Map();
+
+/**
+ * A message Pi has not picked up yet stays visible above the composer.
+ *
+ * @param {string} tabId
+ * @param {string} mode
+ * @param {string} text
+ */
+function hold(tabId, mode, text) {
+  const items = pending.get(tabId) ?? [];
+  items.push({ mode, text });
+  pending.set(tabId, items);
+  renderQueue();
+}
+
+/**
+ * @param {string} tabId
+ * @param {string} text
+ */
+function release(tabId, text) {
+  const items = pending.get(tabId) ?? [];
+  const index = items.findIndex((item) => item.text === text);
+  if (index >= 0) items.splice(index, 1);
+  if (items.length === 0) pending.delete(tabId);
+  renderQueue();
+}
+
+function renderQueue() {
+  const items = pending.get(state.active ?? "") ?? [];
+  el.queue.hidden = items.length === 0;
+  el.queue.replaceChildren();
+
+  for (const item of items) {
+    const row = element("div", "queued");
+    row.append(
+      span(item.mode === "follow_up" ? "follow-up" : "steering", "tag"),
+      span(truncate(firstLine(item.text), 140), "text"),
+    );
+    el.queue.append(row);
+  }
+
+  if (items.length > 0) {
+    el.queue.append(button("back to input", () => void pullQueue()));
+  }
+}
+
+/** Hand the queued messages back to the editor, the way Esc does in the terminal. */
+async function pullQueue() {
+  const tabId = state.active;
+  if (!tabId) return;
+
+  const items = pending.get(tabId) ?? [];
+  pending.delete(tabId);
+  renderQueue();
+
+  const kept = items.map((item) => item.text);
+  try {
+    const reply = await postJSON(`/api/cmd?id=${encodeURIComponent(tabId)}`, { type: "clear_queue" });
+    const data = /** @type {{steering?: string[], followUp?: string[]}} */ (reply?.data ?? {});
+    const cleared = [...(data.steering ?? []), ...(data.followUp ?? [])];
+    if (cleared.length > 0) el.input.value = [el.input.value, ...cleared].filter((line) => line).join("\n\n");
+  } catch {
+    el.input.value = [el.input.value, ...kept].filter((line) => line).join("\n\n");
+  }
+  grow();
+  el.input.focus();
+}
+
+/**
+ * Once Pi puts a message in the transcript it is no longer pending, and a run
+ * that settled took everything with it.
+ *
+ * @param {Frame} frame
+ */
+function retirePending(frame) {
+  const tabId = state.active;
+  if (!tabId) return;
+
+  if (frame.type === "agent_settled") {
+    if (pending.delete(tabId)) renderQueue();
+    return;
+  }
+
+  const items = pending.get(tabId);
+  if (!items || items.length === 0) return;
+
+  const message = /** @type {{role?: string, content?: unknown}} */ (frame.message ?? null);
+  if (!message || message.role !== "user") return;
+
+  const text = flatten(message.content).trim();
+  const index = items.findIndex((item) => item.text.trim() === text);
+  if (index < 0) return;
+
+  items.splice(index, 1);
+  if (items.length === 0) pending.delete(tabId);
+  renderQueue();
+}
+
+function interrupt() {
+  ask("abort");
+}
+
+/** @param {ClipboardEvent} event */
+function onPaste(event) {
+  const items = event.clipboardData?.items;
+  if (!items) return;
+
+  for (const item of items) {
+    if (!item.type.startsWith("image/")) continue;
+    const file = item.getAsFile();
+    if (!file) continue;
+
+    event.preventDefault();
+    const reader = new FileReader();
+    reader.onload = () => {
+      const url = String(reader.result ?? "");
+      const comma = url.indexOf(",");
+      attachments.push({ type: "image", mimeType: item.type, data: url.slice(comma + 1) });
+      renderAttachments();
+    };
+    reader.readAsDataURL(file);
+  }
+}
+
+function clearAttachments() {
+  attachments.length = 0;
+  renderAttachments();
+}
+
+function renderAttachments() {
+  el.attachments.replaceChildren(
+    ...attachments.map((image, index) => {
+      const chip = element("span", "attachment");
+      const thumb = document.createElement("img");
+      thumb.src = imageDataUrl(image);
+      chip.append(thumb, span("image"));
+
+      const drop = button("×", () => {
+        attachments.splice(index, 1);
+        renderAttachments();
+      });
+      chip.append(drop);
+      return chip;
+    }),
+  );
+  el.attachments.hidden = attachments.length === 0;
+}
+
+// ----------------------------------------------------------------- palette
+
+function syncPalette() {
+  const parsed = parseCommands(String(el.input.value));
+  if (!parsed) return hidePalette();
+
+  const matches = filterCommands(state.commands, parsed.query);
+  if (matches.length === 0) return hidePalette();
+
+  paletteIndex = Math.min(paletteIndex, matches.length - 1);
+  el.palette.replaceChildren(
+    ...matches.map((/** @type {Command} */ command, /** @type {number} */ index) => {
+      const row = element("div", `palette-item${index === paletteIndex ? " active" : ""}`);
+      row.append(span(`/${command.name}`, "cmd"), span(command.description ?? ""), span(command.argumentHint ?? ""));
+      row.onclick = () => {
+        paletteIndex = index;
+        acceptPalette();
+      };
+      return row;
+    }),
+  );
+  el.palette.hidden = false;
+}
+
+/**
+ * @param {number} step
+ * @param {Event} event
+ */
+function stepPalette(step, event) {
+  event.preventDefault();
+  const count = el.palette.children.length;
+  if (count === 0) return;
+  paletteIndex = (paletteIndex + step + count) % count;
+  syncPalette();
+}
+
+/** @param {Event} [event] */
+function acceptPalette(event) {
+  event?.preventDefault();
+
+  const parsed = parseCommands(String(el.input.value));
+  const matches = filterCommands(state.commands, parsed?.query ?? "");
+  const chosen = matches[paletteIndex];
+  if (!chosen) return hidePalette();
+
+  el.input.value = `/${chosen.name} `;
+  paletteIndex = 0;
+  hidePalette();
+  el.input.focus();
+}
+
+/** @param {Event} [event] */
+function hidePalette(event) {
+  event?.preventDefault();
+  el.palette.hidden = true;
+  paletteIndex = 0;
+}
+
+// --------------------------------------------------------------- rendering
+
+function markDirty() {
+  if (scheduled) return;
+  scheduled = true;
+  requestAnimationFrame(() => {
+    scheduled = false;
+    render();
+  });
+}
+
+function render() {
+  renderSidebar();
+  renderTranscript();
+  renderQueue();
+  renderFooter();
+}
+
+/**
+ * The sidebar.
+ *
+ * Open chats split into the two states you act on — pi is still working, or it
+ * is done. Past sessions split by the folder they happened in, because that is
+ * how one gets found again.
+ */
+function renderSidebar() {
+  const filter = String(el.filter.value).trim().toLowerCase();
+  const hits = rank(filter, state.tabs, (tab) => [labelOf(tab), tab.cwd]);
+  const visible = hits.map((hit) => hit.item);
+  const marks = new Map(hits.map((hit) => [hit.item.id, hit.ranges]));
+  const row = (/** @type {TabInfo} */ tab) => tabRow(tab, marks.get(tab.id) ?? []);
+
+  const { working, settled } = splitTabs(visible);
+
+  /** @type {HTMLElement[]} */
+  const rows = [groupHeader("Working", working.length, groups.Working)];
+  if (groups.Working) rows.push(...working.map(row));
+  rows.push(groupHeader("Settled", settled.length, groups.Settled));
+  if (groups.Settled) rows.push(...settled.map(row));
+  if (visible.length === 0) rows.push(element("div", "empty", "no open chats"));
+
+  el.tabs.replaceChildren(...rows);
+  renderSessions(filter);
+}
+
+/**
+ * Past sessions, newest folder first, a handful per folder until someone asks
+ * for the rest. While something is typed they are ranked by the match instead,
+ * and every hit is shown: a list cut to five stops being a search result.
+ *
+ * @param {string} filter
+ */
+function renderSessions(filter) {
+  const kept = el.sessions.scrollTop;
+  paintProjectFilter();
+
+  const inProject = state.sessions.filter((entry) => sessionProject === "all" || bucketOf(entry) === sessionProject);
+  const hits = rank(filter, inProject, (entry) => [sessionTitle(entry), entry.cwd ?? ""]);
+
+  /** @type {HTMLElement[]} */
+  const rows = [];
+  for (const [bucket, list] of groupBy(hits, (hit) => bucketOf(hit.item))) {
+    const shown = filter.length > 0 || expanded.has(bucket) ? list : list.slice(0, perProject);
+    rows.push(groupLabel(bucket.length > 0 ? basename(bucket) : "no folder"));
+    rows.push(...shown.map((hit) => sessionRow(hit.item, hit.ranges)));
+    if (shown.length < list.length) rows.push(moreButton(bucket, list.length - shown.length));
+  }
+
+  if (rows.length === 0) rows.push(element("div", "empty", "no sessions here"));
+
+  el.sessions.replaceChildren(...rows);
+  el.sessions.scrollTop = kept;
+}
+
+/**
+ * What a session is called in the list: its first line, else its pi-given
+ * name, else the bare id.
+ *
+ * @param {SessionEntry} entry
+ */
+function sessionTitle(entry) {
+  return entry.first_text ? firstLine(entry.first_text) : (entry.name ?? entry.id);
+}
+
+/**
+ * @param {SessionEntry} entry
+ * @param {[number, number][]} ranges
+ */
+function sessionRow(entry, ranges = []) {
+  const already = state.tabs.find((tab) => tab.sessionPath === entry.path);
+  const row = element("button", `session${already ? " open" : ""}${entry.running ? " running" : ""}`);
+  const title = span(sessionTitle(entry), "session-title");
+  if (ranges.length > 0) {
+    title.replaceChildren();
+    title.append(highlight(sessionTitle(entry), ranges, "mark"));
+  }
+  row.append(
+    title,
+    span(`${relativeTime(entry.updated, Date.now())} · ${entry.messages} msgs`, "session-meta"),
+  );
+  row.onclick = () => void (already ? openTab(already.id) : createTab({ session: entry.path }));
+  return row;
+}
+
+/**
+ * Which pile a session belongs to. Scratch chats each got their own throw-away
+ * directory, but nobody reads fifty directory ids; they are one group.
+ *
+ * @param {SessionEntry} entry
+ */
+function bucketOf(entry) {
+  const cwd = entry.cwd ?? "";
+  const at = cwd.indexOf("/scratch/");
+  return at >= 0 ? `${cwd.slice(0, at)}/scratch` : cwd;
+}
+
+/**
+ * @param {string} bucket
+ * @param {number} rest
+ */
+function moreButton(bucket, rest) {
+  const more = element("button", "more", `+${rest} more`);
+  more.setAttribute("type", "button");
+  more.onclick = () => {
+    expanded.add(bucket);
+    renderSidebar();
+  };
+  return more;
+}
+
+let projectKey = "";
+
+/** The folder dropdown only changes when the folders do, so it keeps focus. */
+function paintProjectFilter() {
+  const projects = [...new Set(state.sessions.map(bucketOf).filter((cwd) => cwd.length > 0))].sort();
+  const key = projects.join("\n");
+  if (sessionProject !== "all" && !projects.includes(sessionProject)) sessionProject = "all";
+
+  if (key !== projectKey) {
+    projectKey = key;
+    el.sessionProject.replaceChildren(
+      new Option("all projects", "all"),
+      ...projects.map((cwd) => new Option(basename(cwd), cwd)),
+    );
+  }
+
+  el.sessionProject.value = sessionProject;
+  el.sessionProject.hidden = projects.length < 2;
+}
+
+/**
+ * @param {TabInfo} tab
+ * @returns {HTMLElement}
+ */
+/**
+ * One chat, three lines: where it runs and what pi is doing with it, the title,
+ * and the branch or folder it belongs to.
+ *
+ * @param {TabInfo} tab
+ * @param {[number, number][]} [ranges]
+ */
+function tabRow(tab, ranges = []) {
+  const unread = isUnread(tab, seen, state.active);
+  const row = element("button", `tab${tab.id === state.active ? " active" : ""}${unread ? " unread" : ""}`);
+  row.dataset.tab = tab.id;
+
+  const top = element("div", "tab-top");
+  top.append(span(badgeOf(tab), "badge"), span(isProjectCwd(tab.cwd) ? basename(tab.cwd) : "chat", "tab-proj"));
+  const status = element("span", "tab-status");
+  if (tab.running) {
+    const since = tab.runStartedMs ?? tab.createdMs;
+    status.append(spinner(), span(`working ${ago(Date.now() - since)}`, "live"));
+  } else if (unread) {
+    status.append(span("done", "done"));
+  } else if (tab.lastOutputMs > 0) {
+    status.append(span(ago(Date.now() - tab.lastOutputMs), "idle"));
+  }
+  top.append(status);
+
+  const title = span(labelOf(tab), "tab-title");
+  if (ranges.length > 0) {
+    title.replaceChildren();
+    title.append(highlight(labelOf(tab), ranges, "mark"));
+  }
+  row.append(top, title, tabFoot(tab));
+  row.onclick = () => void openTab(tab.id);
+  row.oncontextmenu = (event) => {
+    event.preventDefault();
+    state.active = tab.id;
+    void closeTab();
+  };
+  return row;
+}
+
+/**
+ * @param {TabInfo} tab
+ */
+function tabFoot(tab) {
+  const foot = element("div", "tab-foot");
+  const branch = tab.id === state.active ? status?.branch ?? "" : "";
+  foot.append(span(branch.length > 0 ? branch : shortPath(tab.cwd), "path"));
+  if (tab.id === state.active && state.model.length > 0) foot.append(span(shortModel(state.model), "model"));
+  return foot;
+}
+
+/**
+ * Two letters of the folder, so a stack of chats is scannable at a glance.
+ *
+ * @param {TabInfo} tab
+ */
+function badgeOf(tab) {
+  return badge(tab.cwd, isProjectCwd(tab.cwd));
+}
+
+/**
+ * Whether a tab sits in a real project or in a throwaway scratch folder. The
+ * server's `project` flag only says how the tab was started; a resumed chat in
+ * a project is still a project chat.
+ *
+ * @param {string} cwd
+ * @returns {boolean}
+ */
+function isProjectCwd(cwd) {
+  return cwd.length > 0 && !cwd.includes("/scratch/");
+}
+
+/** @param {string} model */
+function shortModel(model) {
+  const at = model.lastIndexOf("/");
+  return at >= 0 ? model.slice(at + 1) : model;
+}
+
+/**
+ * @param {string} label
+ * @param {number} count
+ * @param {boolean} open
+ */
+function groupHeader(label, count, open) {
+  const head = element("button", "group");
+  head.setAttribute("type", "button");
+  head.append(span(label, "group-name"), span(String(count), "group-count"), span(open ? "⌄" : "›", "caret"));
+  head.onclick = () => {
+    groups[label] = !groups[label];
+    renderSidebar();
+  };
+  return head;
+}
+
+function renderTranscript() {
+  const seen = new Set();
+  const before = earlierWrites();
+
+  for (const block of transcript.blocks) {
+    seen.add(block.id);
+    const signature = JSON.stringify(block);
+    if (signatures.get(block.id) === signature) continue;
+
+    let node = painted.get(block.id);
+    if (!node) {
+      node = element("div", `block ${block.kind}`);
+      painted.set(block.id, node);
+      el.transcript.append(node);
+    }
+    // A row under the pointer is left exactly as it stands. Rebuilding it takes
+    // the line out of the document and back, and a press that spans that gets no
+    // click at all: the reader who wants to read a thought while it is still
+    // streaming could not open it. The next frame after the release catches up.
+    if (node === pressed) continue;
+
+    signatures.set(block.id, signature);
+    paint(node, block, before.get(block.id) ?? null);
+  }
+
+  for (const [id, node] of painted) {
+    if (seen.has(id)) continue;
+    painted.delete(id);
+    signatures.delete(id);
+    node.remove();
+  }
+
+  if (state.follow) jumpToEnd();
+}
+
+/** How far the reading position sits above the newest block. */
+function scrollGap() {
+  return el.transcript.scrollHeight - el.transcript.scrollTop - el.transcript.clientHeight;
+}
+
+/**
+ * Scrolling up is a decision: stop pinning the newest output and offer the way
+ * back. Scrolling to the bottom is the opposite decision, so it re-arms it.
+ */
+function watchScroll() {
+  state.follow = scrollGap() < 60;
+  el.jump.hidden = state.follow;
+}
+
+function jumpToEnd() {
+  el.transcript.scrollTop = el.transcript.scrollHeight;
+  state.follow = true;
+  el.jump.hidden = true;
+}
+
+/**
+ * What an earlier write left at the same path, per write block. A rewrite of a
+ * file the transcript already wrote can then be shown as a diff instead of a
+ * wall of text.
+ *
+ * @returns {Map<number, string | null>}
+ */
+function earlierWrites() {
+  /** @type {Map<string, string>} */
+  const latest = new Map();
+  /** @type {Map<number, string | null>} */
+  const before = new Map();
+
+  for (const block of transcript.blocks) {
+    if (block.kind !== "tool" || block.toolName !== "write") continue;
+    const path = String(block.args?.path ?? "");
+    if (path.length === 0) continue;
+    before.set(block.id, latest.get(path) ?? null);
+    latest.set(path, String(block.args?.content ?? ""));
+  }
+  return before;
+}
+
+/**
+ * @param {HTMLElement} node
+ * @param {Block} block
+ * @param {string | null} [before]
+ */
+function paint(node, block, before = null) {
+  const kept = scrollOf(node);
+
+  node.replaceChildren();
+
+  switch (block.kind) {
+    case "user": {
+      node.append(span("you", "who"), span(block.text ?? "", "body"));
+      for (const image of /** @type {import("./transcript.js").Image[]} */ (block.images ?? [])) {
+        const thumb = document.createElement("img");
+        thumb.className = "thumb";
+        thumb.src = imageDataUrl(image);
+        node.append(thumb);
+      }
+      return;
+    }
+
+    case "thinking": {
+      if (state.ui.show_thinking !== true) return;
+      const text = block.text ?? "";
+      const { fold, summary, body } = foldFor(block, false);
+      summary.append(
+        span(block.done ? "thoughts" : "thinking", "name"),
+        span(truncate(block.done ? firstLine(text) : lastLine(text), 90), "title"),
+      );
+      body.append(markdownBox(text, "thinking-body"));
+      node.append(fold);
+      break;
+    }
+
+    case "text": {
+      node.append(markdownBox(block.text ?? "", "body"));
+      const foot = element("div", "foot");
+      if (block.usage) foot.append(span(usageLine(block.usage)));
+      if (block.stopReason === "aborted") foot.append(span("aborted", "warn"));
+      if (block.error) foot.append(span(block.error, "warn"));
+      if ((block.usage || block.error) && foot.childNodes.length > 0) node.append(foot);
+      return;
+    }
+
+    case "tool": {
+      const shown = block.result ?? block.progress;
+      const view = toolView(
+        block.toolName ?? "tool",
+        block.args ?? null,
+        shown === null || shown === undefined ? "" : flatten(shown),
+        block.details,
+        before,
+      );
+
+      const { fold, summary, body } = foldFor(block, false);
+      if (block.isError) fold.classList.add("error");
+      const hint = span("", "hint");
+      for (const part of hintParts(view.hint)) hint.append(span(part.text, part.kind));
+      const state = span(block.done ? (block.isError ? "failed" : elapsed(block)) : "", "state");
+      if (!block.done) state.append(liveClock(block));
+      summary.append(span(block.toolName ?? "tool", "name"), span(block.title ?? "", "title"), hint, state);
+      if (block.isError) summary.prepend(span("⚠", "flag"));
+      if (!block.done) summary.prepend(spinner());
+
+      if (view.command.length > 0) body.append(commandRow("command", view.command));
+      if (view.input.length > 0) body.append(argumentRow(view.input));
+      if (view.rows !== null && view.rows.length > 0) {
+        body.append(diffRows(view.rows));
+      } else if (view.text.length > 0) {
+        const out = boxed(view.text, "body");
+        if (!block.done) out.classList.add("live");
+        body.append(out);
+      }
+      if (view.chips.length > 0) body.append(chipRow(view.chips));
+      if (body.childNodes.length === 0) body.append(span(block.done ? "no output" : "nothing back yet", "muted"));
+      node.append(fold);
+      break;
+    }
+
+    case "bash": {
+      node.append(span("shell", "who"), element("pre", "pre", block.text ?? ""));
+      return;
+    }
+
+    case "compaction": {
+      const { fold, summary, body } = foldFor(block, false);
+      summary.append(span(block.text ?? "compacted", "name"));
+      if (block.summary) body.append(boxed(block.summary, "body"));
+      node.append(fold);
+      break;
+    }
+
+    case "status": {
+      node.append(span(block.text ?? "", "body muted"));
+      return;
+    }
+
+    default: {
+      node.append(span(block.text ?? "", "body error-text"));
+    }
+  }
+
+  for (const empty of node.querySelectorAll(".fold-body:empty")) empty.remove();
+  restoreScroll(node, kept);
+}
+
+/**
+ * A fold that keeps the state the reader picked. Nothing opens itself: a
+ * transcript that expands on its own while pi works is noise, and the reader
+ * who wants the detail clicks once and keeps it open.
+ *
+ * Repainting happens while a tool streams, and a fold that snaps shut mid-read
+ * is unusable.
+ *
+ * The summary is a plain line in the flow of the chat; only what is open gets a
+ * box, so a long transcript stays quiet until someone asks for the detail.
+ *
+ * @param {Block} block
+ * @param {boolean} opened
+ * @returns {{fold: HTMLDetailsElement, summary: HTMLElement, body: HTMLElement}}
+ */
+function foldFor(block, opened, open = false) {
+  const fold = /** @type {HTMLDetailsElement} */ (document.createElement("details"));
+  const summary = document.createElement("summary");
+  const body = element("div", "fold-body");
+
+  fold.open = open || (folds.get(block.id) ?? opened);
+  fold.addEventListener("toggle", () => folds.set(block.id, fold.open));
+  fold.append(summary, body);
+  return { fold, summary, body };
+}
+
+/**
+ * How long a finished tool ran, from the frames that opened and closed it.
+ * A blink is not worth a number.
+ *
+ * @param {Block} block
+ */
+function elapsed(block) {
+  const ms = block.doneAt !== undefined && block.startedAt !== undefined ? block.doneAt - block.startedAt : 0;
+  return ms > 1500 ? duration(ms) : "";
+}
+
+/**
+ * The count a waiting reader watches. It carries its own start so the one
+ * second beat of the page can move it without rebuilding the row under a
+ * pointer that might be clicking it.
+ *
+ * @param {Block} block
+ */
+function liveClock(block) {
+  const from = block.startedAt ?? Date.now();
+  const node = span(duration(Math.max(0, Date.now() - from)), "tick");
+  node.dataset.tick = String(from);
+  return node;
+}
+
+/**
+ * Assistant prose is markdown. Tool output stays plain text: a log is not a
+ * document and should keep its shape.
+ *
+ * @param {string} text
+ * @param {string} className
+ */
+function markdownBox(text, className) {
+  const box = element("div", `md ${className}`);
+  box.append(markdownNode(parseMarkdown(text)));
+  return box;
+}
+
+/**
+ * An argument the summary line had to cut short, in full and in one piece.
+ *
+ * @param {string} label
+ * @param {string} value
+ */
+function commandRow(label, value) {
+  const box = element("div", "args");
+  const row = element("div", "arg full");
+  row.append(span(label, "k"), element("pre", "v", value));
+  box.append(row);
+  return box;
+}
+
+/**
+ * The arguments a call was given, as far as the summary line had no room for
+ * them.
+ *
+ * @param {import("./toolview.js").Chip[]} chips
+ */
+function argumentRow(chips) {
+  const box = element("div", "args");
+  for (const chip of chips) {
+    const row = element("div", "arg");
+    row.append(span(chip.label, "k"), span(chip.value, "v"));
+    box.append(row);
+  }
+  return box;
+}
+
+/**
+ * @param {string} text
+ * @param {string} key stable key so the scroll position survives a repaint
+ */
+function boxed(text, key) {
+  const box = element("pre", "pre", text);
+  box.dataset.scroll = key;
+  return box;
+}
+
+/** @param {import("./toolview.js").Chip[]} chips */
+function chipRow(chips) {
+  const row = element("div", "chips");
+  for (const chip of chips) {
+    const node = element("span", "chip-meta");
+    node.append(span(chip.label, "key"), span(chip.value, "value"));
+    row.append(node);
+  }
+  return row;
+}
+
+/** @param {import("./diff.js").Row[]} rows */
+function diffRows(rows) {
+  const box = element("div", "tool-diff");
+  box.dataset.scroll = "diff";
+  for (const row of rows) {
+    if (row.kind === "hunk" || row.kind === "meta") {
+      box.append(element("div", "hunk-sep", row.text));
+      continue;
+    }
+    const line = element("div", `row ${row.kind}`);
+    line.append(
+      span(row.old === null ? "" : String(row.old), "no"),
+      span(row.new === null ? "" : String(row.new), "no"),
+      span(row.text, "code"),
+    );
+    box.append(line);
+  }
+  return box;
+}
+
+/**
+ * @param {HTMLElement} node
+ * @returns {Map<string, number[]>}
+ */
+function scrollOf(node) {
+  /** @type {Map<string, number[]>} */
+  const saved = new Map();
+  for (const found of node.querySelectorAll("[data-scroll]")) {
+    const box = /** @type {HTMLElement} */ (found);
+    saved.set(box.dataset.scroll ?? "", [box.scrollLeft, box.scrollTop]);
+  }
+  return saved;
+}
+
+/**
+ * @param {HTMLElement} node
+ * @param {Map<string, number[]>} saved
+ */
+function restoreScroll(node, saved) {
+  for (const found of node.querySelectorAll("[data-scroll]")) {
+    const box = /** @type {HTMLElement} */ (found);
+    const place = saved.get(box.dataset.scroll ?? "");
+    if (!place) continue;
+    box.scrollLeft = place[0];
+    box.scrollTop = place[1];
+  }
+}
+
+let runTab = "";
+let runSince = 0;
+/** @type {ReturnType<typeof setInterval> | null} */
+let runTicker = null;
+
+/**
+ * Spins the composer indicator and counts how long this answer is taking.
+ *
+ * @param {string} tabId
+ * @param {boolean} running
+ */
+function trackRun(tabId, running) {
+  if (running && runTab !== tabId) {
+    runTab = tabId;
+    runSince = Date.now();
+  }
+  if (!running) {
+    runTab = "";
+    runSince = 0;
+  }
+
+  if (running && !runTicker) {
+    runTicker = setInterval(() => {
+      renderFooter();
+      for (const node of el.transcript.querySelectorAll("[data-tick]")) {
+        node.textContent = duration(Math.max(0, Date.now() - Number(node.dataset.tick)));
+      }
+    }, 1000);
+  }
+  if (!running && runTicker) {
+    clearInterval(runTicker);
+    runTicker = null;
+  }
+
+  el.busy.hidden = !running;
+  el.busyTime.textContent = runSince ? duration(Date.now() - runSince) : "";
+}
+
+function renderFooter() {
+  const tab = active();
+  const reading = meter.reading();
+
+  trackRun(tab?.id ?? "", !!tab?.running);
+  paintContext();
+
+  const parts = [];
+  if (meter.cost() > 0) parts.push(cost(meter.cost()));
+  if (reading.elapsedMs > 0 && transcript.running) parts.push(duration(reading.elapsedMs));
+  el.status.textContent = state.active
+    ? state.connected
+      ? parts.join(" · ")
+      : "disconnected"
+    : "no chat open";
+
+  el.rate.textContent = transcript.running || reading.tokens > 0 ? perSecond(reading.tokensPerSecond) : "";
+  el.rate.classList.toggle("live", transcript.running);
+  el.abort.hidden = !tab?.running;
+  el.send.disabled = state.active ? !state.connected : false;
+}
+
+/**
+ * The ring is how much of the window this chat has eaten, straight from pi's
+ * own count of what it would send next. A number from an earlier chat would be
+ * worse than no number, so it is cleared whenever a different chat is opened.
+ */
+function paintContext() {
+  const ring = contextRing(state.context.used, state.context.size);
+  el.context.hidden = ring.percent === 0;
+  el.context.dataset.tone = ring.tone;
+  el.contextRing.style.setProperty("--used", String(ring.fraction));
+  el.contextPct.textContent = `${ring.percent}%`;
+  el.context.title = `context ${ring.label} · ${ring.percent}%`;
+}
+
+// ------------------------------------------------------------ model & thinking
+
+/** @param {PiModel} model */
+function modelKey(model) {
+  return `${model.provider ?? ""}/${model.id}`;
+}
+
+/** @param {PiModel} model */
+function modelLabel(model) {
+  return model.name && model.name.length > 0 ? model.name : model.id;
+}
+
+function renderPickers() {
+  const ready = state.connected && Boolean(state.active);
+
+  /** @type {[string, string][]} */
+  const idle = [["", state.active ? "loading\u2026" : "no chat"]];
+  const models = state.models.map((model) => /** @type {[string, string]} */ ([modelKey(model), modelLabel(model)]));
+
+  fill(el.model, models.length > 0 ? models : idle, state.modelKey, ready);
+
+  const levels = state.thinkingLevels.length > 0 ? state.thinkingLevels : [state.thinking].filter(Boolean);
+  const options = levels.map((level) => /** @type {[string, string]} */ ([level, level]));
+  fill(el.thinking, [["default", "default"], ...options], state.thinkingChoice, ready);
+  el.thinking.title = state.thinking ? `thinking: ${state.thinking}` : "Thinking level";
+}
+
+/**
+ * Fill a <select> without losing the choice when pi sends a new list.
+ *
+ * @param {HTMLSelectElement} node
+ * @param {[string, string][]} options
+ * @param {string} value
+ * @param {boolean} enabled
+ */
+function fill(node, options, value, enabled) {
+  node.replaceChildren(
+    ...options.map(([key, label]) => {
+      const option = document.createElement("option");
+      option.value = key;
+      option.textContent = label;
+      return option;
+    }),
+  );
+  if (options.some(([key]) => key === value)) node.value = value;
+  node.disabled = !enabled || options.length === 0;
+}
+
+async function pickModel() {
+  const model = state.models.find((item) => modelKey(item) === el.model.value);
+  if (!model) return;
+
+  state.model = modelLabel(model);
+  state.modelKey = modelKey(model);
+  state.thinkingChoice = "default";
+  renderPickers();
+
+  await sendCommand({ type: "set_model", provider: model.provider ?? "", modelId: model.id });
+  ask("get_available_thinking_levels");
+}
+
+function pickThinking() {
+  const wanted = el.thinking.value;
+  state.thinkingChoice = wanted;
+
+  const level = wanted === "default" ? state.thinkingDefault : wanted;
+  if (level && level !== state.thinking) void sendCommand({ type: "set_thinking_level", level });
+  else renderPickers();
+}
+
+// -------------------------------------------------------------------- diff
+
+async function refreshGit() {
+  if (!state.active) return;
+  const id = state.active;
+
+  try {
+    status = /** @type {GitStatus} */ (
+      await getJSON(`/api/git/status?id=${encodeURIComponent(id)}&base=${encodeURIComponent(state.base)}`)
+    );
+  } catch {
+    status = null;
+  }
+  if (id !== state.active) return;
+
+  el.base.textContent = status?.label ?? state.base;
+  el.branch.textContent = status?.branch
+    ? `${status.branch}${status.ahead ? ` ↑${status.ahead}` : ""}${status.behind ? ` ↓${status.behind}` : ""}`
+    : "";
+
+  const problem = gitHint(status?.errorMessage);
+  if (problem) {
+    el.diffBody.replaceChildren(element("div", "diff-empty", problem));
+    el.diffHead.replaceChildren(span(problem, "muted"));
+    return;
+  }
+
+  const text = await fetchText(`/api/git/diff?id=${encodeURIComponent(id)}&base=${encodeURIComponent(state.base)}`);
+  if (id !== state.active) return;
+
+  const files = parseDiff(text);
+  el.diffBody.replaceChildren(...files.map(diffFile));
+  el.diffHead.replaceChildren(
+    span(`${files.length} files`),
+    ...files.map((file) => {
+      const chip = button(`${file.path} +${file.adds} −${file.dels}`, async () => {
+        await navigator.clipboard.writeText(file.patch);
+        toast("patch copied");
+      });
+      chip.className = "chip file";
+      return chip;
+    }),
+  );
+}
+
+const git_messages = /** @type {Record<string, string>} */ ({
+  "not a git repository": "no git repository in this folder",
+  "diff too large": "diff too large to preview",
+  "git diff failed": "git diff failed",
+});
+
+/** @param {string | null | undefined} message @returns {string} */
+function gitHint(message) {
+  if (!message) return "";
+  return git_messages[message] ?? message;
+}
+
+/** @param {import("./diff.js").FileDiff} file */
+function diffFile(file) {
+  const wrap = element("div", "diff-file");
+  const name = element("div", "diff-name");
+  name.append(file.path, span(` +${file.adds}`, "plus"), span(` −${file.dels}`, "minus"));
+  wrap.append(name);
+
+  for (const hunk of file.hunks) {
+    const box = element("div", "hunk");
+    box.append(span(hunk.header, "hunk-head"));
+    for (const row of hunk.rows) {
+      const line = element("div", `row ${row.kind}`);
+      line.append(
+        span(row.old === null ? "" : String(row.old), "no"),
+        span(row.new === null ? "" : String(row.new), "no"),
+        span(row.text, "code"),
+      );
+      box.append(line);
+    }
+    wrap.append(box);
+  }
+  return wrap;
+}
+
+function cycleBase() {
+  const order = ["working", "staged", "branch:main", "branch:master"];
+  state.base = order[(order.indexOf(state.base) + 1) % order.length] ?? "working";
+  void refreshGit();
+}
+
+function toggleDiff() {
+  const panel = document.getElementById("diff-panel");
+  if (!panel) return;
+  panel.hidden = !panel.hidden;
+  if (!panel.hidden) void refreshGit();
+}
+
+/** @param {Event} event */
+function closeDiff(event) {
+  const panel = document.getElementById("diff-panel");
+  if (panel && !panel.hidden) {
+    event.preventDefault();
+    panel.hidden = true;
+  }
+}
+
+/** @param {string} path */
+async function fetchText(path) {
+  try {
+    return await (await request(path)).text();
+  } catch {
+    return "";
+  }
+}
+
+// --------------------------------------------------------------- settings
+
+async function loadSettings() {
+  const payload = await getJSON("/api/settings").catch(() => null);
+  state.ui = payload?.ui ?? payload ?? {};
+  applyUi();
+}
+
+function applyUi() {
+  const root = document.documentElement;
+  root.dataset.theme = state.ui.theme ?? "dark";
+  root.style.setProperty("--sidebar-width", `${state.ui.sidebar_width ?? 264}px`);
+  root.style.fontSize = "14px";
+}
+
+async function showSettings() {
+  el.settingsModal.hidden = false;
+  el.settingsModal.replaceChildren(
+    card(
+      "Settings",
+      toggle("theme", "Light theme", state.ui.theme === "light", (on) => void saveUi({ theme: on ? "light" : "dark" })),
+      choice(
+        "sendmode",
+        "While Pi is working",
+        [
+          ["steer", "Steer into the run"],
+          ["queue", "Queue after the run"],
+        ],
+        state.ui.send_mode === "queue" ? "queue" : "steer",
+        (value) => void saveUi({ send_mode: /** @type {"steer" | "queue"} */ (value) }),
+      ),
+      toggle("thinking", "Show thinking", state.ui.show_thinking === true, (on) =>
+        void saveUi({ show_thinking: on }),
+      ),
+      toggle("enter", "Enter sends", state.ui.send_on_enter !== false, (on) =>
+        void saveUi({ send_on_enter: on }),
+      ),
+      toggle("sidebar", "Sidebar", state.ui.sidebar !== false, (on) => void saveUi({ sidebar: on })),
+      actionsRow(),
+    ),
+  );
+}
+
+/** @param {Partial<Ui>} patch */
+async function saveUi(patch) {
+  try {
+    const ui = await postJSON("/api/settings", { ui: patch });
+    if (ui) state.ui = ui;
+    applyUi();
+    render();
+  } catch (error) {
+    toast(error instanceof Error ? error.message : "save failed");
+  }
+}
+
+function actionsRow() {
+  const row = element("div", "row-buttons");
+  row.append(
+    button("Close", () => {
+      el.settingsModal.hidden = true;
+    }),
+    button("Sign out", async () => {
+      await postJSON("/api/logout", {}).catch(() => {});
+      location.reload();
+    }),
+  );
+  return row;
+}
+
+// ----------------------------------------------------------------- helpers
+
+/** @returns {TabInfo | null} */
+function active() {
+  return state.tabs.find((tab) => tab.id === state.active) ?? null;
+}
+
+/** @param {TabInfo} tab */
+function labelOf(tab) {
+  if (tab.sessionName && tab.sessionName.length > 0) return tab.sessionName;
+  const resume = state.sessions.find((entry) => entry.path === tab.sessionPath);
+  if (resume?.first_text) return firstLine(resume.first_text);
+  if (!isProjectCwd(tab.cwd)) return "Chat";
+  return basename(tab.cwd);
+}
+
+/**
+ * @param {string} tag
+ * @param {string} [className]
+ * @param {string} [content]
+ * @returns {HTMLElement}
+ */
+function element(tag, className, content) {
+  const node = document.createElement(tag);
+  if (className) node.className = className;
+  if (content) node.textContent = content;
+  return node;
+}
+
+/** Filled in the first time a spinner is built, from the stylesheet. */
+let spinPeriod = 0;
+
+/**
+ * The ring that says something is happening. The transcript and the sidebar are
+ * rebuilt while pi works, and a new element starts its animation at zero, so a
+ * rebuilt spinner only jitters. Starting it at the point the clock has already
+ * reached makes every replacement a continuation of the same turn.
+ *
+ * @returns {HTMLElement}
+ */
+function spinner() {
+  const node = element("span", "spinner");
+  turnTo(node);
+  return node;
+}
+
+/**
+ * @param {HTMLElement} node
+ */
+function turnTo(node) {
+  if (spinPeriod === 0) {
+    const raw = getComputedStyle(document.documentElement).getPropertyValue("--spin-period");
+    const value = Number.parseFloat(raw);
+    spinPeriod = Number.isFinite(value) && value > 0 ? (raw.includes("ms") ? value : value * 1000) : 900;
+  }
+  node.style.animationDelay = `${-(Date.now() % spinPeriod)}ms`;
+}
+
+/**
+ * @param {string} value
+ * @param {string} [className]
+ * @returns {HTMLElement}
+ */
+function span(value, className) {
+  return element("span", className, value);
+}
+
+/**
+ * @param {string} label
+ * @param {() => void} onclick
+ * @returns {HTMLButtonElement}
+ */
+function button(label, onclick) {
+  const node = /** @type {HTMLButtonElement} */ (element("button", "button", label));
+  node.onclick = onclick;
+  return node;
+}
+
+/**
+ * @param {string} name
+ * @param {string} label
+ * @param {boolean} checked
+ * @param {(value: boolean) => void} onchange
+ * @returns {HTMLElement}
+ */
+function toggle(name, label, checked, onchange) {
+  const row = /** @type {HTMLElement} */ (element("label", `setting ${name}`));
+  const box = /** @type {HTMLInputElement} */ (element("input"));
+  box.type = "checkbox";
+  box.checked = checked;
+  box.onchange = () => onchange(box.checked);
+  row.append(box, span(label));
+  return row;
+}
+
+/**
+ * @param {string} name
+ * @param {string} label
+ * @param {[string, string][]} options
+ * @param {string} value
+ * @param {(value: string) => void} onchange
+ * @returns {HTMLElement}
+ */
+function choice(name, label, options, value, onchange) {
+  const row = /** @type {HTMLElement} */ (element("label", `setting ${name}`));
+  const select = /** @type {HTMLSelectElement} */ (element("select"));
+
+  for (const [at, text] of options) {
+    const option = document.createElement("option");
+    option.value = at;
+    option.textContent = text;
+    option.selected = at === value;
+    select.append(option);
+  }
+
+  select.onchange = () => onchange(select.value);
+  row.append(span(label), select);
+  return row;
+}
+
+/**
+ * @param {string} title
+ * @param {HTMLElement[]} children
+ * @returns {HTMLElement}
+ */
+function card(title, ...children) {
+  const box = element("div", "card");
+  box.append(span(title, "card-title"), ...children);
+  return box;
+}
+
+/** @param {string} label */
+function groupLabel(label) {
+  return element("div", "group-label", label);
+}
+
+/**
+ * @template T
+ * @param {T[]} items
+ * @param {(item: T) => string} key
+ * @returns {Map<string, T[]>}
+ */
+function groupBy(items, key) {
+  const out = new Map();
+  for (const item of items) {
+    const list = out.get(key(item)) ?? [];
+    list.push(item);
+    out.set(key(item), list);
+  }
+  return out;
+}
+
+/** @param {unknown} value */
+function flatten(value) {
+  if (typeof value === "string") return value;
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    const content = /** @type {{content?: unknown}} */ (value).content;
+    if (content !== undefined) return flatten(content);
+  }
+  if (Array.isArray(value)) {
+    return value
+      .map((part) => {
+        if (typeof part === "string") return part;
+        const block = /** @type {{type?: string, text?: string, mimeType?: string}} */ (part);
+        if (block?.type === "text") return block.text ?? "";
+        if (block?.type === "image") return `[image ${block.mimeType ?? "?"}]`;
+        return JSON.stringify(part);
+      })
+      .join("\n");
+  }
+  return value === null || value === undefined ? "" : JSON.stringify(value);
+}
+
+/** @param {import("./protocol.js").Usage} usage */
+function usageLine(usage) {
+  const parts = [`${tokens(usage.input ?? 0)} in`, `${tokens(usage.output ?? 0)} out`];
+  if (usage.cacheRead) parts.push(`${tokens(usage.cacheRead)} Cache`);
+  if (usage.cost?.total) parts.push(cost(usage.cost.total));
+  return parts.join(" · ");
+}
+
+function grow() {
+  el.input.style.height = "auto";
+  el.input.style.height = `${Math.min(Number(el.input.scrollHeight), 260)}px`;
+}
+
+/** @param {string} message */
+/** @type {ReturnType<typeof setTimeout> | null} */
+let toastTimer = null;
+
+/**
+ * @param {string} message
+ * @param {number} [ms]
+ */
+function toast(message, ms = 4500) {
+  el.toast.textContent = message;
+  el.toast.hidden = false;
+  if (toastTimer) clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => {
+    el.toast.hidden = true;
+    toastTimer = null;
+  }, ms);
+}
