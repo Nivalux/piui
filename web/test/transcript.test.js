@@ -215,3 +215,77 @@ test("tool details survive the live event and the replay", () => {
 
   assert.deepEqual(replayed.blocks[0].details, { patch: "@@ -1 +1 @@", firstChangedLine: 1 });
 });
+
+test("a picture a tool read stays a picture", () => {
+  const live = new Transcript();
+  live.event({ type: "tool_execution_start", toolCallId: "c9", toolName: "read", args: { path: "/tmp/pick.png" } });
+  live.event({
+    type: "tool_execution_end",
+    toolCallId: "c9",
+    toolName: "read",
+    result: {
+      content: [
+        { type: "text", text: "Read image file [image/png]" },
+        { type: "image", mimeType: "image/png", data: "aGVsbG8=" },
+      ],
+    },
+    isError: false,
+  });
+
+  assert.deepEqual(live.blocks[0].images, [{ mimeType: "image/png", data: "aGVsbG8=" }]);
+
+  const replayed = new Transcript();
+  replayed.replay([
+    { role: "assistant", content: [{ type: "toolCall", id: "c9", name: "read", arguments: { path: "/tmp/pick.png" } }] },
+    {
+      role: "toolResult",
+      toolCallId: "c9",
+      toolName: "read",
+      content: [{ type: "image", mimeType: "image/jpeg", data: "aGk=" }],
+    },
+  ]);
+
+  assert.deepEqual(replayed.blocks[0].images, [{ mimeType: "image/jpeg", data: "aGk=" }]);
+});
+
+test("a replayed tool keeps how long it took", () => {
+  const transcript = new Transcript();
+
+  transcript.replay([
+    {
+      role: "assistant",
+      content: [{ type: "toolCall", id: "c1", name: "bash", arguments: { command: "make" } }],
+      timestamp: 1_700_000_000_000,
+    },
+    {
+      role: "toolResult",
+      toolCallId: "c1",
+      toolName: "bash",
+      content: [{ type: "text", text: "done" }],
+      timestamp: 1_700_000_009_000,
+    },
+  ]);
+
+  const [block] = transcript.blocks;
+  assert.equal(block.doneAt !== undefined && block.doneAt - (block.startedAt ?? 0), 9_000);
+});
+
+test("a chat that is still working replays with its tool still open", () => {
+  /** @type {import("../protocol.js").Message[]} */ const messages = [
+    {
+      role: "assistant",
+      content: [{ type: "toolCall", id: "c1", name: "bash", arguments: { command: "make" } }],
+      timestamp: 1_700_000_000_000,
+    },
+  ];
+
+  const running = new Transcript();
+  running.replay(messages, true);
+  assert.equal(running.blocks[0].done, false, "the bash is still running");
+  assert.equal(running.running, true);
+  assert.equal(running.blocks[0].startedAt, 1_700_000_000_000, "and its clock knows when it began");
+
+  const settled = new Transcript();
+  settled.replay(messages, false);
+  assert.equal(settled.blocks[0].done, true, "a chat at rest has no open tool");
+});

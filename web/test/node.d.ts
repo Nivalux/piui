@@ -20,6 +20,7 @@ declare module "node:test" {
 
 declare module "node:assert/strict" {
   export function equal(actual: unknown, expected: unknown, message?: string): void;
+  export function notEqual(actual: unknown, expected: unknown, message?: string): void;
   export function ok(value: unknown, message?: string): asserts value;
   export function deepEqual(actual: unknown, expected: unknown, message?: string): void;
   export function match(value: string, pattern: RegExp, message?: string): void;
@@ -29,7 +30,7 @@ declare module "node:fs" {
   export function readFileSync(path: string | URL, encoding: "utf8"): string;
   export function existsSync(path: string): boolean;
   export function chmodSync(path: string, mode: number): void;
-  export function writeFileSync(path: string, data: string): void;
+  export function writeFileSync(path: string | URL, data: string, encoding?: "utf8" | "base64"): void;
   export function mkdtempSync(prefix: string): string;
   export function mkdirSync(path: string, options?: { recursive?: boolean }): void;
 }
@@ -48,6 +49,11 @@ declare module "node:child_process" {
     args: string[],
     options: { cwd: string; stdio: ["ignore", "pipe", "pipe"] },
   ): ChildProcess;
+  export function spawnSync(
+    command: string,
+    args: string[],
+    options: { cwd: string; env?: Record<string, string> },
+  ): { status: number | null; stderr: string };
 }
 
 declare module "node:module" {

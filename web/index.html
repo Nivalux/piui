@@ -44,73 +44,127 @@
 
       <main class="main">
         <header class="top">
+          <button id="sidebar-toggle" class="chip" title="Hide the sidebar (Ctrl+B)">☰</button>
           <div id="tab-title" class="title"></div>
           <div id="tab-cwd" class="cwd muted"></div>
           <div id="branch" class="muted"></div>
           <div class="spacer"></div>
-          <button id="base" class="chip" title="Diff against what">working</button>
-          <button id="diff-toggle" class="chip" title="Collapse or expand the diff (Esc)">Diff</button>
-          <button id="kill" class="chip" title="Close this tab">✕</button>
-        </header>
-
-        <section id="diff-panel" class="diff" hidden>
-          <div id="diff-head" class="diff-head"></div>
-          <div id="diff-body" class="diff-body"></div>
-        </section>
-
-        <section class="stream">
-          <section id="transcript" class="transcript"></section>
-          <button id="jump" class="jump" hidden title="Jump to the newest message">
+          <button id="panel-toggle" class="chip icon" title="Files and diff (Ctrl+J)">
             <svg
               viewBox="0 0 24 24"
-              width="15"
-              height="15"
+              width="14"
+              height="14"
               fill="none"
               stroke="currentColor"
-              stroke-width="2"
-              stroke-linecap="round"
-              stroke-linejoin="round"
+              stroke-width="1.8"
+              aria-hidden="true"
             >
-              <path d="M12 5v14M5 12l7 7 7-7" />
+              <rect x="3" y="4" width="18" height="16" rx="2" />
+              <path d="M15 4v16" />
             </svg>
           </button>
-        </section>
+          <button id="kill" class="chip icon" title="Close this tab">✕</button>
+        </header>
 
-        <div class="composer">
-          <div id="queue" class="queue" hidden></div>
-          <div id="attachments" class="attachments" hidden></div>
-          <div id="palette" class="palette" hidden></div>
-          <textarea
-            id="input"
-            rows="2"
-            spellcheck="false"
-            placeholder="Message · / for commands · paste an image"
-          ></textarea>
-          <div class="composer-foot">
-            <select id="model" class="picker" title="Model"></select>
-            <select id="thinking" class="picker" title="Thinking level"></select>
-            <span id="busy" class="busy" hidden>
-              <span class="spinner"></span>
-              <span id="busy-time"></span>
-            </span>
-            <span id="status" class="muted"></span>
-            <span id="rate" class="rate"></span>
-            <span id="context" class="context" hidden>
-              <svg class="ring" viewBox="0 0 20 20" aria-hidden="true">
-                <circle class="track" cx="10" cy="10" r="7.5"></circle>
-                <circle id="context-ring" class="used" cx="10" cy="10" r="7.5"></circle>
-              </svg>
-              <span id="context-pct"></span>
-            </span>
-            <button id="abort" class="button" hidden>Cancel</button>
-            <button id="send" class="button primary">Send</button>
+        <nav id="view-tabs" class="views"></nav>
+
+        <div class="work">
+          <div class="center">
+            <section id="stream" class="stream">
+              <section id="transcript" class="transcript"></section>
+              <button id="jump" class="jump" hidden title="Jump to the newest message">
+                <svg
+                  viewBox="0 0 24 24"
+                  width="15"
+                  height="15"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <path d="M12 5v14M5 12l7 7 7-7" />
+                </svg>
+              </button>
+            </section>
+
+            <section id="file-view" class="file-view" hidden>
+              <div id="file-head" class="file-head"></div>
+              <div id="file-body" class="file-body"></div>
+            </section>
+
+            <div id="composer" class="composer">
+              <div id="queue" class="queue" hidden></div>
+              <div id="attachments" class="attachments" hidden></div>
+              <div id="palette" class="palette" hidden></div>
+              <textarea
+                id="input"
+                rows="2"
+                spellcheck="false"
+                placeholder="Message · / for commands · paste or drop an image"
+              ></textarea>
+              <div class="composer-foot">
+                <select id="model" class="picker" title="Model"></select>
+                <select id="thinking" class="picker" title="Thinking level"></select>
+                <span id="busy" class="busy" hidden>
+                  <span class="spinner"></span>
+                  <span id="busy-time"></span>
+                </span>
+                <span id="status" class="muted"></span>
+                <span id="rate" class="rate"></span>
+                <span id="context" class="context" hidden>
+                  <svg class="ring" viewBox="0 0 20 20" aria-hidden="true">
+                    <circle class="track" cx="10" cy="10" r="7.5"></circle>
+                    <circle id="context-ring" class="used" cx="10" cy="10" r="7.5"></circle>
+                  </svg>
+                  <span id="context-pct"></span>
+                </span>
+                <button id="attach" class="chip icon" title="Add pictures — or drop them anywhere here" aria-label="Add pictures">
+                  <svg
+                    viewBox="0 0 24 24"
+                    width="14"
+                    height="14"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="1.7"
+                    stroke-linecap="round"
+                  >
+                    <path d="M20 11.6 12.5 19a4.6 4.6 0 0 1-6.5-6.5l7.8-7.8a3.1 3.1 0 0 1 4.4 4.4l-7.8 7.8a1.6 1.6 0 0 1-2.2-2.2l7-7" />
+                  </svg>
+                </button>
+                <input id="attach-input" type="file" accept="image/*" multiple hidden />
+                <button id="abort" class="button" hidden>Cancel</button>
+                <button id="send" class="button primary">Send</button>
+              </div>
+            </div>
           </div>
+
+          <aside id="side-panel" class="panel" hidden>
+            <div class="panel-head">
+              <button id="panel-diff-tab" class="panel-tab" title="What changed (Esc closes the panel)">Diff</button>
+              <button id="panel-files-tab" class="panel-tab" title="Every file of this project">Files</button>
+              <button id="base" class="chip" title="Diff against what">working</button>
+              <button id="panel-close" class="panel-close" title="Close">✕</button>
+            </div>
+            <div id="panel-diff" class="panel-body diff">
+              <div id="diff-head" class="diff-head"></div>
+              <div id="diff-body" class="diff-body"></div>
+            </div>
+            <div id="panel-files" class="panel-body files" hidden>
+              <input id="file-filter" class="filter" type="search" placeholder="filter files" spellcheck="false" />
+              <div id="file-crumbs" class="file-crumbs" hidden></div>
+              <div id="file-list" class="file-list"></div>
+            </div>
+          </aside>
         </div>
       </main>
     </div>
 
     <div id="settings-modal" class="modal" hidden></div>
     <div id="dir-modal" class="modal" hidden></div>
+    <div id="lightbox" class="lightbox" hidden>
+      <img id="lightbox-img" class="lightbox-img" alt="" />
+    </div>
     <div id="toast" class="toast" hidden></div>
 
     <script type="module" src="/app.js"></script>

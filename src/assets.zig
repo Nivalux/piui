@@ -22,6 +22,7 @@ pub const files = [_]Asset{
     .{ .name = "/tabs.js", .mime = "text/javascript; charset=utf-8", .body = @embedFile("../web/tabs.js") },
     .{ .name = "/filter.js", .mime = "text/javascript; charset=utf-8", .body = @embedFile("../web/filter.js") },
     .{ .name = "/dirview.js", .mime = "text/javascript; charset=utf-8", .body = @embedFile("../web/dirview.js") },
+    .{ .name = "/panel.js", .mime = "text/javascript; charset=utf-8", .body = @embedFile("../web/panel.js") },
 };
 
 pub fn lookup(name: []const u8) ?Asset {

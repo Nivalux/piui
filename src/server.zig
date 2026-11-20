@@ -5,6 +5,7 @@ const sessions = @import("sessions.zig");
 const settings = @import("settings.zig");
 const git = @import("git.zig");
 const dirs = @import("dirs.zig");
+const files = @import("files.zig");
 const json = @import("json.zig");
 const assets = @import("assets.zig");
 const protocol = @import("protocol.zig");
@@ -162,6 +163,27 @@ pub const Server = struct {
                 else => return self.text(request, .internal_server_error, "git diff failed"),
             };
             return self.respond(request, .ok, "text/plain; charset=utf-8", body);
+        }
+
+        if (std.mem.eql(u8, path, "/api/files")) {
+            const tab = self.tabFor(request, a) orelse return self.text(request, .not_found, "no such tab");
+            const listing = files.list(a, io, tab.cwd, files.max_list) catch
+                return self.text(request, .not_found, "cannot read this folder");
+            const payload = json.encode(a, listing) catch return self.text(request, .internal_server_error, "encode");
+            return self.respond(request, .ok, "application/json", payload);
+        }
+
+        if (std.mem.eql(u8, path, "/api/file")) {
+            const tab = self.tabFor(request, a) orelse return self.text(request, .not_found, "no such tab");
+            const wanted = query(a, target, "path") orelse return self.text(request, .bad_request, "no path given");
+            const content = files.read(a, io, tab.cwd, wanted) catch |err| return switch (err) {
+                error.Outside => self.text(request, .forbidden, "outside this project"),
+                error.NotFile => self.text(request, .conflict, "that is a folder"),
+                error.NotFound => self.text(request, .not_found, "no such file"),
+                error.OutOfMemory => self.text(request, .internal_server_error, "oom"),
+            };
+            const payload = json.encode(a, content) catch return self.text(request, .internal_server_error, "encode");
+            return self.respond(request, .ok, "application/json", payload);
         }
 
         if (std.mem.eql(u8, path, "/api/settings")) return self.settings(request, a);
@@ -403,11 +425,35 @@ pub const Server = struct {
             const full = std.fs.path.join(a, &.{ root, relative }) catch
                 return self.text(request, .internal_server_error, "oom");
             const content = readFile(a, self.options.io, full) catch return self.text(request, .not_found, "missing");
-            return self.respond(request, .ok, mime(relative), content);
+            return self.sendAsset(request, a, mime(relative), content);
         }
 
         const asset = assets.lookup(path) orelse return self.text(request, .not_found, "missing");
-        return self.respond(request, .ok, asset.mime, asset.body);
+        return self.sendAsset(request, a, asset.mime, asset.body);
+    }
+
+    /// Pages and scripts are baked into the binary, so a rebuild changes them, and
+    /// a tab that has been open since the previous server keeps running the
+    /// script it arrived with. The browser is told to ask every time, and gets a
+    /// bare 304 when the bytes are the ones it already has.
+    fn sendAsset(
+        self: *Server,
+        request: *std.http.Server.Request,
+        a: std.mem.Allocator,
+        kind: []const u8,
+        body: []const u8,
+    ) !void {
+        const tag = std.fmt.allocPrint(a, "\"{x:0>16}\"", .{fingerprint(body)}) catch
+            return self.text(request, .internal_server_error, "oom");
+        const headers = [_]std.http.Header{
+            .{ .name = "etag", .value = tag },
+            .{ .name = "cache-control", .value = "no-cache" },
+        };
+
+        if (headerValue(request.head_buffer, "if-none-match")) |sent| {
+            if (std.mem.eql(u8, sent, tag)) return self.respondWith(request, .not_modified, kind, "", &headers);
+        }
+        return self.respondWith(request, .ok, kind, body, &headers);
     }
 
     fn readBody(_: *Server, request: *std.http.Server.Request, a: std.mem.Allocator) ![]u8 {
@@ -555,4 +601,31 @@ fn unescape(a: std.mem.Allocator, value: []const u8) []const u8 {
     if (std.mem.indexOfScalar(u8, value, '%') == null) return value;
     const buffer = a.alloc(u8, value.len) catch return value;
     return std.Uri.percentDecodeBackwards(buffer, value);
+}
+
+/// A request head is kept as raw bytes, so a header is read out of them here.
+fn headerValue(head: []const u8, name: []const u8) ?[]const u8 {
+    var lines = std.mem.splitScalar(u8, head, '\n');
+    while (lines.next()) |line| {
+        const colon = std.mem.indexOfScalar(u8, line, ':') orelse continue;
+        if (!std.ascii.eqlIgnoreCase(line[0..colon], name)) continue;
+        const value = std.mem.trim(u8, line[colon + 1 ..], " \t\r");
+        if (value.len == 0) return null;
+        return value;
+    }
+    return null;
+}
+
+fn fingerprint(text: []const u8) u64 {
+    var hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for (text) |byte| {
+        hash ^= byte;
+        hash *%= 0x0000_0100_0000_01b3;
+    }
+    return hash;
+}
+
+test "an asset fingerprint moves when a byte moves" {
+    try std.testing.expectEqual(fingerprint("web/app.js"), fingerprint("web/app.js"));
+    try std.testing.expect(fingerprint("web/app.js") != fingerprint("web/app-js"));
 }

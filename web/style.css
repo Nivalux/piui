@@ -124,8 +124,18 @@ pre,
 
 .shell {
   display: grid;
-  grid-template-columns: 260px 1fr;
+  grid-template-columns: var(--sidebar-width, 264px) minmax(0, 1fr);
   height: 100vh;
+}
+
+/* Collapsed means gone, not thin. A hairline column still reads as a panel
+   that broke, and still catches the click meant for the chat next to it. */
+.shell.side-collapsed {
+  grid-template-columns: 0 minmax(0, 1fr);
+}
+
+.shell.side-collapsed .sidebar {
+  display: none;
 }
 
 .sidebar {
@@ -364,26 +374,318 @@ pre,
 
 .main {
   display: grid;
-  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  grid-column: 2;
   min-width: 0;
   min-height: 0;
   overflow: hidden;
 }
 
-.main > .top {
-  grid-row: 1;
+/* The middle row: the chat (or the file being read) and the side panel next to
+   it. Both scroll on their own, so a long diff cannot push the composer away. */
+.work {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
 }
 
-.main > .diff {
-  grid-row: 2;
+.center {
+  display: grid;
+  /* The chat is positioned so it can host the jump button, and a positioned box
+     paints above the panel beside it. Clipped here, the two never trade pixels
+     when a wide line pushes the column past its share. */
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr) auto;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
 }
 
-.main > .transcript {
-  grid-row: 3;
+/* ---------------------------------------------------------------- view tabs */
+
+/* The chat is one tab among the views of the main area: a file opened from the
+   panel lands next to it rather than in front of it. */
+.views {
+  display: flex;
+  align-items: flex-end;
+  gap: 3px;
+  padding: 6px 10px 0;
+  border-bottom: 1px solid var(--line);
+  background: var(--bg-soft);
+  overflow-x: auto;
+  scrollbar-width: thin;
 }
 
-.main > .composer {
-  grid-row: 4;
+.view {
+  display: flex;
+  align-items: center;
+}
+
+.view-tab {
+  padding: 5px 10px;
+  border: 1px solid transparent;
+  border-bottom: none;
+  border-radius: 8px 8px 0 0;
+  background: none;
+  color: var(--fg-soft);
+  font: 12px var(--mono);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.view-tab:hover {
+  color: var(--fg);
+}
+
+/* Italic is the borrowed look: this file is open because something was clicked
+   on the way past, and the next click will take it away. */
+.view-tab.preview {
+  font-style: italic;
+}
+
+.view.on .view-tab {
+  color: var(--fg);
+  background: var(--bg);
+  border-color: var(--line);
+}
+
+.view-close {
+  padding: 4px 7px;
+  border: 1px solid var(--line);
+  border-left: none;
+  border-radius: 0 8px 0 0;
+  background: none;
+  color: var(--fg-soft);
+  font-size: 11px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.view-close:hover {
+  color: var(--del-text);
+}
+
+.view.on .view-close {
+  background: var(--bg);
+}
+
+/* --------------------------------------------------------------- side panel */
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  flex: 0 0 auto;
+  width: var(--files-width, 340px);
+  min-width: 240px;
+  min-height: 0;
+  border-left: 1px solid var(--line);
+  background: var(--bg-soft);
+}
+
+.panel-head {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--line);
+}
+
+.panel-tab,
+.panel-close,
+.file-copy {
+  padding: 4px 10px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: none;
+  color: var(--fg-soft);
+  font: 12px var(--mono);
+  cursor: pointer;
+}
+
+.panel-tab:hover,
+.panel-close:hover,
+.file-copy:hover {
+  color: var(--fg);
+  background: var(--bg-raise);
+}
+
+.panel-tab.on {
+  color: var(--fg);
+  background: var(--bg-raise);
+  border-color: var(--line);
+}
+
+/* What to diff against belongs to the diff tab and sits where it is used. */
+.panel-head .chip {
+  margin-left: auto;
+}
+
+.panel-close {
+  padding: 4px 8px;
+}
+
+.panel-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+}
+
+.file-list {
+  display: flex;
+  flex-direction: column;
+  padding-bottom: 10px;
+}
+
+/* Where the list is standing. The whole trail stays clickable, because jumping
+   back two folders one at a time is the part that wears. */
+.file-crumbs {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 5px 10px;
+  background: var(--bg-soft);
+  border-bottom: 1px solid var(--line);
+  font: 11px var(--mono);
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.file-crumbs[hidden] {
+  display: none;
+}
+
+.crumb {
+  padding: 1px 4px;
+  border: none;
+  border-radius: 4px;
+  background: none;
+  color: var(--fg-soft);
+  font: inherit;
+  cursor: pointer;
+}
+
+.crumb:hover {
+  background: var(--bg-raise);
+  color: var(--fg);
+}
+
+.crumb-sep {
+  color: var(--fg-dim);
+}
+
+.file-glyph {
+  width: 10px;
+  color: var(--fg-dim);
+  font-size: 10px;
+}
+
+.st-path {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  width: 100%;
+  padding: 5px 12px;
+  border: none;
+  background: none;
+  color: var(--fg);
+  font: 12px var(--mono);
+  text-align: left;
+  cursor: pointer;
+}
+
+.file-row:hover {
+  background: var(--bg-raise);
+}
+
+.file-name {
+  white-space: nowrap;
+}
+
+.file-dir {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: rtl;
+  color: var(--fg-soft);
+  opacity: 0.75;
+  font-size: 11px;
+}
+
+.file-empty,
+.file-more {
+  padding: 9px 12px;
+  color: var(--fg-soft);
+  font: 12px var(--mono);
+}
+
+/* ---------------------------------------------------------------- file view */
+
+.file-view {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.file-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--line);
+  font: 12px var(--mono);
+  color: var(--fg-soft);
+}
+
+.file-path {
+  min-width: 0;
+  color: var(--fg);
+  overflow-wrap: anywhere;
+}
+
+.file-copy {
+  margin-left: auto;
+}
+
+.file-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: 8px 0;
+  font: 12px/1.55 var(--mono);
+}
+
+.code-line {
+  display: flex;
+  gap: 12px;
+  padding: 0 14px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.code-line .ln {
+  min-width: 4ch;
+  text-align: right;
+  color: var(--fg-soft);
+  opacity: 0.5;
+  user-select: none;
+}
+
+.code-line .lc {
+  flex: 1 1 auto;
+  min-width: 0;
 }
 
 .top {
@@ -446,6 +748,16 @@ pre,
 
 .chip:hover {
   color: var(--fg);
+}
+
+.chip.icon {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 7px;
+}
+
+.chip.icon svg {
+  display: block;
 }
 
 /* ------------------------------------------------------------ transcript */
@@ -742,9 +1054,61 @@ pre,
   max-width: 200px;
   border-radius: 8px;
   border: 1px solid var(--line);
+  display: block;
+  background: var(--bg-soft);
+}
+
+.shot {
+  position: relative;
+  display: inline-flex;
+  align-self: flex-start;
   margin-top: 6px;
-  display: inline-block;
+  padding: 0;
+  border: none;
+  background: none;
   cursor: zoom-in;
+}
+
+.shot .zoom {
+  position: absolute;
+  inset: 0;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  color: #f4f5f7;
+  background: rgba(10, 11, 14, 0.45);
+}
+
+.shot:hover .zoom {
+  display: flex;
+}
+
+/* The whole window goes soft behind it, so the picture is the only thing left
+   to look at. Click anywhere, or Escape, to fall back through. */
+.lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 26px;
+  background: rgba(8, 9, 12, 0.62);
+  backdrop-filter: blur(14px) saturate(0.8);
+  cursor: zoom-out;
+}
+
+.lightbox[hidden] {
+  display: none;
+}
+
+.lightbox-img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  border-radius: 10px;
+  box-shadow: var(--shadow);
 }
 
 /* A closed tool or thought is one quiet line of the chat, not a box. Only what
@@ -872,6 +1236,19 @@ pre,
   color: var(--del);
 }
 
+/* Both clocks count up in place, so they keep a width of their own: "9.4s" and
+   "1m 05s" would otherwise shove the row a character wider every so often. The
+   digits are tabular and the text sits on its right edge, which is the edge
+   next to the content that must not move. */
+.block details summary .tick,
+#busy-time {
+  display: inline-block;
+  min-width: 6ch;
+  text-align: right;
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+}
+
 .block details > summary .spinner {
   align-self: center;
 }
@@ -951,9 +1328,6 @@ pre,
 /* ------------------------------------------------------------------ diff */
 
 .diff {
-  border-bottom: 1px solid var(--line);
-  max-height: 42vh;
-  overflow: auto;
   background: var(--bg-soft);
 }
 
@@ -980,15 +1354,88 @@ pre,
   font: 12px var(--mono);
 }
 
+.diff-count {
+  color: var(--fg-soft);
+  font: 11px var(--mono);
+}
+
+.diff-more {
+  color: var(--warn);
+  font: 11px var(--mono);
+}
+
+/* One line per file, the way `git status` reads. */
+.status-group {
+  padding: 9px 12px 3px;
+  color: var(--fg-dim);
+  font: 10px var(--mono);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.st-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  width: 100%;
+  padding: 4px 12px;
+  border: none;
+  background: none;
+  color: var(--fg);
+  font: 12px var(--mono);
+  text-align: left;
+  cursor: pointer;
+}
+
+.st-row:hover {
+  background: var(--bg-raise);
+  color: var(--accent);
+}
+
+.st-code {
+  min-width: 10px;
+  color: var(--fg-soft);
+}
+
+.st-code.st-new {
+  color: var(--add-text);
+}
+
+.st-code.st-gone {
+  color: var(--del-text);
+}
+
+.st-code.st-mod {
+  color: var(--warn);
+}
+
+.st-code.st-ren {
+  color: var(--accent);
+}
+
+.st-code.st-conf {
+  color: var(--del);
+  font-weight: 700;
+}
+
 .diff-file {
   padding-bottom: 10px;
 }
 
 .diff-name {
   display: block;
+  width: 100%;
   padding: 6px 12px;
-  color: var(--fg);
+  border: none;
   background: var(--bg-raise);
+  color: var(--fg);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.diff-name:hover {
+  color: var(--accent);
 }
 
 .hunk-head {
@@ -1069,6 +1516,17 @@ pre,
   border-color: var(--accent);
 }
 
+/* A file is over the box: say so before it is let go. */
+.composer[data-drop="on"] {
+  background: var(--bg-raise);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+.composer[data-drop="on"] textarea {
+  border-color: var(--accent);
+  border-style: dashed;
+}
+
 .queue {
   display: flex;
   flex-direction: column;
@@ -1140,6 +1598,14 @@ pre,
   cursor: default;
 }
 
+#attach {
+  margin-left: auto;
+}
+
+#attach ~ .button {
+  margin-left: 8px;
+}
+
 .composer-foot #abort + .button {
   margin-left: 8px;
 }
@@ -1197,8 +1663,15 @@ pre,
 
 .attachments {
   display: flex;
+  flex-wrap: wrap;
+  align-items: center;
   gap: 8px;
   margin-bottom: 6px;
+}
+
+.attach-note {
+  color: var(--warn);
+  font-size: 12px;
 }
 
 .attachment {
@@ -1211,9 +1684,23 @@ pre,
   font-size: 12px;
 }
 
+/* A fixed footprint, whatever the picture's own shape. Height alone let a tall
+   screenshot shrink to a few pixels wide, which is not a thumbnail anyone can
+   read, and a picture still decoding has no size at all. */
 .attachment img {
-  height: 28px;
+  width: 48px;
+  height: 34px;
+  object-fit: contain;
   border-radius: 4px;
+  background: var(--bg-raise);
+}
+
+.attachment.broken {
+  border-color: var(--warn);
+}
+
+.attachment.broken img {
+  opacity: 0.35;
 }
 
 .palette {
@@ -1538,10 +2025,87 @@ pre,
   border-color: var(--fg-dim);
 }
 
-/* Typed-into letters of a sidebar row. */
+/* Typed-into letters of a sidebar row or a file row. */
 .session-title mark,
-.tab-title mark {
+.tab-title mark,
+.file-name mark {
   color: var(--fg);
   background: var(--add-mark);
   border-radius: 2px;
+}
+
+/* ------------------------------------------------------------------ *
+ * The ⋯ that replaced right-click on a sidebar row. Hidden until the
+ * row is hovered, so a hundred rows stay quiet, but it is a real button:
+ * an action this destructive has to be aimed at.
+ * ------------------------------------------------------------------ */
+
+.session {
+  position: relative;
+  padding-right: 28px;
+}
+
+.tab {
+  position: relative;
+  padding-right: 28px;
+}
+
+.row-menu {
+  position: absolute;
+  right: 4px;
+  top: 4px;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 15px;
+  line-height: 18px;
+  cursor: pointer;
+  opacity: 0;
+}
+
+.session:hover .row-menu,
+.tab:hover .row-menu,
+.menu-open .row-menu {
+  opacity: 1;
+}
+
+.row-menu:hover {
+  background: var(--accent-dim);
+  color: var(--fg);
+}
+
+.row-actions {
+  position: fixed;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  min-width: 172px;
+  padding: 3px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: var(--bg);
+  box-shadow: 0 6px 18px rgb(0 0 0 / 45%);
+}
+
+.row-action {
+  padding: 5px 8px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--fg);
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.row-action:hover {
+  background: var(--accent-dim);
+}
+
+.row-action.danger {
+  color: var(--error);
 }

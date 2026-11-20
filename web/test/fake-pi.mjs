@@ -8,6 +8,8 @@
  * "the long one" and only a slow bash call runs, so a test can open a call that
  * is genuinely still going.
  */
+import fs from "node:fs";
+import path from "node:path";
 import readline from "node:readline";
 
 const send = (frame) => process.stdout.write(`${JSON.stringify(frame)}\n`);
@@ -28,6 +30,15 @@ const slow = {
   command: "sleep 6 && echo later",
   runsMs: Number(process.env.PIUI_FAKE_SLOW_MS ?? 6000),
   ticks: 6,
+};
+
+/** A real, tiny PNG, so a test can watch a picture arrive in a tool result. */
+const shot = {
+  id: "call_shot",
+  name: "read",
+  path: ".work/screenshot.png",
+  data:
+    "iVBORw0KGgoAAAANSUhEUgAAACAAAAAUCAYAAADskT9PAAAANUlEQVR4nGN4kOP1Hx8WEZXCiynVzzDqgFEHjDqA1hYQ0j/qgFEHjDph4MuBUQeMOmCgHQAARi3M/RQC5ogAAAAASUVORK5CYII=",
 };
 
 const file = {
@@ -135,6 +146,9 @@ async function turn(prompt) {
   const tall = /tall/i.test(prompt);
   const thoughtful = /thoughtful/i.test(prompt);
   if (/widen/i.test(prompt)) widened += 1;
+  // A prompt that says `scrawl` changes a tracked file in the chat's folder, so
+  // a test can watch the diff panel notice a change on its own.
+  const scrawl = /scrawl/i.test(prompt);
 
   send({ type: "agent_start", timestamp: now() });
   send({ type: "turn_start", timestamp: now() });
@@ -154,6 +168,10 @@ async function turn(prompt) {
   }
 
   if (tall) return tallAnswer();
+
+  // Two seconds of tokens, so a test can watch what a page does to the rest of
+  // itself while an answer is arriving.
+  if (/stream/i.test(prompt)) return streamAnswer();
 
   if (long) {
     await shell(slow, "later\n");
@@ -179,6 +197,22 @@ async function turn(prompt) {
     timestamp: now(),
   });
 
+  send({ type: "tool_execution_start", toolCallId: shot.id, toolName: shot.name, args: { path: shot.path }, timestamp: now() });
+  await sleep(60);
+  send({
+    type: "tool_execution_end",
+    toolCallId: shot.id,
+    toolName: shot.name,
+    result: {
+      content: [
+        { type: "text", text: "Read image file [image/png]" },
+        { type: "image", mimeType: "image/png", data: shot.data },
+      ],
+    },
+    isError: false,
+    timestamp: now(),
+  });
+
   send({
     type: "tool_execution_start",
     toolCallId: "call_fail",
@@ -195,6 +229,8 @@ async function turn(prompt) {
     isError: true,
     timestamp: now(),
   });
+
+  if (scrawl) fs.appendFileSync(path.join(process.cwd(), "log.txt"), "scrawled by the fake pi\n");
 
   return answer2();
 }
@@ -235,6 +271,30 @@ async function shell(call, final) {
     isError: false,
     timestamp: now(),
   });
+}
+
+/**
+ * An answer that keeps arriving for about two seconds.
+ */
+async function streamAnswer() {
+  let text = "";
+  for (let line = 1; line <= 80; line += 1) {
+    const delta = `token ${line} `;
+    text += delta;
+    send({
+      type: "message_update",
+      assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta },
+      usage: { input: 10, output: line, cacheRead: 0, cacheWrite: 0, cost: { total: 0 } },
+      timestamp: now(),
+    });
+    await sleep(25);
+  }
+
+  history.push({ role: "assistant", content: [{ type: "text", text }] });
+  send({ type: "message_end", message: { role: "assistant" }, timestamp: now() });
+  send({ type: "turn_end", timestamp: now() });
+  send({ type: "agent_end", willRetry: false, timestamp: now() });
+  send({ type: "agent_settled", timestamp: now() });
 }
 
 /**

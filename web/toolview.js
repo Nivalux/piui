@@ -33,13 +33,14 @@ import { countRows, diffLines, linesOf, parseDiff, shrink } from "./diff.js";
  * @param {string} text flattened result
  * @param {unknown} details tool specific result details
  * @param {string | null} [before] content of the same path before this call
+ * @param {number} [images] how many pictures came back with it
  * @returns {ToolView}
  */
-export function toolView(name, args, text, details, before = null) {
+export function toolView(name, args, text, details, before = null, images = 0) {
   const given = args ?? {};
   switch (name) {
     case "read":
-      return readTool(given, text);
+      return readTool(given, text, images);
     case "write":
       return writeTool(given, text, before);
     case "edit":
@@ -64,8 +65,27 @@ export function isKnownTool(name) {
   return ["read", "write", "edit", "bash", "job_run", "job_wait"].includes(name);
 }
 
-/** @param {Record<string, unknown>} args @param {string} text */
-function readTool(args, text) {
+/**
+ * @param {Record<string, unknown>} args
+ * @param {string} text
+ * @param {number} images
+ */
+function readTool(args, text, images = 0) {
+  // A picture is not measured in lines, and the picture itself is drawn under
+  // the line rather than described in it.
+  if (images > 0) {
+    return {
+      hint: "picture",
+      chips: [{ label: "path", value: String(args.path ?? "") }],
+      input: rest(args, ["path"]),
+      command: "",
+      text,
+      rows: null,
+      adds: 0,
+      dels: 0,
+    };
+  }
+
   const lines = text.length === 0 ? [] : text.split("\n");
   const from = number(args.offset) ?? 1;
   const to = from + Math.max(lines.length - 1, 0);

@@ -14,6 +14,13 @@ test("a read names the range it covered", () => {
   assert.equal(view.rows, null);
 });
 
+test("a read that came back with a picture does not count its lines", () => {
+  const view = toolView("read", { path: ".work/shot.png" }, "Read image file [image/png]", null, null, 1);
+
+  assert.equal(view.hint, "picture");
+  assert.deepEqual(view.chips, [{ label: "path", value: ".work/shot.png" }]);
+});
+
 test("a shell call keeps its command in the row when it fits", () => {
   const view = toolView("bash", { command: "just test", timeout: 600 }, "ok\n", null);
 

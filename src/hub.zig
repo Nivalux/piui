@@ -355,17 +355,30 @@ pub const Hub = struct {
         hub.noteClosed(tab);
     }
 
+    /// When the chat last did something. The sidebar sorts settled chats by
+    /// this, so it moves only on real activity.
+    fn noteActivity(self: *Hub, tab: *Tab) void {
+        tab.lock.lockUncancelable(self.io);
+        tab.last_output_epoch = json.epochMs(self.io);
+        tab.lock.unlock(self.io);
+    }
+
     fn route(self: *Hub, tab: *Tab, record: []const u8) void {
         tab.lock.lockUncancelable(self.io);
         tab.last_output_ms = json.nowMs(self.io);
-        tab.last_output_epoch = json.epochMs(self.io);
         tab.lock.unlock(self.io);
 
         var parsed = protocol.parse(self.allocator, record) catch {
+            self.noteActivity(tab);
             self.broadcast(tab, record);
             return;
         };
         defer parsed.deinit(self.allocator);
+
+        // A reply to something the browser asked for is not activity. Stamping
+        // it would let clicking back and forth between two settled chats keep
+        // trading their places in the list.
+        if (parsed.kind != .response) self.noteActivity(tab);
 
         switch (parsed.kind) {
             .agent_start => self.setRunning(tab, true),

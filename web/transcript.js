@@ -124,11 +124,21 @@ export class Transcript {
   /**
    * A stored transcript, from the `get_messages` response.
    *
+   * A chat that is still working replays with its unfinished tool left open:
+   * the run goes on behind this tab, and coming back must not turn a running
+   * bash into a finished one, nor lose the clock that counts it. Only a chat at
+   * rest gets everything closed.
+   *
    * @param {Message[]} messages
+   * @param {boolean} [running]
    */
-  replay(messages) {
+  replay(messages, running = false) {
     this.clear();
     for (const message of messages) this.#message(message, true);
+    if (running) {
+      this.#running = true;
+      return;
+    }
     this.settle();
   }
 
@@ -191,6 +201,7 @@ export class Transcript {
       case "tool_execution_end": {
         const block = this.#tool(frame.toolCallId ?? "", frame.toolName);
         block.result = frame.result ?? null;
+        this.#pictures(block, frame.result);
         if (frame.details !== undefined) block.details = frame.details;
         block.isError = frame.isError === true;
         block.done = true;
@@ -424,9 +435,12 @@ export class Transcript {
     if (message.role === "toolResult") {
       const block = this.#tool(message.toolCallId ?? "", message.toolName);
       block.result = message.content ?? null;
+      this.#pictures(block, message.content);
       if (message.details !== undefined) block.details = message.details;
       block.isError = message.isError === true;
       block.done = true;
+      block.doneAt = stamped(message) ?? block.doneAt ?? Date.now();
+      block.startedAt ??= block.doneAt;
       return;
     }
 
@@ -439,7 +453,7 @@ export class Transcript {
       } else if (part.type === "toolCall") {
         const block = this.#tool(part.id ?? `call-${nextId++}`, part.name);
         block.args = /** @type {Record<string, unknown>} */ (part.arguments ?? null);
-        block.done = true;
+        block.startedAt ??= stamped(message);
       }
     }
   }
@@ -483,6 +497,19 @@ export class Transcript {
     this.#shells.set(id, block);
     this.#push(block);
     return true;
+  }
+
+  /**
+   * The pictures a tool handed back. They live on the block rather than in its
+   * text, so the page can show the image instead of a line about it.
+   *
+   * @param {Block} block
+   * @param {unknown} content
+   */
+  #pictures(block, content) {
+    const found = imagesOf(content);
+    if (found.length === 0) return;
+    block.images = found.map((part) => ({ mimeType: part.mimeType ?? "image/png", data: part.data ?? "" }));
   }
 
   /**
@@ -573,7 +600,18 @@ function compact(slots) {
  * @param {Frame} frame
  */
 function stamp(frame) {
+  return stamped(frame) ?? Date.now();
+}
+
+/**
+ * When a frame or a stored message says something happened, in epoch
+ * milliseconds. pi stamps both the same way, live and on disk.
+ *
+ * @param {Frame | Message} frame
+ * @returns {number | undefined}
+ */
+function stamped(frame) {
   if (typeof frame.timestamp === "number" && Number.isFinite(frame.timestamp)) return frame.timestamp;
   const parsed = Date.parse(String(frame.timestamp ?? ""));
-  return Number.isFinite(parsed) ? parsed : Date.now();
+  return Number.isFinite(parsed) ? parsed : undefined;
 }

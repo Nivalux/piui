@@ -211,11 +211,28 @@ export function textOf(content) {
 }
 
 /**
- * @param {string | Content[] | undefined} content
+ * The blocks behind whatever a tool handed back: a bare string, a list of
+ * blocks, or an object carrying them under `content`.
+ *
+ * @param {unknown} value
+ * @returns {Content[]}
+ */
+export function resultBlocks(value) {
+  if (typeof value === "string") return blocks(value);
+  if (Array.isArray(value)) return /** @type {Content[]} */ (value);
+  if (value && typeof value === "object") {
+    const content = /** @type {{content?: unknown}} */ (value).content;
+    if (content !== undefined) return resultBlocks(content);
+  }
+  return [];
+}
+
+/**
+ * @param {unknown} content a message's content, or whatever a tool returned
  * @returns {Content[]}
  */
 export function imagesOf(content) {
-  return blocks(content).filter((block) => block.type === "image" && typeof block.data === "string");
+  return resultBlocks(content).filter((block) => block.type === "image" && typeof block.data === "string");
 }
 
 /**
@@ -247,9 +264,10 @@ export function flattenResult(value) {
         if (typeof part === "string") return part;
         const block = /** @type {Content} */ (part);
         if (block?.type === "text") return block.text ?? "";
-        if (block?.type === "image") return `[image ${block.mimeType ?? "?"}]`;
+        if (block?.type === "image") return "";
         return JSON.stringify(part);
       })
+      .filter((part) => part.length > 0)
       .join("\n");
   }
   return value === null || value === undefined ? "" : JSON.stringify(value);

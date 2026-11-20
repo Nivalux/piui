@@ -182,18 +182,24 @@ fn parsePorcelain(collector: *Collector, output: []const u8) void {
     }
 }
 
+/// `git diff --name-status -z` answers one field per NUL, so the letter and the
+/// path are separate records: `M\0web/app.js\0`. A rename is three: `R100\0old\0new\0`.
+/// Reading it as the tab-separated text form is what put a row of bare `M`s
+/// above a row of paths in the diff list.
 fn parseNameStatus(collector: *Collector, output: []const u8) void {
     var fields = std.mem.splitScalar(u8, output, 0);
     while (fields.next()) |field| {
         if (field.len == 0) continue;
         const code = field[0];
-        var path = field;
-        if (field.len > 1 and field[1] == '\t') path = field[2..];
+        var path = fields.next() orelse return;
 
         var display = path;
         if (code == 'R' or code == 'C') {
-            if (fields.next()) |origin| display = origin;
+            const origin = path;
+            path = fields.next() orelse return;
+            display = origin;
         }
+        if (path.len == 0) continue;
         collector.add(path, display, code, true, false);
     }
 }
@@ -280,4 +286,36 @@ fn short(sha: []const u8) []const u8 {
 
 fn parseCount(text: []const u8) u32 {
     return std.fmt.parseInt(u32, text, 10) catch 0;
+}
+
+test "a name-status list pairs a letter with the path that follows it" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    var collector = Collector{ .allocator = arena.allocator() };
+    parseNameStatus(&collector, "M\x00web/app.js\x00R100\x00old/name\x00new/name\x00");
+
+    const files = collector.files.items;
+    try std.testing.expectEqual(@as(usize, 2), files.len);
+    try std.testing.expectEqualStrings("web/app.js", files[0].path);
+    try std.testing.expectEqualStrings("M", files[0].status);
+    try std.testing.expectEqualStrings("new/name", files[1].path);
+    try std.testing.expectEqualStrings("old/name", files[1].display);
+}
+
+test "a porcelain list keeps the worktree letter and the untracked flag" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    var collector = Collector{ .allocator = arena.allocator() };
+    parsePorcelain(&collector, " M web/app.js\x00?? src/new.zig\x00R  new/name\x00old/name\x00");
+
+    const files = collector.files.items;
+    try std.testing.expectEqual(@as(usize, 3), files.len);
+    try std.testing.expectEqualStrings("web/app.js", files[0].path);
+    try std.testing.expectEqualStrings("M", files[0].status);
+    try std.testing.expect(!files[0].staged);
+    try std.testing.expect(files[1].untracked);
+    try std.testing.expectEqualStrings("new/name", files[2].path);
+    try std.testing.expectEqualStrings("old/name", files[2].display);
 }

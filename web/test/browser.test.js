@@ -14,7 +14,7 @@
 
 import { after, before, test } from "node:test";
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
 import fs from "node:fs";
 import net from "node:net";
@@ -43,6 +43,36 @@ let longTab = "";
 
 /** A folder that really exists, so a session can claim it as its project. */
 let wiredProject = "";
+
+/** A repository with one edit and one new file, for the diff panel. */
+let gitProject = "";
+
+/**
+ * @param {string} cwd
+ * @param {string[]} args
+ */
+function git(cwd, args) {
+  const ran = spawnSync("git", args, { cwd, env: { ...process.env, GIT_TERMINAL_PROMPT: "0" } });
+  if (ran.status !== 0) throw new Error(`git ${args.join(" ")}: ${ran.stderr}`);
+}
+
+/**
+ * Open a chat in a folder of the reader's own, the way +Project does it.
+ *
+ * @param {string} cwd
+ */
+async function openProjectChat(cwd) {
+  await page.click("#new-project");
+  await page.waitForSelector("#dir-field");
+  await page.fill("#dir-field", cwd);
+  await page.keyboard.press("Enter");
+  await page.waitForFunction(
+    /** @param {string} want */
+    (want) => document.getElementById("tab-cwd")?.textContent === want,
+    cwd,
+    { timeout: 30000 },
+  );
+}
 
 /**
  * Send a message and wait for the answer it produces. Waiting on the spinner
@@ -75,16 +105,51 @@ function idle() {
       return row !== null && row.querySelector(".spinner") === null;
     },
     undefined,
-    { timeout: 15000 },
+    { timeout: 30000 },
   );
 }
 
 /** The chat the sidebar has highlighted. */
+/** Wait for a toast that says this, not for whatever toast is already up. */
+const toastSays = async (/** @type {RegExp} */ pattern) =>
+  page.waitForFunction(
+    (/** @type {string} */ want) => new RegExp(want).test(String(document.getElementById("toast")?.textContent ?? "")),
+    pattern.source,
+    { timeout: 10000 },
+  );
+
 function activeTab() {
   return page.evaluate(() => {
     const row = /** @type {HTMLElement | null} */ (document.querySelector("#tab-list .tab.active"));
     return row ? String(row.dataset.tab) : "";
   });
+}
+
+/** The chats in the sidebar, top to bottom. */
+async function sidebarIds() {
+  return page.evaluate(() =>
+    Array.from(document.querySelectorAll("#tab-list .tab")).map((node) =>
+      node instanceof HTMLElement ? node.dataset.tab : undefined,
+    ),
+  );
+}
+
+/**
+ * The menu belongs under the dots that opened it. It once hung itself on the
+ * far side of the window because it measured against the wrong box, and that
+ * reads as a bug on every single open.
+ *
+ * @param {any} row a playwright locator
+ */
+async function menuHangsUnder(row) {
+  const menu = await page.locator(".row-actions").boundingBox();
+  const dots = await row.locator(".row-menu").boundingBox();
+  assert.ok(menu && dots, "menu and dots are both on screen");
+  assert.ok(
+    Math.abs(menu.x + menu.width - (dots.x + dots.width)) < 24,
+    `the menu's right edge sits at the dots, not ${(menu.x + menu.width - (dots.x + dots.width)).toFixed(1)}px away`,
+  );
+  assert.ok(menu.y >= dots.y - 1 && menu.y <= dots.y + dots.height + 40, "the menu hangs from its row");
 }
 
 /**
@@ -103,6 +168,7 @@ async function openFreshChat() {
     before,
     { timeout: 10000 },
   );
+  return activeTab();
 }
 
 /**
@@ -117,6 +183,23 @@ async function switchTo(id) {
       return row !== null && row.dataset.tab === chat;
     },
     id,
+    { timeout: 10000 },
+  );
+}
+
+/**
+ * Put the side panel where the test needs it. Clicking blindly would toggle it
+ * the other way whenever a previous test left it open.
+ *
+ * @param {boolean} open
+ */
+async function showPanel(open) {
+  const visible = await page.evaluate(() => document.getElementById("side-panel")?.hasAttribute("hidden") === false);
+  if (visible !== open) await page.click("#panel-toggle");
+  await page.waitForFunction(
+    /** @param {boolean} want */
+    (want) => document.getElementById("side-panel")?.hasAttribute("hidden") !== want,
+    open,
     { timeout: 10000 },
   );
 }
@@ -149,6 +232,12 @@ const blocked = (() => {
   return false;
 })();
 
+/** Whether a repository can be built here at all. */
+const noGit = (() => {
+  const probe = spawnSync("git", ["--version"], { cwd: root });
+  return probe.status !== 0 ? "no git — the diff panel cannot be tested" : false;
+})();
+
 before(async () => {
   if (blocked) return;
 
@@ -173,6 +262,23 @@ before(async () => {
     header: "2026-11-02T00:00:00.000Z",
     last: "2026-11-05T09:00:00.000Z",
   });
+
+  gitProject = path.join(dir, "git-project");
+  if (!noGit) {
+    fs.mkdirSync(gitProject, { recursive: true });
+    fs.writeFileSync(path.join(gitProject, "notes.md"), "one\n");
+    fs.writeFileSync(path.join(gitProject, "keep.txt"), "keep me\n");
+    fs.writeFileSync(path.join(gitProject, "log.txt"), "start\n");
+    fs.mkdirSync(path.join(gitProject, "sub"), { recursive: true });
+    fs.writeFileSync(path.join(gitProject, "sub", "nested.md"), "deeper\n");
+    git(gitProject, ["init", "-q"]);
+    git(gitProject, ["config", "user.email", "piui@example.invalid"]);
+    git(gitProject, ["config", "user.name", "piui"]);
+    git(gitProject, ["add", "."]);
+    git(gitProject, ["commit", "-qm", "start"]);
+    fs.writeFileSync(path.join(gitProject, "notes.md"), "one\ntwo\n");
+    fs.writeFileSync(path.join(gitProject, "fresh.md"), "brand new\n");
+  }
 
   const port = await freePort();
   fs.writeFileSync(
@@ -268,7 +374,44 @@ test("a turn draws thoughts, tools and an answer", { skip: blocked }, async () =
       rows.map((row) => String(row.className.replace("block ", ""))),
     );
   assert.ok(kinds.includes("thinking"), "thoughts should be a row of their own");
-  assert.equal(kinds.filter((/** @type {string} */ kind) => kind === "tool").length, 3);
+  assert.equal(kinds.filter((/** @type {string} */ kind) => kind === "tool").length, 4);
+});
+
+test("a picture a tool read is shown, and opens full size", { skip: blocked }, async () => {
+  await page.click("#new-chat");
+  await page.fill("#input", "run the scripted tools");
+  await page.click("#send");
+  await page.waitForSelector("#transcript .block.tool .shot .thumb");
+
+  const shot = page.locator("#transcript .block.tool", { has: page.locator(".shot") }).first();
+
+  // A closed tool line is where a picture is usually found, and a line saying
+  // "[image image/png]" is not the picture.
+  const open = await shot.locator("details").evaluate((/** @type {HTMLDetailsElement} */ fold) => fold.open);
+  assert.equal(open, false, "the tool is closed");
+  assert.ok(await shot.locator(".shot .thumb").isVisible(), "the picture is there with the tool closed");
+
+  const text = await shot.evaluate((/** @type {HTMLElement} */ row) => row.textContent ?? "");
+  assert.ok(!text.includes("[image image/png]"), "no placeholder stands in for the picture");
+
+  const src = await shot.locator(".thumb").evaluate((/** @type {HTMLImageElement} */ node) => node.getAttribute("src") ?? "");
+  assert.ok(src.startsWith("data:image/png;base64,"), "the bytes pi sent are the bytes drawn");
+
+  await shot.locator(".shot").click();
+  await page.waitForFunction(() => !document.getElementById("lightbox")?.hasAttribute("hidden"));
+  assert.equal(
+    await page.evaluate(() => document.getElementById("lightbox-img")?.getAttribute("src") ?? ""),
+    src,
+    "the same picture, full size",
+  );
+
+  await page.keyboard.press("Escape");
+  await page.waitForSelector("#lightbox", { state: "hidden" }, { timeout: 10000 });
+
+  await shot.locator(".shot").click();
+  await page.waitForFunction(() => !document.getElementById("lightbox")?.hasAttribute("hidden"));
+  await page.click("#lightbox");
+  await page.waitForSelector("#lightbox", { state: "hidden" }, { timeout: 10000 });
 });
 
 test("a thought is closed until the reader opens it", { skip: blocked }, async () => {
@@ -296,6 +439,38 @@ test("clicking a running tool opens it and keeps it open", { skip: blocked }, as
   assert.match(open, /timeout/, "and every argument it was given");
   assert.match(await row.locator(".state").innerText(), /^\d+\.\ds$/, "and counts the seconds it waits");
 
+  // The clocks count up where they stand, so their boxes may not grow with the
+  // digits: the tool line and the footer would step sideways as seconds roll
+  // over. Each is measured with a short reading and a wide one, which is what
+  // the reserved width is for.
+  const clock = () =>
+    page.evaluate(() => {
+      const widthWith = (/** @type {Element} */ node, /** @type {string} */ text) => {
+        const held = node.textContent;
+        node.textContent = text;
+        const width = node.getBoundingClientRect().width;
+        node.textContent = held;
+        return width;
+      };
+      const tick = /** @type {HTMLElement} */ (document.querySelector(".block details > summary .tick"));
+      const busy = /** @type {HTMLElement} */ (document.querySelector("#busy-time"));
+      return {
+        tick: [widthWith(tick, "9.4s"), widthWith(tick, "1h 02m")],
+        busy: [widthWith(busy, "9.4s"), widthWith(busy, "1h 02m")],
+        text: `${tick.textContent}|${busy.textContent}`,
+      };
+    });
+  /** A character of drift is what this guards; a fraction of one is rounding. */
+  const keepsWidth = (/** @type {[number, number]} */ pair, /** @type {string} */ where) =>
+    assert.ok(
+      Math.abs(pair[0] - pair[1]) < 1,
+      `${where} keeps its width whatever it shows: ${JSON.stringify(pair)}`,
+    );
+
+  const clockAtStart = await clock();
+  keepsWidth(clockAtStart.tick, "the tool clock");
+  keepsWidth(clockAtStart.busy, "the footer clock");
+
   // The row is rewritten many times a second. A spinner that starts its turn at
   // zero on every rewrite only jitters, so each one begins at the angle the
   // clock already reached. The spinner in the composer is never rebuilt: hold
@@ -318,6 +493,11 @@ test("clicking a running tool opens it and keeps it open", { skip: blocked }, as
     }
     return seen;
   });
+  const clockAtEnd = await clock();
+  assert.notEqual(clockAtEnd.text, clockAtStart.text, "the clocks count on");
+  keepsWidth(clockAtEnd.tick, "the tool clock");
+  keepsWidth(clockAtEnd.busy, "the footer clock");
+
   /** @type {[number, number][]} */
   const turns = steps;
   assert.ok(turns.length >= 4, "a spinner turns while the tool runs");
@@ -472,7 +652,7 @@ test("opening a chat lands on its newest line", { skip: blocked }, async () => {
       );
     },
     undefined,
-    { timeout: 15000 },
+    { timeout: 30000 },
   );
 });
 
@@ -572,30 +752,30 @@ test("the project picker completes a path and opens a chat in it", { skip: block
 
   const tabs = await page.locator("#tab-list .tab").count();
 
-  await page.fill("#dir-field", `${opened}sr`);
+  await page.fill("#dir-field", `${opened}we`);
   await page.waitForFunction(() => document.querySelectorAll("#dir-list .dir-row").length === 1);
   const narrowed = await page.evaluate(() => document.querySelector("#dir-list .dir-row")?.getAttribute("data-path"));
-  assert.equal(narrowed, `${opened.slice(0, -1)}/src`, "typing narrows the list");
+  assert.equal(narrowed, `${opened.slice(0, -1)}/web`, "typing narrows the list");
 
   await page.keyboard.press("ArrowDown");
   await page.keyboard.press("Enter");
   await page.waitForFunction(() => {
     const field = /** @type {HTMLInputElement | null} */ (document.getElementById("dir-field"));
-    return String(field?.value ?? "").endsWith("/src/");
+    return String(field?.value ?? "").endsWith("/web/");
   });
   await page.waitForFunction(() => {
-    const rows = [...document.querySelectorAll("#dir-list .dir-row")];
-    return rows.length > 0 && rows.every((row) => !String(row.textContent).includes("web"));
+    const rows = [...document.querySelectorAll("#dir-list .dir-row")].map((row) => String(row.textContent).trim());
+    return rows.length === 1 && rows[0].replace("\u25b8", "").trim() === "test";
   });
 
   await page.keyboard.press("Enter");
   await page.waitForFunction(
     (/** @type {number} */ count) => document.querySelectorAll("#tab-list .tab").length > count,
     tabs,
-    { timeout: 15000 },
+    { timeout: 30000 },
   );
   await page.waitForFunction(() => document.getElementById("dir-modal")?.hidden === true);
-  assert.match(String(await page.textContent("#tab-cwd")), /\/src$/, "the chat runs in the chosen folder");
+  assert.match(String(await page.textContent("#tab-cwd")), /\/web$/, "the chat runs in the chosen folder");
 });
 
 test("escape closes the picker without opening anything", { skip: blocked }, async () => {
@@ -615,7 +795,7 @@ test("a chat taken from the session list goes back to its own project", { skip: 
     () =>
       [...document.querySelectorAll("#session-list .session-title")].some((node) => node.textContent === "explain the pi wiring"),
     undefined,
-    { timeout: 15000 },
+    { timeout: 30000 },
   );
 
   await page.locator("#session-list .session", { hasText: "explain the pi wiring" }).first().click();
@@ -628,6 +808,328 @@ test("a chat taken from the session list goes back to its own project", { skip: 
   const row = await page.locator("#tab-list .tab.active").innerText();
   assert.match(row, /wired-project/, "the row names the project the session came from");
   assert.ok(!row.includes("scratch"), "not the throwaway folder the chat happens to run in");
+});
+
+test("both panels fold away and come back", { skip: blocked }, async () => {
+  await showPanel(true);
+  await showPanel(false);
+  assert.ok(await page.locator("#panel-toggle").isVisible(), "the button that closed the panel stays reachable");
+
+  await showPanel(true);
+
+  await page.keyboard.press("Control+j");
+  await page.waitForSelector("#side-panel", { state: "hidden" }, { timeout: 10000 });
+  await page.keyboard.press("Control+j");
+  await showPanel(true);
+
+  await page.keyboard.press("Control+b");
+  await page.waitForSelector("#shell.side-collapsed", { timeout: 10000 });
+  await page.keyboard.press("Control+b");
+  await page.waitForSelector("#shell:not(.side-collapsed)", { timeout: 10000 });
+
+  await page.click("#sidebar-toggle");
+  await page.waitForSelector("#shell.side-collapsed");
+  await page.waitForSelector("#tab-list", { state: "hidden" });
+  assert.ok(await page.locator("#sidebar-toggle").isVisible(), "and the same for the chat list");
+  const widened = await page.evaluate(() => document.getElementById("transcript")?.clientWidth ?? 0);
+
+  await page.click("#sidebar-toggle");
+  await page.waitForSelector("#shell:not(.side-collapsed)");
+  await page.waitForSelector("#tab-list .tab");
+  const back = await page.evaluate(() => document.getElementById("transcript")?.clientWidth ?? 0);
+  assert.ok(back < widened, "the chat gives the width back when the list returns");
+});
+
+test("the diff tab reads like git status and opens a patch beside the chat", { skip: blocked || noGit }, async () => {
+  await openProjectChat(gitProject);
+  await showPanel(true);
+  await page.waitForFunction(() => document.querySelectorAll("#diff-body .st-row").length > 0, undefined, {
+    timeout: 30000,
+  });
+
+  const rows = await page.evaluate(() =>
+    [...document.querySelectorAll("#diff-body .st-row")].map((row) => {
+      const code = /** @type {HTMLElement} */ (row.querySelector(".st-code"));
+      return `${code?.textContent} ${code?.className.replace("st-code st-", "")} ${row.querySelector(".st-path")?.textContent}`;
+    }),
+  );
+  assert.ok(rows.includes("M mod notes.md"), `the edit is listed as modified: ${rows.join(", ")}`);
+  assert.ok(rows.includes("? new fresh.md"), `what git never saw is listed as new: ${rows.join(", ")}`);
+
+  const groups = (await page.locator("#diff-body .status-group").allInnerTexts())
+    .map((/** @type {string} */ text) => text.trim().toLowerCase())
+    .filter((/** @type {string} */ text) => text.length > 0);
+  assert.deepEqual(groups, ["changes", "untracked"], "the two blocks `git status` would print");
+
+  // What the diff is compared to only means something here, so the choice
+  // lives with the tab rather than at the top of the window.
+  assert.ok(await page.locator("#base").isVisible(), "the base sits inside the panel");
+  assert.ok(await page.locator("#panel-files-tab").isVisible());
+
+  await page.locator("#diff-body .st-row", { hasText: "notes.md" }).click();
+  await page.waitForFunction(() => !document.getElementById("file-view")?.hasAttribute("hidden"));
+
+  const tabs = (await page.locator("#view-tabs .view-tab").allInnerTexts()).map((/** @type {string} */ text) => text.trim());
+  assert.equal(tabs.length, 2, "the patch sits next to the chat");
+  assert.equal(tabs[1], "Δ notes.md");
+  assert.ok(await page.locator("#composer").isHidden(), "a patch is not a place to send a message");
+
+  await page.waitForFunction(() => document.querySelectorAll("#file-body .row").length > 0);
+  const patch = await page.evaluate(() => ({
+    added: [...document.querySelectorAll("#file-body .row.add .code")].map((cell) => cell.textContent),
+    removed: [...document.querySelectorAll("#file-body .row.del .code")].map((cell) => cell.textContent),
+    head: document.querySelector("#file-head .file-meta")?.textContent,
+  }));
+  assert.deepEqual(patch.added, ["two"], "only the new line is added");
+  assert.deepEqual(patch.removed, [], "nothing was taken away");
+  assert.equal(patch.head, "+1 −0");
+
+  await page.locator("#view-tabs .view-tab").first().click();
+  await page.waitForFunction(() => !document.getElementById("composer")?.hasAttribute("hidden"));
+  assert.ok(await page.locator("#transcript").isVisible(), "and the chat is where it was");
+});
+
+test("the panel never covers the chat", { skip: blocked || noGit }, async () => {
+  await openProjectChat(gitProject);
+  await page.evaluate(() => document.getElementById("shell")?.classList.remove("side-collapsed"));
+  await showPanel(true);
+  await page.waitForFunction(() => document.querySelectorAll("#diff-body .st-row").length > 0, undefined, {
+    timeout: 30000,
+  });
+
+  const boxes = await page.evaluate(() => {
+    /** @param {string} selector */
+    const rect = (selector) => {
+      const node = document.querySelector(selector);
+      if (!node) return null;
+      const box = node.getBoundingClientRect();
+      return { left: Math.round(box.left), right: Math.round(box.right) };
+    };
+    return {
+      panel: rect("#side-panel"),
+      center: rect(".center"),
+      stream: rect("#stream"),
+      composer: rect("#composer"),
+      window: { right: window.innerWidth },
+    };
+  });
+
+  assert.ok(boxes.panel && boxes.center && boxes.stream && boxes.composer, "every box is on the page");
+  const edge = /** @type {number} */ (/** @type {any} */ (boxes.panel).left);
+  assert.ok(
+    /** @type {any} */ (boxes.center).right <= edge + 1,
+    `the middle stops where the panel starts: ${JSON.stringify(boxes)}`,
+  );
+  for (const name of ["stream", "composer"]) {
+    assert.ok(
+      /** @type {any} */ (boxes[name]).right <= edge + 1,
+      `${name} does not reach under the panel: ${JSON.stringify(boxes)}`,
+    );
+  }
+  assert.ok(boxes.window.right - edge > 200, "the panel keeps its own room");
+});
+
+test("the files tab lists the folder and opens what is clicked", { skip: blocked || noGit }, async () => {
+  await showPanel(true);
+  await page.click("#panel-files-tab");
+  await page.waitForSelector("#file-list .file-row");
+
+  const names = async () =>
+    await page.evaluate(() => [...document.querySelectorAll("#file-list .file-row .file-name")].map((n) => n.textContent));
+
+  assert.ok((await names()).includes("keep.txt"));
+  assert.ok((await names()).includes("fresh.md"), "a file git never saw is listed too");
+  assert.ok((await names()).includes("sub"), "a folder is a row of its own");
+  assert.ok(!(await names()).includes("nested.md"), "what is inside it waits until the folder is opened");
+
+  await page.locator("#file-list .file-row", { hasText: "sub" }).click();
+  await page.waitForFunction(() => document.getElementById("file-crumbs")?.hidden === false);
+  assert.deepEqual(await names(), ["..", "nested.md"], "one folder deep, with a way back");
+
+  await page.locator("#file-crumbs .crumb-up").click();
+  await page.waitForFunction(() => ![...document.querySelectorAll(".file-row .file-name")].some((n) => n.textContent === ".."));
+
+  await page.fill("#file-filter", "ee");
+  await page.waitForFunction(() => document.querySelectorAll("#file-list .file-row").length === 2);
+  const narrowed = await page.evaluate(() =>
+    [...document.querySelectorAll("#file-list .file-row .file-name")].map((n) => n.textContent),
+  );
+  assert.deepEqual(narrowed, ["keep.txt", "nested.md"], "typing searches the whole tree, near ones first");
+  const dirs = await page.evaluate(() =>
+    [...document.querySelectorAll("#file-list .file-row")].map((row) => row.querySelector(".file-dir")?.textContent ?? ""),
+  );
+  assert.deepEqual(dirs, ["", "sub"], "a file says where it lives only when that is not here");
+  assert.ok(
+    await page.evaluate(() => document.querySelector("#file-list .file-row .file-name mark") !== null),
+    "the letters that matched are the ones typed",
+  );
+
+  await page.fill("#file-filter", "");
+  await page.waitForFunction(() => document.querySelectorAll("#file-list .file-row").length > 1);
+  await page.locator("#file-list .file-row", { hasText: "fresh.md" }).first().click();
+  await page.locator("#file-list .file-row", { hasText: "notes.md" }).click();
+
+  const labels = async () =>
+    (await page.locator("#view-tabs .view-tab").allInnerTexts()).map((/** @type {string} */ text) => text.trim());
+
+  assert.deepEqual(await labels(), ["git-project", "notes.md"], "clicking through a list reuses one tab");
+  assert.ok(
+    await page.evaluate(() => document.querySelector("#view-tabs .view.on .view-tab.preview") !== null),
+    "the borrowed tab says so in italic",
+  );
+
+  await page.locator("#view-tabs .view.on .view-tab").click();
+  assert.ok(
+    await page.evaluate(() => document.querySelector("#view-tabs .view-tab.preview") === null),
+    "clicking the tab is what keeps the file",
+  );
+
+  await page.locator("#file-list .file-row", { hasText: "keep.txt" }).click();
+  assert.deepEqual(
+    await labels(),
+    ["git-project", "notes.md", "keep.txt"],
+    "with nothing on loan, the next file gets a tab of its own",
+  );
+
+  await page.waitForFunction(() => document.querySelectorAll("#file-body .code-line").length >= 1);
+  const read = await page.evaluate(() => ({
+    lines: [...document.querySelectorAll("#file-body .code-line .lc")].map((cell) => cell.textContent),
+    patch: document.querySelectorAll("#file-body .row").length,
+  }));
+  assert.deepEqual(read.lines, ["keep me"], "the whole file, not a piece of it");
+  assert.equal(read.patch, 0, "a file from the folder is the file, not its diff");
+
+  await page.locator("#view-tabs .view").nth(2).locator(".view-tab").click({ button: "middle" });
+  await page.waitForFunction(() => document.querySelectorAll("#view-tabs .view").length === 2, undefined, {
+    timeout: 10000,
+  });
+
+  for (let at = await page.locator("#view-tabs .view").count(); at > 1; at -= 1) {
+    await page.locator("#view-tabs .view").nth(at - 1).locator(".view-close").click();
+  }
+  await page.waitForFunction(() => document.querySelectorAll("#view-tabs .view").length === 1);
+  await page.waitForFunction(() => !document.getElementById("composer")?.hasAttribute("hidden"));
+
+  await page.keyboard.press("Escape");
+  await page.waitForSelector("#side-panel", { state: "hidden" }, { timeout: 10000 });
+  await showPanel(true);
+});
+
+test("the diff panel notices a turn that changed the folder", { skip: blocked || noGit }, async () => {
+  await openProjectChat(gitProject);
+  await showPanel(true);
+  await page.click("#panel-diff-tab");
+  await page.waitForFunction(() => (document.getElementById("panel-diff-tab")?.getBoundingClientRect().width ?? 0) > 0);
+  await page.waitForFunction(() => document.querySelectorAll("#diff-body .st-row").length > 0);
+  const listed = () => page.evaluate(() => [...document.querySelectorAll("#diff-body .st-row .st-path")].map((p) => p.textContent));
+  assert.ok(!(await listed()).includes("log.txt"), "the note is not there yet");
+
+  await runTurn("scrawl a note");
+
+  await page.waitForFunction(
+    () => [...document.querySelectorAll("#diff-body .st-row .st-path")].some((p) => p.textContent === "log.txt"),
+    undefined,
+    { timeout: 30000 },
+  );
+});
+
+test("a picture joins the message from the folder or from a drag", { skip: blocked }, async () => {
+  const png =
+    "iVBORw0KGgoAAAANSUhEUgAAACAAAAAUCAYAAADskT9PAAAANUlEQVR4nGN4kOP1Hx4WEZXCiynVzzDqgFEHjDqA1hYQ0j/qgFEHjDph4MuBUQeMOmCgHQAARi3M/RQC5ogAAAAASUVORK5CYII=";
+  const picture = path.join(os.tmpdir(), "piui-picture.png");
+  fs.writeFileSync(picture, png, "base64");
+
+  /**
+   * @param {string} name
+   * @param {string} type
+   */
+  const drop = (name, type) =>
+    page.evaluate(
+      /** @param {{name: string, type: string}} given */
+      (given) => {
+        const transfer = new DataTransfer();
+        transfer.items.add(new File([new TextEncoder().encode("something")], given.name, { type: given.type }));
+        document
+          .getElementById("composer")
+          ?.dispatchEvent(new DragEvent("drop", { bubbles: true, dataTransfer: transfer }));
+      },
+      { name, type },
+    );
+
+  await openFreshChat();
+
+  await page.setInputFiles("#attach-input", picture);
+  await page.waitForSelector("#attachments .attachment img");
+  assert.ok(
+    await page.evaluate(
+      () =>
+        document.querySelector("#attachments .attachment img")?.getAttribute("src")?.startsWith("data:image/png") ?? false,
+    ),
+    "the picked picture is there to look at before it is sent",
+  );
+
+  await drop("dropped.png", "image/png");
+  await page.waitForFunction(() => document.querySelectorAll("#attachments .attachment").length === 2);
+
+  await drop("notes.txt", "text/plain");
+  await page.waitForFunction(() => document.querySelector("#attachments .attach-note") !== null);
+  assert.equal(
+    await page.evaluate(() => document.querySelectorAll("#attachments .attachment").length),
+    2,
+    "a file that cannot go to pi is said so rather than dropped on the floor",
+  );
+
+  for (let at = 0; at < 2; at += 1) {
+    await page.locator("#attachments .attachment .button").first().click();
+  }
+  assert.equal(await page.locator("#attachments .attachment").count(), 0, "both chips came back off");
+  assert.equal(
+    await page.locator("#attachments .attach-note").count(),
+    1,
+    "the note about the file that was refused stays where it can be read",
+  );
+});
+
+test("a streaming answer leaves the chat list where it is", { skip: blocked }, async () => {
+  await openProjectChat(gitProject);
+  const first = await activeTab();
+  await openFreshChat();
+  const second = await activeTab();
+  await switchTo(first);
+  await idle();
+
+  await page.fill("#input", "a steady stream");
+  await page.click("#send");
+  await page.waitForFunction(() => !!document.querySelector("#tab-list .tab.active .spinner"));
+  await page.waitForFunction(() => (document.querySelector("#transcript .block.text")?.textContent ?? "").length > 30);
+
+  const churn = await page.evaluate(async () => {
+    let records = 0;
+    const watcher = new MutationObserver((list) => {
+      records += list.length;
+    });
+    watcher.observe(/** @type {HTMLElement} */ (document.getElementById("tab-list")), { childList: true });
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+    watcher.disconnect();
+    return records;
+  });
+  assert.ok(churn <= 1, `the chat list was rebuilt ${churn} times while an answer streamed`);
+
+  // A press is not a point in time: the row has to still be there when the
+  // finger comes back up.
+  const box = await page.locator(`#tab-list .tab[data-tab="${second}"]`).boundingBox();
+  assert.ok(box, "the other chat is in the list");
+  await page.mouse.move(box.x + 24, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.waitForTimeout(300);
+  await page.mouse.up();
+
+  await page.waitForFunction(
+    /** @param {string} want */
+    (want) => document.querySelector("#tab-list .tab.active")?.getAttribute("data-tab") === want,
+    second,
+    { timeout: 10000 },
+  );
 });
 
 test("the page threw nothing", { skip: blocked }, async () => {
@@ -683,3 +1185,138 @@ async function waitForServer() {
   }
   throw new Error(`server did not come up on ${base}`);
 }
+
+test("opening a settled chat is not activity, so the list keeps its order", async () => {
+  const first = await openFreshChat();
+  const second = await openFreshChat();
+  await page.waitForSelector(`#tab-list .tab[data-tab="${first}"]`);
+  await page.waitForSelector(`#tab-list .tab[data-tab="${second}"]`);
+
+  // Other tests leave their chats open, so only the pair this test made is compared.
+  const pair = async () =>
+    (await sidebarIds()).filter((/** @type {string | undefined} */ id) => id === first || id === second);
+
+  const before = await pair();
+  assert.deepEqual(before, [second, first], "the newer chat sits on top");
+
+  for (let round = 0; round < 3; round += 1) {
+    await switchTo(first);
+    await switchTo(second);
+  }
+
+  assert.deepEqual(await pair(), before, "clicking back and forth moved nothing");
+});
+
+const onePixelPng =
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg==";
+
+test("a picture dragged into the composer shows the picture, not just a label", async () => {
+  await openFreshChat();
+
+  await page.evaluate(
+    /** @param {string} data */
+    async (data) => {
+      const blob = await (await fetch(`data:image/png;base64,${data}`)).blob();
+      const file = new File([blob], "screenshot.png", { type: "image/png" });
+      const transfer = new DataTransfer();
+      transfer.items.add(file);
+      const box = document.getElementById("composer");
+      if (!box) return;
+      box.dispatchEvent(new DragEvent("dragover", { bubbles: true, dataTransfer: transfer }));
+      box.dispatchEvent(new DragEvent("drop", { bubbles: true, dataTransfer: transfer }));
+    },
+    onePixelPng,
+  );
+
+  const thumb = page.locator("#attachments .attachment img");
+  await thumb.waitFor({ state: "visible", timeout: 10000 });
+  const box = await thumb.boundingBox();
+  assert.ok(box, "the chip has a box");
+  assert.ok(box.width >= 40 && box.height >= 30, `the chip holds a ${box.width}x${box.height} picture`);
+  assert.ok(
+    await page.evaluate(
+      () =>
+        ((/** @type {HTMLImageElement | null} */ (document.querySelector("#attachments .attachment img"))
+        )?.naturalWidth ?? 0) > 0,
+    ),
+    "the dropped bytes decoded",
+  );
+
+  await page.locator("#attachments .attachment button").click();
+  assert.equal(await page.locator("#attachments .attachment").count(), 0, "× drops it again");
+});
+
+test("a drag that carried no bytes says so instead of showing a dead chip", async () => {
+  await openFreshChat();
+
+  await page.evaluate(() => {
+    const transfer = new DataTransfer();
+    transfer.items.add(new File([], "screenshot.png", { type: "image/png" }));
+    const box = document.getElementById("composer");
+    if (!box) return;
+    box.dispatchEvent(new DragEvent("dragover", { bubbles: true, dataTransfer: transfer }));
+    box.dispatchEvent(new DragEvent("drop", { bubbles: true, dataTransfer: transfer }));
+  });
+
+  await page.waitForSelector("#attachments .attach-note", { state: "visible" });
+  assert.match(
+    String(await page.locator("#attachments .attach-note").innerText()),
+    /without its bytes/,
+    "the reader is told why nothing appeared",
+  );
+  assert.equal(await page.locator("#attachments .attachment").count(), 0, "an empty file attaches nothing");
+});
+
+test("a row's actions sit behind a ⋯, and right-click is inert", async () => {
+  await openFreshChat();
+  const chat = await activeTab();
+  await page.context().grantPermissions(["clipboard-read", "clipboard-write"], { origin: base });
+  const row = () => page.locator(`#tab-list .tab[data-tab="${chat}"]`);
+
+  assert.equal(await row().locator(".row-menu").count(), 1);
+
+  await row().locator(".row-menu").click();
+  await page.waitForSelector(".row-actions", { state: "visible" });
+  await menuHangsUnder(row());
+  assert.deepEqual(await page.locator(".row-action").allInnerTexts(), [
+    "Copy path",
+    "Archive into sessions",
+  ]);
+  assert.equal(await activeTab(), chat, "opening the menu does not move anywhere");
+
+  await page.locator(".row-action", { hasText: "Copy path" }).click();
+  await toastSays(/copied \//);
+  assert.equal(await page.locator(".row-actions").count(), 0, "a choice closes the menu");
+  assert.equal(await activeTab(), chat, "copying touches nothing but the clipboard");
+
+  await row().click({ button: "right" });
+  await page.waitForTimeout(400);
+  assert.equal(await page.locator(".row-actions").count(), 0, "right-click opens nothing");
+  assert.equal(await activeTab(), chat, "right-click no longer closes a chat");
+
+  await row().locator(".row-menu").click();
+  await page.keyboard.press("Escape");
+  assert.equal(await page.locator(".row-actions").count(), 0, "Escape closes it again");
+
+  await row().locator(".row-menu").click();
+  await page.locator(".row-action", { hasText: "Archive" }).click();
+  await page.waitForFunction(
+    (/** @type {string} */ id) => document.querySelector(`#tab-list .tab[data-tab="${id}"]`) === null,
+    chat,
+    { timeout: 10000 },
+  );
+});
+
+test("a session row offers its folder without opening the chat", async () => {
+  const before = await activeTab();
+  const row = page.locator(".session").first();
+
+  await row.locator(".row-menu").click();
+  await page.waitForSelector(".row-actions", { state: "visible" });
+  await menuHangsUnder(row);
+  assert.deepEqual(await page.locator(".row-action").allInnerTexts(), ["Copy path"]);
+  assert.equal(await activeTab(), before, "the chat behind it stayed put");
+
+  await page.locator(".row-action", { hasText: "Copy path" }).click();
+  await toastSays(/copied \//);
+});

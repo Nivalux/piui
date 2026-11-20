@@ -3,7 +3,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { byActivity, isUnread, splitTabs, stamp } from "../tabs.js";
+import { byActivity, byRun, isUnread, splitTabs, stamp } from "../tabs.js";
 
 /**
  * @param {Partial<import("../protocol.js").TabInfo>} over
@@ -22,15 +22,33 @@ function tab(over) {
   };
 }
 
-test("working chats come first and the noisiest leads", () => {
-  const { working, settled } = splitTabs([
-    tab({ id: "quiet", running: true, lastOutputMs: 2_000 }),
-    tab({ id: "loud", running: true, lastOutputMs: 9_000 }),
+test("a working chat holds its place while it streams", () => {
+  const shape = [
+    tab({ id: "quiet", running: true, runStartedMs: 5_000, lastOutputMs: 2_000 }),
+    tab({ id: "loud", running: true, runStartedMs: 4_000, lastOutputMs: 9_000 }),
+    tab({ id: "done", running: false, lastOutputMs: 8_000 }),
+  ];
+
+  const { working, settled } = splitTabs(shape);
+  assert.deepEqual(working.map((item) => item.id), ["quiet", "loud"], "the run that began most recently leads");
+  assert.deepEqual(settled.map((item) => item.id), ["done"]);
+
+  const later = splitTabs([
+    tab({ id: "quiet", running: true, runStartedMs: 5_000, lastOutputMs: 99_000 }),
+    tab({ id: "loud", running: true, runStartedMs: 4_000, lastOutputMs: 9_000 }),
     tab({ id: "done", running: false, lastOutputMs: 8_000 }),
   ]);
+  assert.deepEqual(later.working.map((item) => item.id), ["quiet", "loud"], "more output moves nobody");
+});
 
-  assert.deepEqual(working.map((item) => item.id), ["loud", "quiet"]);
-  assert.deepEqual(settled.map((item) => item.id), ["done"]);
+test("a working chat with no run yet keeps the order it was opened in", () => {
+  const list = [
+    tab({ id: "old", running: true, createdMs: 1_000, lastOutputMs: 9_000 }),
+    tab({ id: "new", running: true, createdMs: 2_000, lastOutputMs: 3_000 }),
+  ];
+
+  assert.deepEqual(byRun(list).map((item) => item.id), ["new", "old"]);
+  assert.deepEqual(byRun(list).map((item) => item.id), ["new", "old"], "and again, identically");
 });
 
 test("a settled chat is sorted by what it did last", () => {

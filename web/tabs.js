@@ -3,9 +3,10 @@
 /**
  * The order of the sidebar, and which chats are still waiting to be read.
  *
- * Working chats lead, settled ones follow, and inside each group the chat that
- * did something most recently comes first. A run that ended while the reader
- * was somewhere else stays marked until they look at it.
+ * Working chats lead, settled ones follow. A settled chat is ordered by what it
+ * did last; a working one holds the place its run started in, because a list
+ * that reshuffles every few seconds is a list you cannot click. A run that
+ * ended while the reader was somewhere else stays marked until they look.
  *
  * @typedef {import("./protocol.js").TabInfo} TabInfo
  */
@@ -15,15 +16,35 @@
  * @returns {{working: TabInfo[], settled: TabInfo[]}}
  */
 export function splitTabs(tabs) {
-  return { working: byActivity(tabs.filter((tab) => tab.running)), settled: byActivity(tabs.filter((tab) => !tab.running)) };
+  return { working: byRun(tabs.filter((tab) => tab.running)), settled: byActivity(tabs.filter((tab) => !tab.running)) };
 }
 
 /**
+ * Ordered by the moment each chat last did something. Only safe once a chat is
+ * quiet: while it runs, this number moves with every token.
+ *
  * @param {TabInfo[]} tabs
  * @returns {TabInfo[]}
  */
 export function byActivity(tabs) {
-  return tabs.slice().sort((left, right) => stamp(right) - stamp(left));
+  return tabs.slice().sort((left, right) => stamp(right) - stamp(left) || left.id.localeCompare(right.id));
+}
+
+/**
+ * Ordered by the start of the run in progress. Steady for the whole answer,
+ * and a chat that has not been told it is running yet falls back to the time it
+ * was opened, which is also not going to move.
+ *
+ * @param {TabInfo[]} tabs
+ * @returns {TabInfo[]}
+ */
+export function byRun(tabs) {
+  return tabs.slice().sort((left, right) => started(right) - started(left) || left.id.localeCompare(right.id));
+}
+
+/** @param {TabInfo} tab */
+function started(tab) {
+  return Number(tab.runStartedMs) || Number(tab.createdMs) || 0;
 }
 
 /**

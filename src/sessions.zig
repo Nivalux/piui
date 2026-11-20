@@ -249,10 +249,33 @@ fn lastTimestamp(allocator: std.mem.Allocator, raw: []const u8) ?[]const u8 {
     return if (found) |text| own(allocator, text) else null;
 }
 
+/// Newest activity first. Two sessions touched in the same millisecond are
+/// ordered by id, because a sort that leaves a tie to whatever the folder
+/// iterator happened to return makes the sidebar reshuffle on every poll.
 fn newer(_: void, a: Entry, b: Entry) bool {
-    const left = a.updated orelse a.created orelse a.id;
-    const right = b.updated orelse b.created orelse b.id;
-    return std.mem.order(u8, left, right) == .gt;
+    const left = a.updated orelse a.created orelse "";
+    const right = b.updated orelse b.created orelse "";
+    return switch (std.mem.order(u8, left, right)) {
+        .gt => true,
+        .lt => false,
+        .eq => std.mem.order(u8, a.id, b.id) == .gt,
+    };
+}
+
+test "sessions with the same stamp keep one order" {
+    const entries = [_]Entry{
+        .{ .id = "a", .path = "a", .updated = "2026-11-20T10:00:00.000Z" },
+        .{ .id = "b", .path = "b", .updated = null, .created = null },
+        .{ .id = "c", .path = "c", .updated = "2026-11-20T10:00:00.000Z" },
+    };
+
+    var list = std.mem.cloneAllocator(std.testing.allocator, &entries);
+    defer std.testing.allocator.free(&list);
+    std.sort.block(Entry, &list, {}, newer);
+
+    try std.testing.expectEqualStrings("c", list[0].id);
+    try std.testing.expectEqualStrings("a", list[1].id);
+    try std.testing.expectEqualStrings("b", list[2].id, "one that never carried a timestamp is the oldest thing here");
 }
 
 test "lastTimestamp takes the newest line, not the first" {

@@ -31,9 +31,22 @@ import { Meter } from "./rate.js";
 import { parseDiff } from "./diff.js";
 import { toolView } from "./toolview.js";
 import { markdownNode, parseMarkdown } from "./markdown.js";
-import { imageDataUrl, isPiuiEvent, parseFrame } from "./protocol.js";
+import { flattenResult as flatten, imageDataUrl, isPiuiEvent, parseFrame } from "./protocol.js";
 import { highlight, rank } from "./filter.js";
 import { chosen, splitTyping, step, suggestions } from "./dirview.js";
+import {
+  baseOf,
+  closeFile,
+  dirOf,
+  fileRows,
+  fileTree,
+  numberLines,
+  openDiff,
+  openFile,
+  pinView,
+  statusGroups,
+  trailOf,
+} from "./panel.js";
 
 /**
  * @typedef {import("./protocol.js").Frame} Frame
@@ -46,7 +59,11 @@ import { chosen, splitTyping, step, suggestions } from "./dirview.js";
 
 /** @typedef {{id: string, path: string, name?: string | null, cwd?: string | null, created?: string | null, updated?: string | null, first_text?: string | null, messages: number, running: boolean}} SessionEntry */
 
-/** @typedef {{base: string, label: string, branch: string, ahead: number, behind: number, files: {path: string, display: string, status: string}[], truncated: boolean, errorMessage?: string | null}} GitStatus */
+/** @typedef {{base: string, label: string, branch: string, ahead: number, behind: number, files: import("./panel.js").Changed[], truncated: boolean, errorMessage?: string | null}} GitStatus */
+
+/** @typedef {import("./panel.js").View} View */
+
+/** @typedef {{path: string, text: string, size: number, truncated: boolean, binary: boolean}} FileContent */
 
 const ids = {
   gate: "gate",
@@ -65,12 +82,32 @@ const ids = {
   branch: "branch",
   base: "base",
   kill: "kill",
-  diffToggle: "diff-toggle",
+  sidebarToggle: "sidebar-toggle",
+  sidePanel: "side-panel",
+  panelToggle: "panel-toggle",
+  panelClose: "panel-close",
+  panelDiffTab: "panel-diff-tab",
+  panelFilesTab: "panel-files-tab",
+  panelDiff: "panel-diff",
+  panelFiles: "panel-files",
+  fileFilter: "file-filter",
+  fileCrumbs: "file-crumbs",
+  fileList: "file-list",
   diffHead: "diff-head",
   diffBody: "diff-body",
+  views: "view-tabs",
+  stream: "stream",
+  composer: "composer",
+  fileView: "file-view",
+  fileHead: "file-head",
+  fileBody: "file-body",
   transcript: "transcript",
+  lightbox: "lightbox",
+  lightboxImg: "lightbox-img",
   jump: "jump",
   attachments: "attachments",
+  attach: "attach",
+  attachInput: "attach-input",
   queue: "queue",
   palette: "palette",
   input: "input",
@@ -103,7 +140,9 @@ for (const [key, id] of Object.entries(ids)) {
  * @type {{tabs: TabInfo[], active: string | null, sessions: SessionEntry[], commands: Command[], ui: Ui,
  *   base: string, model: string, modelKey: string, models: PiModel[], thinking: string, thinkingDefault: string,
  *   thinkingLevels: string[], thinkingChoice: string, connected: boolean,
- *   context: {used: number, size: number}, follow: boolean}}
+ *   context: {used: number, size: number}, follow: boolean,
+ *   views: View[], activeView: number, panel: "diff" | "files",
+ *   files: {path: string}[], filesTruncated: boolean}}
  */
 const state = {
   tabs: [],
@@ -122,6 +161,19 @@ const state = {
   connected: false,
   context: { used: 0, size: 0 },
   follow: true,
+  /**
+   * What the main area holds: the chat first, then every file opened from the
+   * panel. Index 0 is never closed, so there is always a way back.
+   *
+   * @type {View[]}
+   */
+  views: [{ kind: "chat" }],
+  activeView: 0,
+  /** Which half of the side panel is up. */
+  panel: /** @type {"diff" | "files"} */ ("diff"),
+  /** @type {{path: string}[]} */
+  files: [],
+  filesTruncated: false,
 };
 
 const transcript = new Transcript();
@@ -200,15 +252,15 @@ async function boot() {
   const first = state.tabs.find((tab) => tab.id === remembered) ?? state.tabs[0];
   if (first) return openTab(first.id);
 
-  // A restart kills the Pi processes but not the sessions they were in: put the
-  // chat the reader was last in back on screen.
+  // A restart kills the Pi processes but not the sessions they were in: put back
+  // every chat that was open, oldest first, so the one last looked at ends up on
+  // screen. Each one costs a Pi process, so a very long list gets trimmed.
   /** @type {{cwd: string, session?: string}[]} */
-  const saved = (await getJSON("/api/restore").catch(() => [])) ?? [];
-  const last = saved.length > 0 ? saved[saved.length - 1] : null;
-  if (last) {
-    await createTab(last.session ? { cwd: last.cwd, session: last.session } : { cwd: last.cwd });
-    if (state.active) return;
+  const saved = ((await getJSON("/api/restore").catch(() => [])) ?? []).slice(-8);
+  for (const item of saved) {
+    await createTab(item.session ? { cwd: item.cwd, session: item.session } : { cwd: item.cwd }).catch(() => {});
   }
+  if (state.active) return;
 
   showEmptyState();
   await loadSessions();
@@ -308,6 +360,10 @@ function wire() {
   el.dirModal.onclick = /** @param {MouseEvent} event */ (event) => {
     if (event.target === el.dirModal) el.dirModal.hidden = true;
   };
+  el.lightbox.onclick = () => hideShot();
+  // Anywhere else on the page dismisses an open row menu; the ⋯ and its items
+  // stop their own clicks, so this only ever sees a click outside of it.
+  document.addEventListener("click", () => closeMenuButton());
   // Escape closes the picker wherever the page happens to have put the caret.
   document.addEventListener("keydown", (event) => {
     if (event.key !== "Escape" || el.dirModal.hidden) return;
@@ -317,6 +373,7 @@ function wire() {
   el.filter.oninput = () => renderSidebar();
   el.filter.onkeydown = /** @param {KeyboardEvent} event */ (event) => {
     if (event.key !== "Escape") return;
+    event.preventDefault();
     el.filter.value = "";
     renderSidebar();
     el.filter.blur();
@@ -337,7 +394,51 @@ function wire() {
     renderSidebar();
   };
   el.base.onclick = () => cycleBase();
-  el.diffToggle.onclick = () => toggleDiff();
+  el.sidebarToggle.onclick = () => void saveUi({ sidebar: state.ui.sidebar === false });
+  el.panelToggle.onclick = () => void togglePanel();
+  el.panelClose.onclick = () => void setPanel(false);
+  el.panelDiffTab.onclick = () => setPanelTab("diff");
+  el.panelFilesTab.onclick = () => setPanelTab("files");
+  el.fileFilter.oninput = () => renderFileList();
+  el.fileFilter.onkeydown = /** @param {KeyboardEvent} event */ (event) => {
+    if (event.key !== "Escape") return;
+    event.preventDefault();
+    el.fileFilter.value = "";
+    renderFileList();
+  };
+  // Escape gives back the space the panel took. Something smaller may be
+  // holding the key first: a modal, the command palette, or a field that is
+  // being typed in, and each of those keeps it.
+  window.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape" || event.defaultPrevented) return;
+    if (rowMenu) {
+      event.preventDefault();
+      closeMenuButton();
+      return;
+    }
+    if (!el.lightbox.hidden) {
+      event.preventDefault();
+      hideShot();
+      return;
+    }
+    if (!el.dirModal.hidden || !el.settingsModal.hidden || !el.palette.hidden) return;
+    const field = /** @type {HTMLElement | null} */ (/** @type {EventTarget | null} */ (event.target));
+    if (field && (field.tagName === "INPUT" || field.tagName === "TEXTAREA" || field.isContentEditable)) return;
+    escapePanel();
+  });
+  // Two panels the reader keeps wanting back: Ctrl+B for the chat list, Ctrl+J
+  // for files and diff. Both are one click, but that click is a hundred a day.
+  window.addEventListener("keydown", (event) => {
+    if (!(event.ctrlKey || event.metaKey) || event.altKey || event.shiftKey) return;
+    if (event.key === "b" || event.key === "B") {
+      event.preventDefault();
+      void saveUi({ sidebar: state.ui.sidebar === false });
+    }
+    if (event.key === "j" || event.key === "J") {
+      event.preventDefault();
+      void togglePanel();
+    }
+  });
   el.send.onclick = () => void send();
   el.abort.onclick = () => void interrupt();
   el.settingsButton.onclick = () => void showSettings();
@@ -366,6 +467,15 @@ function wire() {
     syncPalette();
   });
   el.input.addEventListener("paste", onPaste);
+  el.attach.onclick = () => el.attachInput.click();
+  el.attachInput.onchange = () => {
+    attachFiles([...(el.attachInput.files ?? [])]);
+    el.attachInput.value = "";
+  };
+
+  el.composer.addEventListener("dragover", onDragOver);
+  el.composer.addEventListener("dragleave", onDragLeave);
+  el.composer.addEventListener("drop", onDrop);
 
   window.addEventListener("beforeunload", () => stream?.close());
 }
@@ -378,8 +488,6 @@ function onKey(event) {
     if (event.key === "Tab" || (event.key === "Enter" && paletteIndex >= 0)) return acceptPalette(event);
     if (event.key === "Escape") return hidePalette(event);
   }
-
-  if (event.key === "Escape") return closeDiff(event);
 
   if (event.key === "Enter" && !event.shiftKey && state.ui.send_on_enter !== false) {
     event.preventDefault();
@@ -506,7 +614,9 @@ async function pickTyped(value) {
   if (base === picker.base) return renderFolders();
 
   const listing = await readDirs(base);
-  if (!listing) return;
+  // The reader may have moved on while this was in flight. A listing of the
+  // folder they left must not paint over the one they are standing in.
+  if (!listing || splitTyping(pickerNodes?.field.value ?? "").base !== base) return;
   picker.base = String(listing.path ?? base);
   picker.dirs = foldersOf(listing);
   renderFolders();
@@ -604,6 +714,14 @@ async function openTab(id) {
   el.transcript.replaceChildren();
   state.follow = true;
   el.jump.hidden = true;
+
+  // Files belong to the project of the chat they were opened from, so a new
+  // chat starts with a clean strip rather than someone else's files.
+  state.views = [{ kind: "chat" }];
+  state.files = [];
+  state.filesTruncated = false;
+  filesDir = "";
+  showView(0);
 
   const tab = active();
   el.title.textContent = tab ? labelOf(tab) : "";
@@ -760,7 +878,8 @@ function response(frame) {
   const data = frame.data ?? {};
 
   if (frame.command === "get_messages") {
-    transcript.replay(Array.isArray(data.messages) ? data.messages : []);
+    const tab = active();
+    transcript.replay(Array.isArray(data.messages) ? data.messages : [], !!tab?.running);
     markDirty();
     render();
     return;
@@ -980,35 +1099,135 @@ function onPaste(event) {
   const items = event.clipboardData?.items;
   if (!items) return;
 
+  /** @type {File[]} */
+  const files = [];
   for (const item of items) {
     if (!item.type.startsWith("image/")) continue;
     const file = item.getAsFile();
-    if (!file) continue;
+    if (file) files.push(file);
+  }
+  if (files.length === 0) return;
 
-    event.preventDefault();
+  event.preventDefault();
+  attachFiles(files);
+}
+
+/**
+ * Pictures go to pi as base64, so a picture is what can be attached. The rest
+ * is said out loud rather than dropped on the floor: a file that was dragged
+ * with intent and vanished is the worst kind of quiet.
+ *
+ * @param {File[]} files
+ */
+function attachFiles(files) {
+  let skipped = 0;
+  let empty = 0;
+  for (const file of files) {
+    const kind = file.type.length > 0 ? file.type : guessType(file.name);
+    if (!kind.startsWith("image/")) {
+      skipped += 1;
+      continue;
+    }
+
+    // A drag from outside a virtual machine often arrives as a name with no
+    // bytes behind it. The chip would then sit there with a picture that never
+    // loads, so it is refused where it failed instead of later.
+    if (file.size === 0) {
+      empty += 1;
+      continue;
+    }
+
     const reader = new FileReader();
     reader.onload = () => {
       const url = String(reader.result ?? "");
       const comma = url.indexOf(",");
-      attachments.push({ type: "image", mimeType: item.type, data: url.slice(comma + 1) });
+      if (comma < 0 || url.length - comma - 1 === 0) {
+        attachEmpty += 1;
+        renderAttachments();
+        return;
+      }
+      attachments.push({ type: "image", mimeType: kind, data: url.slice(comma + 1) });
+      renderAttachments();
+    };
+    reader.onerror = () => {
+      attachEmpty += 1;
       renderAttachments();
     };
     reader.readAsDataURL(file);
   }
+
+  attachSkipped = skipped;
+  attachEmpty += empty;
+  renderAttachments();
+  el.input.focus();
+}
+
+/** A dropped file often arrives without a type; the name is all there is. */
+const types = /** @type {Record<string, string>} */ ({
+  png: "image/png",
+  jpg: "image/jpeg",
+  jpeg: "image/jpeg",
+  gif: "image/gif",
+  webp: "image/webp",
+  bmp: "image/bmp",
+});
+
+/** @param {string} name */
+function guessType(name) {
+  const at = name.lastIndexOf(".");
+  return at < 0 ? "" : types[name.slice(at + 1).toLowerCase()] ?? "";
+}
+
+/** @param {DragEvent} event */
+function onDragOver(event) {
+  if (!event.dataTransfer?.types.includes("Files")) return;
+  event.preventDefault();
+  event.dataTransfer.dropEffect = "copy";
+  el.composer.dataset.drop = "on";
+}
+
+/** @param {DragEvent} event */
+function onDragLeave(event) {
+  if (event.relatedTarget instanceof Node && el.composer.contains(event.relatedTarget)) return;
+  delete el.composer.dataset.drop;
+}
+
+/** @param {DragEvent} event */
+function onDrop(event) {
+  const files = event.dataTransfer?.files;
+  if (!files || files.length === 0) return;
+  event.preventDefault();
+  delete el.composer.dataset.drop;
+  attachFiles([...files]);
 }
 
 function clearAttachments() {
   attachments.length = 0;
+  attachSkipped = 0;
+  attachEmpty = 0;
   renderAttachments();
 }
 
+let attachSkipped = 0;
+let attachEmpty = 0;
+
 function renderAttachments() {
   el.attachments.replaceChildren(
+    ...(attachSkipped > 0 ? [span(`${attachSkipped} not a picture — pi takes pictures`, "attach-note")] : []),
+    ...(attachEmpty > 0
+      ? [span(`${attachEmpty} arrived without its bytes — pick the file instead of dragging`, "attach-note")]
+      : []),
     ...attachments.map((image, index) => {
       const chip = element("span", "attachment");
+      const label = span("image");
       const thumb = document.createElement("img");
       thumb.src = imageDataUrl(image);
-      chip.append(thumb, span("image"));
+      thumb.alt = "attached picture";
+      thumb.onerror = () => {
+        chip.classList.add("broken");
+        label.textContent = "unreadable picture";
+      };
+      chip.append(thumb, label);
 
       const drop = button("×", () => {
         attachments.splice(index, 1);
@@ -1018,7 +1237,9 @@ function renderAttachments() {
       return chip;
     }),
   );
-  el.attachments.hidden = attachments.length === 0;
+  // The note about what did not make it belongs to the row, so the row stays
+  // visible while there is something to read even though nothing attached.
+  el.attachments.hidden = attachments.length === 0 && attachSkipped === 0 && attachEmpty === 0;
 }
 
 // ----------------------------------------------------------------- palette
@@ -1086,15 +1307,25 @@ function markDirty() {
   scheduled = true;
   requestAnimationFrame(() => {
     scheduled = false;
-    render();
+    renderStream();
   });
+}
+
+/**
+ * What an answer repaints. The chat list is deliberately not in here: it would
+ * be rebuilt on every token, and a row that is replaced between the press and
+ * the release never sees the click, which is how switching chats mid-answer
+ * stops working.
+ */
+function renderStream() {
+  renderTranscript();
+  renderQueue();
+  renderFooter();
 }
 
 function render() {
   renderSidebar();
-  renderTranscript();
-  renderQueue();
-  renderFooter();
+  renderStream();
 }
 
 /**
@@ -1105,6 +1336,7 @@ function render() {
  * how one gets found again.
  */
 function renderSidebar() {
+  if (rowMenu && !rowMenu.anchor.isConnected) closeMenuButton();
   const filter = String(el.filter.value).trim().toLowerCase();
   const hits = rank(filter, state.tabs, (tab) => [labelOf(tab), tab.cwd]);
   const visible = hits.map((hit) => hit.item);
@@ -1120,8 +1352,38 @@ function renderSidebar() {
   if (groups.Settled) rows.push(...settled.map(row));
   if (visible.length === 0) rows.push(element("div", "empty", "no open chats"));
 
-  el.tabs.replaceChildren(...rows);
+  repaint(el.tabs, rows, tabsMemo);
   renderSessions(filter);
+}
+
+/** @type {{paint: string}} */ const tabsMemo = { paint: "" };
+/** @type {{paint: string}} */ const sessionsMemo = { paint: "" };
+
+/**
+ * Replace a list's rows only when the list would look different. Both lists are
+ * rebuilt wholesale, and a row swapped out between the press and the release
+ * never sees the click — which is what makes a chat impossible to switch to
+ * while something repaints the sidebar.
+ *
+ * @param {HTMLElement} box
+ * @param {HTMLElement[]} rows
+ * @param {{paint: string}} memo
+ * @returns {boolean} whether the box changed
+ */
+function repaint(box, rows, memo) {
+  // A row replaced between the press and the release never sees the click, and
+  // an open row menu has nothing to hang from once its row is gone. The list
+  // catches up the moment the menu closes.
+  if (rowMenu) return false;
+
+  const draft = element("div");
+  draft.append(...rows);
+  const next = draft.innerHTML;
+  if (next === memo.paint) return false;
+
+  memo.paint = next;
+  box.replaceChildren(...rows);
+  return true;
 }
 
 /**
@@ -1140,17 +1402,16 @@ function renderSessions(filter) {
 
   /** @type {HTMLElement[]} */
   const rows = [];
-  for (const [bucket, list] of groupBy(hits, (hit) => bucketOf(hit.item))) {
+  for (const [bucket, list] of folders(hits)) {
     const shown = filter.length > 0 || expanded.has(bucket) ? list : list.slice(0, perProject);
-    rows.push(groupLabel(bucket.length > 0 ? basename(bucket) : "no folder"));
+    rows.push(groupLabel(projectLabel(bucket)));
     rows.push(...shown.map((hit) => sessionRow(hit.item, hit.ranges)));
     if (shown.length < list.length) rows.push(moreButton(bucket, list.length - shown.length));
   }
 
   if (rows.length === 0) rows.push(element("div", "empty", "no sessions here"));
 
-  el.sessions.replaceChildren(...rows);
-  el.sessions.scrollTop = kept;
+  if (repaint(el.sessions, rows, sessionsMemo)) el.sessions.scrollTop = kept;
 }
 
 /**
@@ -1169,7 +1430,7 @@ function sessionTitle(entry) {
  */
 function sessionRow(entry, ranges = []) {
   const already = state.tabs.find((tab) => tab.sessionPath === entry.path);
-  const row = element("button", `session${already ? " open" : ""}${entry.running ? " running" : ""}`);
+  const row = element("div", `session${already ? " open" : ""}${entry.running ? " running" : ""}`);
   const title = span(sessionTitle(entry), "session-title");
   if (ranges.length > 0) {
     title.replaceChildren();
@@ -1180,6 +1441,7 @@ function sessionRow(entry, ranges = []) {
     span(`${relativeTime(entry.updated, Date.now())} · ${entry.messages} msgs`, "session-meta"),
   );
   row.onclick = () => void (already ? openTab(already.id) : createTab({ session: entry.path }));
+  row.append(menuButton(() => [{ label: "Copy path", run: () => void copyPath(entry.cwd ?? "") }]));
   return row;
 }
 
@@ -1213,7 +1475,9 @@ let projectKey = "";
 
 /** The folder dropdown only changes when the folders do, so it keeps focus. */
 function paintProjectFilter() {
-  const projects = [...new Set(state.sessions.map(bucketOf).filter((cwd) => cwd.length > 0))].sort();
+  const projects = folders(state.sessions.map((entry) => ({ item: entry, ranges: [] })))
+    .map(([bucket]) => bucket)
+    .sort((a, b) => (a.length === 0 ? 1 : b.length === 0 ? -1 : projectLabel(a).localeCompare(projectLabel(b), undefined, { sensitivity: "base" })));
   const key = projects.join("\n");
   if (sessionProject !== "all" && !projects.includes(sessionProject)) sessionProject = "all";
 
@@ -1221,12 +1485,43 @@ function paintProjectFilter() {
     projectKey = key;
     el.sessionProject.replaceChildren(
       new Option("all projects", "all"),
-      ...projects.map((cwd) => new Option(basename(cwd), cwd)),
+      ...projects.map((cwd) => new Option(projectLabel(cwd), cwd)),
     );
   }
 
   el.sessionProject.value = sessionProject;
   el.sessionProject.hidden = projects.length < 2;
+}
+
+/**
+ * The sessions grouped by the folder they happened in. The groups come in the
+ * order of the list they were built from, which is newest chat first, so the
+ * folder you were just in sits on top; `no folder` goes to the bottom. The
+ * dropdown that picks one of these is sorted a-z instead, because finding one
+ * in a list is not the same job as finding the most recent one.
+ *
+ * @param {{item: SessionEntry, ranges: [number, number][]}[]} hits
+ * @returns {[string, {item: SessionEntry, ranges: [number, number][]}[]][]}
+ */
+function folders(hits) {
+  const groups = [...groupBy(hits, (hit) => bucketOf(hit.item))];
+  return groups.sort(([a], [b]) => (a.length === 0 ? 1 : b.length === 0 ? -1 : 0));
+}
+
+/**
+ * A project's name in the list and in the dropdown. Two folders with the same
+ * last segment are told apart by the one above it.
+ *
+ * @param {string} bucket
+ */
+function projectLabel(bucket) {
+  if (bucket.length === 0) return "no folder";
+  const name = basename(bucket);
+  const clash = state.sessions.some((other) => {
+    const cwd = bucketOf(other);
+    return cwd !== bucket && cwd.length > 0 && basename(cwd) === name;
+  });
+  return clash ? `${name} · ${basename(dirOf(bucket))}` : name;
 }
 
 /**
@@ -1265,12 +1560,83 @@ function tabRow(tab, ranges = []) {
   }
   row.append(top, title, tabFoot(tab));
   row.onclick = () => void openTab(tab.id);
-  row.oncontextmenu = (event) => {
-    event.preventDefault();
-    state.active = tab.id;
-    void closeTab();
-  };
+  row.append(
+    menuButton(() => [
+      { label: "Copy path", run: () => void copyPath(tab.cwd) },
+      {
+        label: "Archive into sessions",
+        danger: true,
+        run: () => {
+          state.active = tab.id;
+          void closeTab();
+        },
+      },
+    ]),
+  );
   return row;
+}
+
+/**
+ * The ⋯ button at the right edge of a sidebar row, which is what opens a row's
+ * actions now. Right-click used to do it, and closing a chat is too expensive a
+ * mistake for a stray click: this has to be aimed at.
+ *
+ * @param {() => {label: string, danger?: boolean, run: () => void}[]} build
+ */
+function menuButton(build) {
+  const button = element("button", "row-menu", "⋯");
+  button.setAttribute("type", "button");
+  button.title = "Actions";
+  button.onclick = (event) => {
+    event.stopPropagation();
+    if (rowMenu?.anchor === button) return closeMenuButton();
+    const list = element("div", "row-actions");
+    for (const action of build()) {
+      const item = element("button", `row-action${action.danger ? " danger" : ""}`, action.label);
+      item.setAttribute("type", "button");
+      item.onclick = (event) => {
+        event.stopPropagation();
+        closeMenuButton();
+        action.run();
+      };
+      list.append(item);
+    }
+    // Fixed to the viewport and hung off the body: the sidebar clips its own
+    // overflow, and a menu that lives inside it lands wherever that box is
+    // rather than under the dots it belongs to.
+    document.body.append(list);
+    const at = button.getBoundingClientRect();
+    list.style.top = `${at.bottom + 2}px`;
+    list.style.right = `${Math.max(0, window.innerWidth - at.right)}px`;
+    if (window.innerHeight - at.bottom < list.offsetHeight + 8) {
+      list.style.top = `${Math.max(4, at.top - list.offsetHeight - 2)}px`;
+    }
+    button.parentElement?.classList.add("menu-open");
+    rowMenu = { anchor: button, list };
+  };
+  return button;
+}
+
+/** @type {{anchor: HTMLElement, list: HTMLElement} | null} */
+let rowMenu = null;
+
+function closeMenuButton() {
+  if (!rowMenu) return;
+  rowMenu.list.remove();
+  rowMenu.anchor.parentElement?.classList.remove("menu-open");
+  rowMenu = null;
+  renderSidebar();
+}
+
+/** @param {string} text */
+async function copyPath(text) {
+  if (text.length === 0) return;
+  try {
+    await navigator.clipboard.writeText(text);
+    toast(`copied ${text}`);
+  } catch {
+    toast("the browser would not hand over the clipboard");
+  }
 }
 
 /**
@@ -1419,10 +1785,7 @@ function paint(node, block, before = null) {
     case "user": {
       node.append(span("you", "who"), span(block.text ?? "", "body"));
       for (const image of /** @type {import("./transcript.js").Image[]} */ (block.images ?? [])) {
-        const thumb = document.createElement("img");
-        thumb.className = "thumb";
-        thumb.src = imageDataUrl(image);
-        node.append(thumb);
+        node.append(shot(image));
       }
       return;
     }
@@ -1452,12 +1815,14 @@ function paint(node, block, before = null) {
 
     case "tool": {
       const shown = block.result ?? block.progress;
+      const pictures = /** @type {import("./transcript.js").Image[]} */ (block.images ?? []);
       const view = toolView(
         block.toolName ?? "tool",
         block.args ?? null,
         shown === null || shown === undefined ? "" : flatten(shown),
         block.details,
         before,
+        pictures.length,
       );
 
       const { fold, summary, body } = foldFor(block, false);
@@ -1482,6 +1847,10 @@ function paint(node, block, before = null) {
       if (view.chips.length > 0) body.append(chipRow(view.chips));
       if (body.childNodes.length === 0) body.append(span(block.done ? "no output" : "nothing back yet", "muted"));
       node.append(fold);
+
+      // A picture goes outside the fold. Reading it is usually why the file was
+      // opened, and a line about it is no substitute with the fold shut.
+      for (const image of pictures) node.append(shot(image));
       break;
     }
 
@@ -1616,6 +1985,43 @@ function boxed(text, key) {
   return box;
 }
 
+/**
+ * A picture with the two things a picture in a log needs: a way to see it at
+ * the size it was drawn at, and a cursor that says so.
+ *
+ * @param {import("./transcript.js").Image} image
+ */
+function shot(image) {
+  const node = /** @type {HTMLButtonElement} */ (element("button", "shot"));
+  node.type = "button";
+  node.title = "See it full size";
+
+  const thumb = document.createElement("img");
+  thumb.className = "thumb";
+  thumb.src = imageDataUrl(image);
+  thumb.alt = "";
+
+  const mark = element("span", "zoom");
+  mark.innerHTML =
+    '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">' +
+    '<circle cx="10.5" cy="10.5" r="6.5" /><path d="M15.4 15.4 21 21" /><path d="M10.5 7.6v5.8M7.6 10.5h5.8" /></svg>';
+
+  node.append(thumb, mark);
+  node.onclick = () => showShot(thumb.src);
+  return node;
+}
+
+/** @param {string} src */
+function showShot(src) {
+  el.lightboxImg.src = src;
+  el.lightbox.hidden = false;
+}
+
+function hideShot() {
+  el.lightbox.hidden = true;
+  el.lightboxImg.removeAttribute("src");
+}
+
 /** @param {import("./toolview.js").Chip[]} chips */
 function chipRow(chips) {
   const row = element("div", "chips");
@@ -1683,17 +2089,29 @@ let runTicker = null;
 /**
  * Spins the composer indicator and counts how long this answer is taking.
  *
- * @param {string} tabId
+ * The count starts where the run started, which the server knows: switching to
+ * a chat that has been working for three minutes has to read three minutes, not
+ * one second since the click.
+ *
+ * @param {import("./protocol.js").TabInfo | null} tab
  * @param {boolean} running
  */
-function trackRun(tabId, running) {
+function trackRun(tab, running) {
+  const tabId = tab?.id ?? "";
   if (running && runTab !== tabId) {
     runTab = tabId;
-    runSince = Date.now();
+    runSince = Number(tab?.runStartedMs) || Date.now();
   }
   if (!running) {
+    // An answer just ended in this chat. If the reader is watching the panel,
+    // what the turn changed should be in it without another click.
+    const finished = tabId.length > 0 && runTab === tabId;
     runTab = "";
     runSince = 0;
+    if (finished) {
+      refreshPanel();
+      refreshOpenDiff();
+    }
   }
 
   if (running && !runTicker) {
@@ -1717,7 +2135,7 @@ function renderFooter() {
   const tab = active();
   const reading = meter.reading();
 
-  trackRun(tab?.id ?? "", !!tab?.running);
+  trackRun(tab, !!tab?.running);
   paintContext();
 
   const parts = [];
@@ -1774,6 +2192,10 @@ function renderPickers() {
   const options = levels.map((level) => /** @type {[string, string]} */ ([level, level]));
   fill(el.thinking, [["default", "default"], ...options], state.thinkingChoice, ready);
   el.thinking.title = state.thinking ? `thinking: ${state.thinking}` : "Thinking level";
+
+  // The row of the chat that is open names its model, so a new model is a new
+  // row as well.
+  renderSidebar();
 }
 
 /**
@@ -1839,29 +2261,32 @@ async function refreshGit() {
     ? `${status.branch}${status.ahead ? ` ↑${status.ahead}` : ""}${status.behind ? ` ↓${status.behind}` : ""}`
     : "";
 
+  // The branch and the base are wanted either way; the list of changed files
+  // only matters while the panel is up on that tab.
+  if (state.ui.files !== true || state.panel !== "diff") return;
+
   const problem = gitHint(status?.errorMessage);
   if (problem) {
+    el.diffHead.replaceChildren();
     el.diffBody.replaceChildren(element("div", "diff-empty", problem));
-    el.diffHead.replaceChildren(span(problem, "muted"));
     return;
   }
 
-  const text = await fetchText(`/api/git/diff?id=${encodeURIComponent(id)}&base=${encodeURIComponent(state.base)}`);
-  if (id !== state.active) return;
-
-  const files = parseDiff(text);
-  el.diffBody.replaceChildren(...files.map(diffFile));
+  const changed = status?.files ?? [];
   el.diffHead.replaceChildren(
-    span(`${files.length} files`),
-    ...files.map((file) => {
-      const chip = button(`${file.path} +${file.adds} −${file.dels}`, async () => {
-        await navigator.clipboard.writeText(file.patch);
-        toast("patch copied");
-      });
-      chip.className = "chip file";
-      return chip;
-    }),
+    span(changed.length === 1 ? "1 file changed" : `${changed.length} files changed`, "diff-count"),
+    ...(status?.truncated ? [span("list cut short", "diff-more")] : []),
   );
+
+  // The patch of one file is a view of its own, so the panel stays as quick to
+  // read as `git status` and does not paint a thousand lines nobody asked for.
+  const rows = /** @type {HTMLElement[]} */ ([]);
+  for (const group of statusGroups(changed)) {
+    if (group.title.length > 0) rows.push(element("div", "status-group", group.title));
+    rows.push(...group.files.map(statusRow));
+  }
+  if (rows.length === 0) rows.push(element("div", "diff-empty", "nothing changed"));
+  el.diffBody.replaceChildren(...rows);
 }
 
 const git_messages = /** @type {Record<string, string>} */ ({
@@ -1876,13 +2301,249 @@ function gitHint(message) {
   return git_messages[message] ?? message;
 }
 
-/** @param {import("./diff.js").FileDiff} file */
-function diffFile(file) {
-  const wrap = element("div", "diff-file");
-  const name = element("div", "diff-name");
-  name.append(file.path, span(` +${file.adds}`, "plus"), span(` −${file.dels}`, "minus"));
-  wrap.append(name);
+/**
+ * One line of `git status`: the two-letter code, the name, the folder behind it.
+ *
+ * @param {import("./panel.js").Changed} file
+ */
+function statusRow(file) {
+  const node = element("button", "st-row");
+  node.append(span(file.status, `st-code st-${statusClass(file.status)}`));
+  node.append(span(file.display, "st-path"));
+  node.onclick = () => openDiffView(file.path);
+  node.title = "What changed here";
+  return node;
+}
 
+/** @param {string} code */
+function statusClass(code) {
+  if (code === "?" || code === "A") return "new";
+  if (code === "D") return "gone";
+  if (code === "R" || code === "C") return "ren";
+  if (code === "U") return "conf";
+  return "mod";
+}
+
+function cycleBase() {
+  const order = ["working", "staged", "branch:main", "branch:master"];
+  state.base = order[(order.indexOf(state.base) + 1) % order.length] ?? "working";
+  void refreshGit();
+  refreshOpenDiff();
+}
+
+// -------------------------------------------------------------------- views
+
+/**
+ * A click in a list is a glance, not a keeper: the next glance takes the same
+ * tab. Clicking the tab itself is what settles it.
+ *
+ * @param {string} path
+ * @param {boolean} [preview]
+ */
+function openFileView(path, preview = true) {
+  const next = openFile(state.views, state.activeView, path, preview);
+  state.views = next.views;
+  showView(next.active);
+}
+
+/** @param {string} path @param {boolean} [preview] */
+function openDiffView(path, preview = true) {
+  const next = openDiff(state.views, state.activeView, path, preview);
+  state.views = next.views;
+  showView(next.active);
+}
+
+/** @param {number} index */
+function pickView(index) {
+  const next = pinView(state.views, index);
+  state.views = next.views;
+  showView(next.active);
+}
+
+/** @param {number} index */
+function closeView(index) {
+  const next = closeFile(state.views, state.activeView, index);
+  state.views = next.views;
+  showView(next.active);
+}
+
+/**
+ * Show one of the views in the main area. A file takes the middle entirely:
+ * the composer sends to the chat, so leaving it under a file would promise that
+ * a message lands in the file.
+ *
+ * @param {number} index
+ */
+function showView(index) {
+  const at = Math.max(0, Math.min(index, state.views.length - 1));
+  state.activeView = state.views[at]?.kind === "chat" || !state.views[at] ? 0 : at;
+
+  const view = state.views[state.activeView];
+  const chat = !view || view.kind === "chat";
+  el.stream.hidden = !chat;
+  el.composer.hidden = !chat;
+  el.fileView.hidden = chat;
+  renderViews();
+
+  if (view?.kind === "file") void showFile(view.path);
+  if (view?.kind === "diff") void showFileDiff(view.path);
+}
+
+function renderViews() {
+  if (!state.active) {
+    el.views.hidden = true;
+    return;
+  }
+  el.views.hidden = false;
+  el.views.replaceChildren(...state.views.map((view, index) => viewChip(view, index)));
+}
+
+/** @param {View} view @param {number} index */
+function viewChip(view, index) {
+  const node = element("div", `view${index === state.activeView ? " on" : ""}`);
+  const tab = button(viewLabel(view), () => pickView(index));
+  tab.className = `view-tab${view.kind !== "chat" && view.preview ? " preview" : ""}`;
+  tab.title = view.kind === "chat" ? "Back to the chat" : view.preview ? `${view.path} — preview, click to keep` : view.path;
+
+  // The middle button closes, the way it does everywhere else a tab is open.
+  tab.onmousedown = /** @param {MouseEvent} event */ (event) => {
+    if (event.button === 1) event.preventDefault();
+  };
+  tab.onauxclick = /** @param {MouseEvent} event */ (event) => {
+    if (event.button !== 1) return;
+    event.preventDefault();
+    closeView(index);
+  };
+
+  node.append(tab);
+
+  if (view.kind !== "chat") {
+    const close = button("✕", () => closeView(index));
+    close.className = "view-close";
+    close.title = view.kind === "file" ? "Close this file" : "Close this diff";
+    node.append(close);
+  }
+  return node;
+}
+
+/**
+ * A patch tab carries a Δ so it can sit next to the file it is about without
+ * looking like the same thing twice.
+ *
+ * @param {View} view
+ */
+function viewLabel(view) {
+  if (view.kind === "chat") return chatLabel();
+  return view.kind === "diff" ? `Δ ${baseOf(view.path)}` : baseOf(view.path);
+}
+
+/** The chat is a tab too, and a tab wants a name rather than an id. */
+function chatLabel() {
+  const tab = active();
+  if (!tab) return "chat";
+  return isProjectCwd(tab.cwd) ? basename(tab.cwd) : "chat";
+}
+
+/** @param {string} path */
+async function showFile(path) {
+  const id = state.active;
+  el.fileHead.replaceChildren(span(path, "file-path"));
+  el.fileBody.replaceChildren(element("div", "file-empty", id ? "reading…" : "no chat is open"));
+  if (!id) return;
+
+  const content = /** @type {FileContent | null} */ (
+    await getJSON(`/api/file?id=${encodeURIComponent(id)}&path=${encodeURIComponent(path)}`).catch(() => null)
+  );
+
+  const shown = state.views[state.activeView];
+  if (shown?.kind !== "file" || shown.path !== path) return;
+  if (!content) {
+    el.fileBody.replaceChildren(element("div", "file-empty", "this file could not be read"));
+    return;
+  }
+  renderFile(content);
+}
+
+/** @param {FileContent} content */
+function renderFile(content) {
+  const meta = sizeOf(content.size) + (content.truncated ? " · first 512 kB" : "");
+  const head = element("button", "file-copy", "copy path");
+  head.onclick = async () => {
+    await navigator.clipboard.writeText(content.path).catch(() => {});
+    toast("path copied");
+  };
+  const patch = element("button", "file-copy", "see diff");
+  patch.onclick = () => openDiffView(content.path, false);
+  el.fileHead.replaceChildren(span(content.path, "file-path"), span(meta, "file-meta"), patch, head);
+
+  if (content.binary) {
+    el.fileBody.replaceChildren(element("div", "file-empty", "a binary file — nothing to show"));
+    return;
+  }
+
+  const { lines, rest } = numberLines(content.text);
+  const fragment = document.createDocumentFragment();
+  for (const line of lines) {
+    const row = element("div", "code-line");
+    row.append(span(String(line.n), "ln"), element("span", "lc", line.value.length > 0 ? line.value : " "));
+    fragment.append(row);
+  }
+  if (rest > 0) fragment.append(element("div", "file-more", `${rest} more lines are not shown`));
+  el.fileBody.replaceChildren(fragment);
+}
+
+/**
+ * The patch of one file, read from git rather than from the file.
+ *
+ * @param {string} path
+ */
+async function showFileDiff(path) {
+  const id = state.active;
+  el.fileHead.replaceChildren(span(path, "file-path"));
+  el.fileBody.replaceChildren(element("div", "file-empty", id ? "reading…" : "no chat is open"));
+  if (!id) return;
+
+  const url = `/api/git/diff?id=${encodeURIComponent(id)}&base=${encodeURIComponent(state.base)}&path=${encodeURIComponent(path)}`;
+
+  let text = "";
+  let trouble = "";
+  try {
+    text = await (await request(url)).text();
+  } catch (error) {
+    trouble = gitHint(error instanceof Error ? error.message : String(error)) ?? "the patch could not be read";
+  }
+
+  const shown = state.views[state.activeView];
+  if (shown?.kind !== "diff" || shown.path !== path) return;
+  if (trouble.length > 0) {
+    el.fileBody.replaceChildren(element("div", "file-empty", trouble));
+    return;
+  }
+  renderDiffView(path, parseDiff(text));
+}
+
+/** @param {string} path @param {import("./diff.js").FileDiff[]} parsed */
+function renderDiffView(path, parsed) {
+  const file = parsed.find((entry) => entry.path === path) ?? parsed[0];
+  const open = element("button", "file-copy", "open file");
+  open.onclick = () => openFileView(path, false);
+
+  if (!file) {
+    el.fileHead.replaceChildren(span(path, "file-path"), span("unchanged", "file-meta"), open);
+    el.fileBody.replaceChildren(
+      element("div", "file-empty", `this file is the same as in ${status?.label ?? state.base}`),
+    );
+    return;
+  }
+
+  const copy = element("button", "file-copy", "copy patch");
+  copy.onclick = async () => {
+    await navigator.clipboard.writeText(file.patch).catch(() => {});
+    toast("patch copied");
+  };
+  el.fileHead.replaceChildren(span(path, "file-path"), span(`+${file.adds} −${file.dels}`, "file-meta"), open, copy);
+
+  const fragment = document.createDocumentFragment();
   for (const hunk of file.hunks) {
     const box = element("div", "hunk");
     box.append(span(hunk.header, "hunk-head"));
@@ -1895,40 +2556,26 @@ function diffFile(file) {
       );
       box.append(line);
     }
-    wrap.append(box);
+    fragment.append(box);
   }
-  return wrap;
+  if (file.binary) fragment.append(element("div", "file-empty", "a binary file — no lines to show"));
+  el.fileBody.replaceChildren(fragment);
 }
 
-function cycleBase() {
-  const order = ["working", "staged", "branch:main", "branch:master"];
-  state.base = order[(order.indexOf(state.base) + 1) % order.length] ?? "working";
-  void refreshGit();
+/** @param {number} bytes */
+function sizeOf(bytes) {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} kB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-function toggleDiff() {
-  const panel = document.getElementById("diff-panel");
-  if (!panel) return;
-  panel.hidden = !panel.hidden;
-  if (!panel.hidden) void refreshGit();
-}
-
-/** @param {Event} event */
-function closeDiff(event) {
-  const panel = document.getElementById("diff-panel");
-  if (panel && !panel.hidden) {
-    event.preventDefault();
-    panel.hidden = true;
+/** Give back the panel first, then the file in front of it. */
+function escapePanel() {
+  if (state.ui.files === true) {
+    void setPanel(false);
+    return;
   }
-}
-
-/** @param {string} path */
-async function fetchText(path) {
-  try {
-    return await (await request(path)).text();
-  } catch {
-    return "";
-  }
+  if (state.activeView > 0) closeView(state.activeView);
 }
 
 // --------------------------------------------------------------- settings
@@ -1943,7 +2590,161 @@ function applyUi() {
   const root = document.documentElement;
   root.dataset.theme = state.ui.theme ?? "dark";
   root.style.setProperty("--sidebar-width", `${state.ui.sidebar_width ?? 264}px`);
+  root.style.setProperty("--files-width", `${state.ui.files_width ?? 340}px`);
   root.style.fontSize = "14px";
+
+  el.shell.classList.toggle("side-collapsed", state.ui.sidebar === false);
+  el.sidePanel.hidden = state.ui.files !== true;
+  renderPanelTabs();
+}
+
+// --------------------------------------------------------------- side panel
+
+function togglePanel() {
+  return setPanel(state.ui.files !== true);
+}
+
+/** @param {boolean} open */
+async function setPanel(open) {
+  if (state.ui.files !== open) await saveUi({ files: open });
+  if (open) void refreshPanel();
+}
+
+/** @param {"diff" | "files"} which */
+function setPanelTab(which) {
+  state.panel = which;
+  renderPanelTabs();
+  void refreshPanel();
+}
+
+function renderPanelTabs() {
+  const diff = state.panel !== "files";
+  el.panelDiff.hidden = !diff;
+  el.panelFiles.hidden = diff;
+  el.panelDiffTab.classList.toggle("on", diff);
+  el.panelFilesTab.classList.toggle("on", !diff);
+  // What to diff against only means something to the diff.
+  el.base.hidden = !diff;
+}
+
+/** Whatever the panel is showing has to be read again. */
+function refreshPanel() {
+  if (state.ui.files !== true) return;
+  if (state.panel === "files") {
+    void loadFiles();
+    return;
+  }
+  void refreshGit();
+}
+
+/** A patch that is being read follows the base and the work it is compared to. */
+function refreshOpenDiff() {
+  const view = state.views[state.activeView];
+  if (view?.kind === "diff") void showFileDiff(view.path);
+}
+
+async function loadFiles() {
+  const id = state.active;
+  if (!id) return;
+
+  const payload = await getJSON(`/api/files?id=${encodeURIComponent(id)}`).catch(() => null);
+  if (id !== state.active) return;
+
+  state.files = Array.isArray(payload?.files) ? payload.files : [];
+  state.filesTruncated = !!payload?.truncated;
+  renderFileList();
+}
+
+/** The folder the Files tab is showing. A query ignores it: typing searches the project. */
+let filesDir = "";
+
+/** @param {string} dir */
+function goDir(dir) {
+  filesDir = dir;
+  el.fileFilter.value = "";
+  renderFileList();
+  el.fileList.scrollTop = 0;
+}
+
+function renderFileList() {
+  const query = el.fileFilter.value.trim();
+  renderCrumbs(query);
+
+  /** @type {Node[]} */
+  let nodes;
+  if (query.length > 0) {
+    nodes = fileRows(state.files, query).map((row) => fileRow(row.name, row.path, row.ranges, row.dir));
+  } else {
+    const tree = fileTree(state.files, filesDir);
+    nodes = [
+      ...(filesDir === "" ? [] : [upRow()]),
+      ...tree.dirs.map(dirRow),
+      ...tree.files.map((entry) => fileRow(entry.name, entry.path, [])),
+    ];
+  }
+
+  if (nodes.length === 0) nodes.push(element("div", "file-empty", query.length > 0 ? "nothing matches" : "nothing here"));
+  if (state.filesTruncated) nodes.push(element("div", "file-more", "the folder holds more — keep typing"));
+  el.fileList.replaceChildren(...nodes);
+}
+
+/** @param {string} query */
+function renderCrumbs(query) {
+  el.fileCrumbs.textContent = "";
+  if (query.length > 0) {
+    el.fileCrumbs.hidden = false;
+    el.fileCrumbs.append(span(`everywhere for ${query}`, "crumb"));
+    return;
+  }
+
+  const trail = trailOf(filesDir);
+  el.fileCrumbs.hidden = trail.length === 0;
+  if (trail.length === 0) return;
+
+  const up = button("↑", () => goDir(dirOf(filesDir)));
+  up.className = "crumb crumb-up";
+  up.title = "One folder up";
+  el.fileCrumbs.append(up);
+
+  for (const step of trail) {
+    el.fileCrumbs.append(span("›", "crumb-sep"));
+    const crumb = button(step.name, () => goDir(step.path));
+    crumb.className = "crumb";
+    el.fileCrumbs.append(crumb);
+  }
+}
+
+function upRow() {
+  const node = element("button", "file-row");
+  node.append(span("↑", "file-glyph"), span("..", "file-name"));
+  node.onclick = () => goDir(dirOf(filesDir));
+  return node;
+}
+
+/** @param {import("./panel.js").DirRow} row */
+function dirRow(row) {
+  const node = element("button", "file-row");
+  node.append(span("▸", "file-glyph"), span(row.name, "file-name"), span(String(row.count), "file-dir"));
+  node.onclick = () => goDir(row.path);
+  node.title = row.path;
+  return node;
+}
+
+/**
+ * @param {string} name
+ * @param {string} path
+ * @param {[number, number][]} ranges
+ * @param {string} [dir] dimmed behind the name, when the row is not already in it
+ */
+function fileRow(name, path, ranges, dir = "") {
+  const node = element("button", "file-row");
+  const label = element("span", "file-name");
+  label.append(highlight(name, ranges, "mark"));
+  node.append(label);
+  if (dir.length > 0) node.append(span(dir, "file-dir"));
+  node.onclick = () => openFileView(path);
+  node.title = path;
+  return node;
 }
 
 async function showSettings() {
@@ -2150,27 +2951,6 @@ function groupBy(items, key) {
     out.set(key(item), list);
   }
   return out;
-}
-
-/** @param {unknown} value */
-function flatten(value) {
-  if (typeof value === "string") return value;
-  if (value && typeof value === "object" && !Array.isArray(value)) {
-    const content = /** @type {{content?: unknown}} */ (value).content;
-    if (content !== undefined) return flatten(content);
-  }
-  if (Array.isArray(value)) {
-    return value
-      .map((part) => {
-        if (typeof part === "string") return part;
-        const block = /** @type {{type?: string, text?: string, mimeType?: string}} */ (part);
-        if (block?.type === "text") return block.text ?? "";
-        if (block?.type === "image") return `[image ${block.mimeType ?? "?"}]`;
-        return JSON.stringify(part);
-      })
-      .join("\n");
-  }
-  return value === null || value === undefined ? "" : JSON.stringify(value);
 }
 
 /** @param {import("./protocol.js").Usage} usage */

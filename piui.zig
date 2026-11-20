@@ -8,6 +8,7 @@ pub const sessions = @import("src/sessions.zig");
 pub const settings = @import("src/settings.zig");
 pub const git = @import("src/git.zig");
 pub const dirs = @import("src/dirs.zig");
+pub const files = @import("src/files.zig");
 pub const hub = @import("src/hub.zig");
 pub const server = @import("src/server.zig");
 pub const assets = @import("src/assets.zig");
