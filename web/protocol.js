@@ -121,6 +121,7 @@
  * @property {string} [toolName]
  * @property {Record<string, unknown>} [args]
  * @property {unknown} [partialResult]
+ * @property {number} [durationMs] how long a finished tool says it ran
  * @property {unknown} [result]
  * @property {unknown} [details]
  * @property {boolean} [isError]

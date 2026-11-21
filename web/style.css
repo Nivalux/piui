@@ -375,6 +375,10 @@ pre,
 .main {
   display: grid;
   grid-template-rows: auto auto minmax(0, 1fr);
+  /* Without a track of its own the column is sized to whatever the widest line
+     in the chat wants, and a narrow window then loses its composer buttons off
+     the right edge instead of wrapping them. */
+  grid-template-columns: minmax(0, 1fr);
   grid-column: 2;
   min-width: 0;
   min-height: 0;
@@ -471,6 +475,12 @@ pre,
 }
 
 /* --------------------------------------------------------------- side panel */
+
+/* A window too narrow for both keeps its chat and loses the panel. It comes
+   back on its own as soon as there are pixels to spare. */
+.shell.tight .panel {
+  display: none;
+}
 
 .panel {
   display: flex;
@@ -1236,6 +1246,13 @@ pre,
   color: var(--del);
 }
 
+/* A turn can stop on a thought and never say anything after it. That thought is
+   the whole reply, so it opens by itself and says what is missing: a folded row
+   the reader has to click before they learn there is nothing to read. */
+.block.last-word details > summary .state {
+  color: var(--warn);
+}
+
 /* Both clocks count up in place, so they keep a width of their own: "9.4s" and
    "1m 05s" would otherwise shove the row a character wider every so often. The
    digits are tabular and the text sits on its right edge, which is the edge
@@ -1565,15 +1582,48 @@ pre,
   font-size: 11px;
 }
 
+/*
+ * What to ask with, then Send, then how the run is going. Send takes all the
+ * slack on its line, so it sits at the right end while everything fits and
+ * stays there when the counters fall to a line of their own — a tall window is
+ * a narrow one, and a row that only grows sideways buries the buttons.
+ */
 .composer-foot {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 10px;
+  column-gap: 12px;
+  row-gap: 4px;
   margin-top: 6px;
   font-size: 12px;
 }
 
-.composer-foot .button {
+.foot-tools {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.foot-counters {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  column-gap: 12px;
+  row-gap: 4px;
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+.foot-counters > * {
+  white-space: nowrap;
+}
+
+.foot-send {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
   margin-left: auto;
 }
 
@@ -1585,6 +1635,7 @@ pre,
   color: var(--fg-soft);
   font: 12px var(--mono);
   cursor: pointer;
+  min-width: 0;
   max-width: 240px;
 }
 
@@ -1598,17 +1649,6 @@ pre,
   cursor: default;
 }
 
-#attach {
-  margin-left: auto;
-}
-
-#attach ~ .button {
-  margin-left: 8px;
-}
-
-.composer-foot #abort + .button {
-  margin-left: 8px;
-}
 
 .rate {
   font: 12px var(--mono);
@@ -1838,6 +1878,27 @@ pre,
   padding: 9px 10px;
   color: var(--fg-dim);
   font: 11px var(--mono);
+}
+
+/* The server went away. Everything on screen stays where it is; this says why
+   nothing new will arrive and that the page is asking again by itself. */
+.offline {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 14px 6px;
+  padding: 7px 11px;
+  border: 1px solid var(--warn);
+  border-radius: 10px;
+  background: var(--bg-soft);
+  color: var(--fg-soft);
+  font-size: 12px;
+}
+
+.ask-body {
+  margin: 0;
+  color: var(--fg-soft);
+  font-size: 13px;
 }
 
 .toast {

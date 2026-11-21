@@ -289,3 +289,83 @@ test("a chat that is still working replays with its tool still open", () => {
   settled.replay(messages, false);
   assert.equal(settled.blocks[0].done, true, "a chat at rest has no open tool");
 });
+
+test("a tool that reports its own length is believed", () => {
+  const transcript = new Transcript();
+
+  transcript.event({ type: "message_start", message: { role: "assistant", content: [] } });
+  transcript.event({ type: "tool_execution_start", toolCallId: "c1", toolName: "bash", args: { command: "make" } });
+  transcript.event({
+    type: "tool_execution_end",
+    toolCallId: "c1",
+    toolName: "bash",
+    durationMs: 9400,
+    result: { content: [{ type: "text", text: "built" }] },
+    isError: false,
+  });
+
+  const tool = transcript.blocks[0];
+  assert.equal(tool.done, true);
+  assert.equal(tool.durationMs, 9400, "the row shows the run, not the gap between two frames");
+});
+
+test("a turn that stops on a thought leaves that thought as the reply", () => {
+  const transcript = new Transcript();
+
+  transcript.event({ type: "message_start", message: { role: "assistant", content: [] } });
+  transcript.event({
+    type: "message_update",
+    assistantMessageEvent: { type: "thinking_delta", contentIndex: 0, delta: "the answer is in here somewhere" },
+  });
+  transcript.event({
+    type: "message_end",
+    message: {
+      role: "assistant",
+      content: [{ type: "thinking", thinking: "the answer is in here somewhere" }],
+      stopReason: "stop",
+    },
+  });
+
+  const [thought] = transcript.blocks;
+  assert.equal(thought.kind, "thinking");
+  assert.equal(thought.lastWord, true);
+});
+
+test("a thought with a reply after it stays a note above the answer", () => {
+  const transcript = new Transcript();
+
+  transcript.event({ type: "message_start", message: { role: "assistant", content: [] } });
+  transcript.event({ type: "message_update", assistantMessageEvent: { type: "thinking_delta", contentIndex: 0, delta: "hm" } });
+  transcript.event({ type: "message_update", assistantMessageEvent: { type: "text_delta", contentIndex: 1, delta: "here you go" } });
+  transcript.event({
+    type: "message_end",
+    message: {
+      role: "assistant",
+      content: [
+        { type: "thinking", thinking: "hm" },
+        { type: "text", text: "here you go" },
+      ],
+      stopReason: "stop",
+    },
+  });
+
+  const [thought, answer] = transcript.blocks;
+  assert.equal(thought.kind, "thinking");
+  assert.equal(thought.lastWord, undefined);
+  assert.equal(answer.kind, "text");
+  assert.equal(answer.text, "here you go");
+});
+
+test("a restored chat knows which thought was the last word", () => {
+  const transcript = new Transcript();
+  transcript.replay([
+    {
+      role: "assistant",
+      content: [{ type: "thinking", thinking: "that was the whole turn" }],
+      stopReason: "stop",
+      timestamp: 1_700_000_000_000,
+    },
+  ]);
+
+  assert.equal(transcript.blocks[0].lastWord, true);
+});

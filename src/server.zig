@@ -66,10 +66,11 @@ pub const Server = struct {
 
         if (std.mem.eql(u8, path, "/api/health")) {
             const signed_in = self.signedIn(request);
+            const build = "\"build\":\"" ++ assets.build ++ "\"";
             return self.sendJson(request, .ok, if (signed_in)
-                "{\"ok\":true,\"signedIn\":true}"
+                "{\"ok\":true,\"signedIn\":true," ++ build ++ "}"
             else
-                "{\"ok\":true,\"signedIn\":false}");
+                "{\"ok\":true,\"signedIn\":false," ++ build ++ "}");
         }
 
         if (std.mem.eql(u8, path, "/api/login")) return self.login(request, a);

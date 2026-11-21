@@ -1132,8 +1132,36 @@ test("a streaming answer leaves the chat list where it is", { skip: blocked }, a
   );
 });
 
-test("the page threw nothing", { skip: blocked }, async () => {
-  assert.deepEqual(crashes, []);
+test("a finished tool wears the length it reported", { skip: blocked }, async () => {
+  await idle();
+  const before = await page.locator("#transcript .block.tool").count();
+  await page.fill("#input", "and once more with the write");
+  await page.click("#send");
+  await page.waitForFunction(
+    (/** @type {number} */ count) => document.querySelectorAll("#transcript .block.tool").length > count + 2,
+    before,
+    { timeout: 30000 },
+  );
+  await idle();
+
+  const row = page.locator("#transcript .block.tool", { hasText: "piui-fake-write.txt" }).first();
+  assert.equal(await row.locator(".state").innerText(), "4.2s", "the tool's own number, not the gap between two frames");
+});
+
+test("a turn that stops on a thought says there is nothing after it", { skip: blocked }, async () => {
+  await idle();
+  await page.fill("#input", "be dumbstruck this time");
+  await page.click("#send");
+
+  const thought = page.locator("#transcript .block.thinking").last();
+  await thought.locator(".state", { hasText: "nothing after" }).waitFor({ state: "visible", timeout: 30000 });
+
+  assert.equal(
+    await thought.locator("details").evaluate((/** @type {any} */ fold) => fold.open),
+    true,
+    "the only thing the turn left behind is not folded away",
+  );
+  assert.match(await thought.locator(".fold-body").innerText(), /never says it/);
 });
 
 /**
@@ -1319,4 +1347,195 @@ test("a session row offers its folder without opening the chat", async () => {
 
   await page.locator(".row-action", { hasText: "Copy path" }).click();
   await toastSays(/copied \//);
+});
+
+test("a second ⋯ takes the first menu down instead of stacking on it", { skip: blocked }, async () => {
+  await openFreshChat();
+  const first = await activeTab();
+  await openFreshChat();
+  const second = await activeTab();
+  const row = (/** @type {string} */ id) => page.locator(`#tab-list .tab[data-tab="${id}"]`);
+
+  await row(first).locator(".row-menu").click();
+  await page.waitForSelector(".row-actions", { state: "visible" });
+
+  await row(second).locator(".row-menu").click();
+  await page.waitForSelector(".row-actions", { state: "visible" });
+  assert.equal(await page.locator(".row-actions").count(), 1, "one menu, not two over each other");
+  await menuHangsUnder(row(second));
+
+  await page.keyboard.press("Escape");
+  assert.equal(await page.locator(".row-actions").count(), 0);
+});
+
+test("closing a chat that is still working asks first", { skip: blocked }, async () => {
+  await openFreshChat();
+  const chat = await activeTab();
+
+  await page.fill("#input", "the long one, please");
+  await page.click("#send");
+  await page.waitForFunction(() => document.getElementById("busy")?.hidden === false, null, { timeout: 15000 });
+
+  await page.click("#kill");
+  await page.waitForSelector("#ask-modal", { state: "visible" });
+  assert.match(await page.locator("#ask-modal .card-title").innerText(), /stop this chat/i);
+
+  await page.locator("#ask-modal button", { hasText: "Cancel" }).click();
+  await page.waitForSelector("#ask-modal", { state: "hidden" });
+  assert.equal(await activeTab(), chat, "no means the run goes on");
+
+  await page.click("#kill");
+  await page.waitForSelector("#ask-modal", { state: "visible" });
+  await page.locator("#ask-modal button", { hasText: "Stop and close" }).click();
+  await page.waitForFunction(
+    (/** @type {string} */ id) => document.querySelector(`#tab-list .tab[data-tab="${id}"]`) === null,
+    chat,
+    { timeout: 15000 },
+  );
+});
+
+test("a server that goes away is said out loud, and the page comes back by itself", { skip: blocked }, async () => {
+  const health = await (await fetch(`${base}/api/health`)).json();
+
+  /** @type {"live" | "down" | "rebuilt"} */
+  let mood = "live";
+  await page.addInitScript(() => {
+    try {
+      const seen = Number(sessionStorage.getItem("piui-reloads") ?? 0);
+      sessionStorage.setItem("piui-reloads", String(seen + 1));
+    } catch {
+      // A document with no storage to count in is a document that did not reload.
+    }
+  });
+  const reloads = () => page.waitForFunction((/** @type {number} */ want) => Number(sessionStorage.getItem("piui-reloads") ?? 0) >= want, 1, { timeout: 15000 });
+  await page.route("**/api/health", (/** @type {any} */ route) => {
+    if (mood === "down") return route.abort("connectionrefused");
+    return route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({ ok: true, signedIn: true, build: mood === "rebuilt" ? "f".repeat(16) : health.build }),
+    });
+  });
+
+  try {
+    mood = "down";
+    await page.waitForSelector("#offline", { state: "visible", timeout: 15000 });
+    assert.match(await page.locator("#offline").innerText(), /not reachable/);
+    assert.equal(await page.locator("#transcript").count(), 1, "the chat stays on screen while the server is gone");
+
+    mood = "live";
+    await page.waitForSelector("#offline", { state: "hidden", timeout: 15000 });
+
+    mood = "rebuilt";
+    await reloads();
+
+    // Hand the page its own build back and let it settle, or the next test
+    // starts in the middle of a reload it knows nothing about.
+    mood = "live";
+    await page.waitForFunction(() => Number(sessionStorage.getItem("piui-reloads") ?? 0) >= 2, null, {
+      timeout: 15000,
+    });
+    await page.waitForSelector("#new-chat", { state: "visible", timeout: 15000 });
+  } finally {
+    await page.unroute("**/api/health");
+  }
+});
+
+test("a narrow window keeps every button and drops the counters below", { skip: blocked }, async () => {
+  await openFreshChat();
+  await runTurn("run the scripted tools");
+
+  await page.setViewportSize({ width: 420, height: 900 });
+  try {
+    // Counters with nothing in them have no line to take.
+    await page.waitForFunction(
+      () => (document.querySelector(".foot-counters")?.getBoundingClientRect().width ?? 0) > 10,
+      null,
+      { timeout: 10000 },
+    );
+
+    /** Where the three groups of the composer foot ended up. */
+    const edges = await page.evaluate(() => {
+      /** @param {string} sel */
+      const box = (sel) => {
+        const node = /** @type {HTMLElement | null} */ (document.querySelector(sel));
+        if (!node) throw new Error(`no ${sel}`);
+        return node.getBoundingClientRect();
+      };
+      return {
+        view: window.innerWidth,
+        modelBottom: box("#model").bottom,
+        countersTop: box(".foot-counters").top,
+        countersLeft: box(".foot-counters").left,
+        sendLeft: box("#send").left,
+        sendRight: box("#send").right,
+        attachLeft: box("#attach").left,
+        attachRight: box("#attach").right,
+      };
+    });
+
+    assert.ok(edges.attachLeft >= 0 && edges.attachRight <= edges.view, "attach is inside the window");
+    assert.ok(edges.sendLeft >= 0 && edges.sendRight <= edges.view, "send is inside the window");
+    assert.ok(edges.countersTop >= edges.modelBottom, "the counters took a line under the pickers");
+    assert.ok(edges.countersLeft >= 0, "and start under the model, not off its left edge");
+  } finally {
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await page
+      .waitForFunction(() => !document.getElementById("shell")?.classList.contains("tight"), null, { timeout: 5000 })
+      .catch(() => {});
+  }
+});
+
+test("a window too narrow for both gives the chat the pixels", { skip: blocked }, async () => {
+  // The setting decides, not the current fold: a window that is holding the
+  // panel out on its own must not be answered with a click that closes it for
+  // good, which is exactly what a click on the toggle would do then.
+  await page.evaluate(() => {
+    if (document.getElementById("side-panel")?.hidden) document.getElementById("panel-toggle")?.click();
+  });
+  await page.waitForFunction(
+    () =>
+      document.getElementById("side-panel")?.hidden === false &&
+      !document.getElementById("shell")?.classList.contains("tight"),
+    null,
+    { timeout: 10000 },
+  );
+
+  const wide = await page.evaluate(() => ({
+    panel: document.querySelector("#side-panel")?.clientWidth ?? 0,
+    work: document.querySelector("#work")?.clientWidth ?? 0,
+  }));
+  assert.ok(wide.panel > 200, "the panel is out at a normal width");
+
+  await page.setViewportSize({ width: 760, height: 900 });
+  try {
+    await page.waitForFunction(
+      () => {
+        const at = document.getElementById("side-panel");
+        return at ? getComputedStyle(at).display === "none" : true;
+      },
+      null,
+      { timeout: 5000 },
+    );
+    const chat = await page.evaluate(() => ({
+      work: document.querySelector("#work")?.clientWidth ?? 0,
+      composer: document.querySelector("#composer")?.clientWidth ?? 0,
+    }));
+    assert.ok(chat.work < wide.work, "the window really did get smaller");
+    assert.ok(chat.composer >= chat.work - 2, "and the chat kept the whole row, panel or no panel");
+  } finally {
+    await page.setViewportSize({ width: 1280, height: 800 });
+  }
+
+  await page.waitForFunction(
+    () => {
+      const at = document.getElementById("side-panel");
+      return at ? getComputedStyle(at).display !== "none" : false;
+    },
+    null,
+    { timeout: 5000 },
+  );
+});
+
+test("the page threw nothing", { skip: blocked }, async () => {
+  assert.deepEqual(crashes, []);
 });

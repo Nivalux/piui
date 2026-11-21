@@ -55,3 +55,54 @@ test("a new prompt restarts the meter", () => {
 
   assert.equal(meter.reading(5000).tokens, 0);
 });
+
+test("the pace is the last few answers rather than the last second", () => {
+  const meter = new Meter();
+
+  meter.turn(100, 2_000);
+  assert.equal(meter.pace(), 50);
+
+  meter.turn(50, 500);
+  assert.equal(meter.pace(), 60, "150 tokens over two and a half seconds");
+});
+
+test("a turn that wrote nothing is no evidence of speed", () => {
+  const meter = new Meter();
+
+  meter.turn(0, 9_000);
+  meter.turn(10, 40);
+  assert.equal(meter.pace(), 0);
+});
+
+test("only the last three answers are remembered", () => {
+  const meter = new Meter();
+
+  for (let turn = 0; turn < 5; turn += 1) meter.turn(100, 1_000);
+  assert.equal(meter.pace(), 100);
+
+  meter.turn(30, 1_000);
+  assert.ok(Math.abs(meter.pace() - 230 / 3) < 0.01, "the two oldest have dropped out");
+});
+
+test("an opened chat knows its pace before anything new arrives", () => {
+  const meter = new Meter();
+
+  meter.history([
+    { role: "user", content: "go", timestamp: 1_000 },
+    { role: "assistant", content: "here", usage: { output: 200 }, timestamp: 3_000 },
+    { role: "toolResult", content: "done", timestamp: 4_000 },
+    { role: "assistant", content: "there", usage: { output: 100 }, timestamp: 6_000 },
+  ]);
+
+  assert.equal(meter.pace(), 75, "300 tokens over the four seconds the model had");
+});
+
+test("a new chat starts without the pace of the one before", () => {
+  const meter = new Meter();
+
+  meter.turn(200, 1_000);
+  meter.reset();
+
+  assert.equal(meter.pace(), 0);
+  assert.equal(meter.cost(), 0);
+});

@@ -65,6 +65,8 @@ import { blocks, imagesOf } from "./protocol.js";
  * @property {string | null} [summary]
  * @property {number} [startedAt]
  * @property {number} [doneAt]
+ * @property {number} [durationMs] how long the tool says it ran
+ * @property {boolean} [lastWord] a thought the turn stopped on, with no reply after it
  */
 
 let nextId = 0;
@@ -208,6 +210,7 @@ export class Transcript {
         block.progress = null;
         block.doneAt = stamp(frame);
         block.startedAt ??= block.doneAt;
+        if (typeof frame.durationMs === "number") block.durationMs = frame.durationMs;
         return true;
       }
 
@@ -396,6 +399,14 @@ export class Transcript {
       block.done = true;
     });
 
+    // A turn can end on a thought: the model stops after thinking and never
+    // says anything. That thought is then all the reader gets, so it has to
+    // read as an answer rather than as a note folded away above one.
+    if (texts.length === 0 && thinking.length > 0 && message.stopReason === "stop") {
+      const thought = openThinking[openThinking.length - 1];
+      if (thought) thought.lastWord = true;
+    }
+
     const last = this.#current.text[this.#current.text.length - 1];
     if (last) {
       last.usage = message.usage ?? null;
@@ -445,9 +456,12 @@ export class Transcript {
     }
 
     const parts = blocks(message.content);
+    /** @type {Block | undefined} */
+    let thought;
     for (const part of parts) {
       if (part.type === "thinking") {
-        this.#push({ kind: "thinking", id: nextId++, text: part.thinking ?? "", done: true });
+        thought = { kind: "thinking", id: nextId++, text: part.thinking ?? "", done: true };
+        this.#push(thought);
       } else if (part.type === "text") {
         this.#push({ kind: "text", id: nextId++, text: part.text ?? "", done: true, usage: message.usage ?? null });
       } else if (part.type === "toolCall") {
@@ -455,6 +469,10 @@ export class Transcript {
         block.args = /** @type {Record<string, unknown>} */ (part.arguments ?? null);
         block.startedAt ??= stamped(message);
       }
+    }
+
+    if (thought && message.stopReason === "stop" && !parts.some((part) => part.type === "text")) {
+      thought.lastWord = true;
     }
   }
 

@@ -154,6 +154,8 @@ async function turn(prompt) {
   send({ type: "turn_start", timestamp: now() });
   send({ type: "message_start", message: { role: "assistant" }, timestamp: now() });
 
+  if (/dumbstruck/i.test(prompt)) return dumbstruck();
+
   const parts = thoughtful
     ? ["Weighing ", "up the ", "trade-offs ", "of every ", "possible ", "shape ", "of this ", "answer. "]
     : ["Planning ", "the two ", "tool calls. "];
@@ -192,6 +194,7 @@ async function turn(prompt) {
     type: "tool_execution_end",
     toolCallId: file.id,
     toolName: file.name,
+    durationMs: 4200,
     result: { content: [{ type: "text", text: `wrote ${file.path}` }] },
     isError: false,
     timestamp: now(),
@@ -203,6 +206,7 @@ async function turn(prompt) {
     type: "tool_execution_end",
     toolCallId: shot.id,
     toolName: shot.name,
+    durationMs: 2600,
     result: {
       content: [
         { type: "text", text: "Read image file [image/png]" },
@@ -225,6 +229,7 @@ async function turn(prompt) {
     type: "tool_execution_end",
     toolCallId: "call_fail",
     toolName: "read",
+    durationMs: 1900,
     result: { content: [{ type: "text", text: "ENOENT: no such file or directory, open '/nope/missing.txt'" }] },
     isError: true,
     timestamp: now(),
@@ -316,6 +321,30 @@ async function tallAnswer() {
 
   history.push({ role: "assistant", content: [{ type: "text", text }] });
   send({ type: "message_end", message: { role: "assistant" }, timestamp: now() });
+  send({ type: "turn_end", timestamp: now() });
+  send({ type: "agent_end", willRetry: false, timestamp: now() });
+  send({ type: "agent_settled", timestamp: now() });
+}
+
+/**
+ * A turn that stops on a thought. The model thinks and has stopReason "stop"
+ * with nothing to show for it: what is left for the reader is the thought.
+ */
+async function dumbstruck() {
+  let thinking = "";
+  for (const part of ["The answer is already ", "in here, but the model ", "never says it. "]) {
+    thinking += part;
+    send({
+      type: "message_update",
+      assistantMessageEvent: { type: "thinking_delta", contentIndex: 0, delta: part },
+      timestamp: now(),
+    });
+    await sleep(60);
+  }
+
+  const message = { role: "assistant", content: [{ type: "thinking", thinking }], stopReason: "stop" };
+  history.push(message);
+  send({ type: "message_end", message, timestamp: now() });
   send({ type: "turn_end", timestamp: now() });
   send({ type: "agent_end", willRetry: false, timestamp: now() });
   send({ type: "agent_settled", timestamp: now() });

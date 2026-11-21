@@ -25,6 +25,19 @@ pub const files = [_]Asset{
     .{ .name = "/panel.js", .mime = "text/javascript; charset=utf-8", .body = @embedFile("../web/panel.js") },
 };
 
+/// One fingerprint over every baked file. A page that arrived with a different
+/// one is running a script this server no longer has, and should go and get the
+/// one it was written against.
+pub const build: []const u8 = blk: {
+    @setEvalBranchQuota(200_000_000);
+    var sum: u64 = 0xcbf29ce484222325;
+    for (files) |asset| {
+        for (asset.name) |byte| sum = (sum ^ byte) *% 0x100000001b3;
+        for (asset.body) |byte| sum = (sum ^ byte) *% 0x100000001b3;
+    }
+    break :blk std.fmt.comptimePrint("{x:0>16}", .{sum});
+};
+
 pub fn lookup(name: []const u8) ?Asset {
     for (files) |asset| {
         if (std.mem.eql(u8, asset.name, name)) return asset;

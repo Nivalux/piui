@@ -68,7 +68,7 @@
 
         <nav id="view-tabs" class="views"></nav>
 
-        <div class="work">
+        <div class="work" id="work">
           <div class="center">
             <section id="stream" class="stream">
               <section id="transcript" class="transcript"></section>
@@ -93,6 +93,11 @@
               <div id="file-body" class="file-body"></div>
             </section>
 
+            <div id="offline" class="offline" hidden>
+              <span class="spinner"></span>
+              <span>piui is not reachable. What is on screen stays; the page keeps asking every two seconds.</span>
+            </div>
+
             <div id="composer" class="composer">
               <div id="queue" class="queue" hidden></div>
               <div id="attachments" class="attachments" hidden></div>
@@ -104,37 +109,49 @@
                 placeholder="Message · / for commands · paste or drop an image"
               ></textarea>
               <div class="composer-foot">
-                <select id="model" class="picker" title="Model"></select>
-                <select id="thinking" class="picker" title="Thinking level"></select>
-                <span id="busy" class="busy" hidden>
-                  <span class="spinner"></span>
-                  <span id="busy-time"></span>
-                </span>
-                <span id="status" class="muted"></span>
-                <span id="rate" class="rate"></span>
-                <span id="context" class="context" hidden>
-                  <svg class="ring" viewBox="0 0 20 20" aria-hidden="true">
-                    <circle class="track" cx="10" cy="10" r="7.5"></circle>
-                    <circle id="context-ring" class="used" cx="10" cy="10" r="7.5"></circle>
-                  </svg>
-                  <span id="context-pct"></span>
-                </span>
-                <button id="attach" class="chip icon" title="Add pictures — or drop them anywhere here" aria-label="Add pictures">
-                  <svg
-                    viewBox="0 0 24 24"
-                    width="14"
-                    height="14"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="1.7"
-                    stroke-linecap="round"
+                <div class="foot-tools">
+                  <select id="model" class="picker" title="Model"></select>
+                  <select id="thinking" class="picker" title="Thinking level"></select>
+                  <button
+                    id="attach"
+                    class="chip icon"
+                    title="Add pictures — or drop them anywhere here"
+                    aria-label="Add pictures"
                   >
-                    <path d="M20 11.6 12.5 19a4.6 4.6 0 0 1-6.5-6.5l7.8-7.8a3.1 3.1 0 0 1 4.4 4.4l-7.8 7.8a1.6 1.6 0 0 1-2.2-2.2l7-7" />
-                  </svg>
-                </button>
-                <input id="attach-input" type="file" accept="image/*" multiple hidden />
-                <button id="abort" class="button" hidden>Cancel</button>
-                <button id="send" class="button primary">Send</button>
+                    <svg
+                      viewBox="0 0 24 24"
+                      width="14"
+                      height="14"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="1.7"
+                      stroke-linecap="round"
+                    >
+                      <path d="M20 11.6 12.5 19a4.6 4.6 0 0 1-6.5-6.5l7.8-7.8a3.1 3.1 0 0 1 4.4 4.4l-7.8 7.8a1.6 1.6 0 0 1-2.2-2.2l7-7" />
+                    </svg>
+                  </button>
+                  <input id="attach-input" type="file" accept="image/*" multiple hidden />
+                </div>
+                <div class="foot-send">
+                  <button id="abort" class="button" hidden>Cancel</button>
+                  <button id="send" class="button primary">Send</button>
+                </div>
+                <div class="foot-counters">
+                  <span id="busy" class="busy" hidden>
+                    <span class="spinner"></span>
+                    <span id="busy-time"></span>
+                  </span>
+                  <span id="status" class="muted"></span>
+                  <span id="rate" class="rate"></span>
+                  <span id="context" class="context" hidden>
+                    <svg class="ring" viewBox="0 0 20 20" aria-hidden="true">
+                      <circle class="track" cx="10" cy="10" r="7.5"></circle>
+                      <circle id="context-ring" class="used" cx="10" cy="10" r="7.5"></circle>
+                    </svg>
+                    <span id="context-pct"></span>
+                  </span>
+                </div>
+                
               </div>
             </div>
           </div>
@@ -162,6 +179,7 @@
 
     <div id="settings-modal" class="modal" hidden></div>
     <div id="dir-modal" class="modal" hidden></div>
+    <div id="ask-modal" class="modal" hidden></div>
     <div id="lightbox" class="lightbox" hidden>
       <img id="lightbox-img" class="lightbox-img" alt="" />
     </div>

@@ -8,7 +8,8 @@ check: fmt-check test build
 build:
     zig build
 
-# every test: zig units + fuzz replay, browser-free js logic, jsdoc types
+# every test: zig units + fuzz replay, js logic, jsdoc types. The browser
+# tests are part of it and skip themselves where there is no chromium.
 test:
     zig build test
 
@@ -31,6 +32,10 @@ test-js:
 # typecheck the js against its own jsdoc types
 typecheck:
     tsc --project web
+
+# render a copy of a chat in a throwaway server and list its transcript blocks
+peek *ARGS:
+    node scripts/peek.mjs {{ARGS}}
 
 # the long fuzz replay; a finding becomes a fixture test, never a generator
 test-fuzz STEPS="200000":

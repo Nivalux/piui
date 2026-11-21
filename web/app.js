@@ -84,6 +84,7 @@ const ids = {
   kill: "kill",
   sidebarToggle: "sidebar-toggle",
   sidePanel: "side-panel",
+  work: "work",
   panelToggle: "panel-toggle",
   panelClose: "panel-close",
   panelDiffTab: "panel-diff-tab",
@@ -122,6 +123,8 @@ const ids = {
   thinking: "thinking",
   send: "send",
   abort: "abort",
+  offline: "offline",
+  askModal: "ask-modal",
   settingsButton: "settings-button",
   settingsModal: "settings-modal",
   dirModal: "dir-modal",
@@ -139,7 +142,7 @@ for (const [key, id] of Object.entries(ids)) {
 /**
  * @type {{tabs: TabInfo[], active: string | null, sessions: SessionEntry[], commands: Command[], ui: Ui,
  *   base: string, model: string, modelKey: string, models: PiModel[], thinking: string, thinkingDefault: string,
- *   thinkingLevels: string[], thinkingChoice: string, connected: boolean,
+ *   thinkingLevels: string[], thinkingChoice: string, connected: boolean, offline: boolean, build: string,
  *   context: {used: number, size: number}, follow: boolean,
  *   views: View[], activeView: number, panel: "diff" | "files",
  *   files: {path: string}[], filesTruncated: boolean}}
@@ -159,6 +162,10 @@ const state = {
   thinkingLevels: [],
   thinkingChoice: "default",
   connected: false,
+  /** The whole server is gone, not just this chat's stream. */
+  offline: false,
+  /** Which build of the frontend this page arrived with. */
+  build: "",
   context: { used: 0, size: 0 },
   follow: true,
   /**
@@ -235,6 +242,7 @@ boot().catch((err) => {
 
 async function boot() {
   const health = await getJSON("/api/health").catch(() => null);
+  state.build = typeof health?.build === "string" ? health.build : "";
   if (!health?.signedIn) {
     const ok = await askForToken();
     if (!ok) return;
@@ -244,6 +252,8 @@ async function boot() {
   el.gate.remove();
 
   wire();
+  void watchServer();
+  setInterval(() => void watchServer(), 2000);
   await loadSettings();
   await loadTabs();
   poll();
@@ -360,6 +370,9 @@ function wire() {
   el.dirModal.onclick = /** @param {MouseEvent} event */ (event) => {
     if (event.target === el.dirModal) el.dirModal.hidden = true;
   };
+  el.askModal.onclick = /** @param {MouseEvent} event */ (event) => {
+    if (event.target === el.askModal) answerAsk(false);
+  };
   el.lightbox.onclick = () => hideShot();
   // Anywhere else on the page dismisses an open row menu; the ⋯ and its items
   // stop their own clicks, so this only ever sees a click outside of it.
@@ -421,7 +434,12 @@ function wire() {
       hideShot();
       return;
     }
-    if (!el.dirModal.hidden || !el.settingsModal.hidden || !el.palette.hidden) return;
+    if (!el.askModal.hidden) {
+      event.preventDefault();
+      answerAsk(false);
+      return;
+    }
+    if (!el.askModal.hidden || !el.dirModal.hidden || !el.settingsModal.hidden || !el.palette.hidden) return;
     const field = /** @type {HTMLElement | null} */ (/** @type {EventTarget | null} */ (event.target));
     if (field && (field.tagName === "INPUT" || field.tagName === "TEXTAREA" || field.isContentEditable)) return;
     escapePanel();
@@ -477,7 +495,22 @@ function wire() {
   el.composer.addEventListener("dragleave", onDragLeave);
   el.composer.addEventListener("drop", onDrop);
 
+  renderTight();
+  new ResizeObserver(() => renderTight()).observe(el.work);
+
   window.addEventListener("beforeunload", () => stream?.close());
+}
+
+/**
+ * The chat and the panel want the same pixels. A chat squeezed to a column of
+ * nothing is worse than no panel at all, so the panel steps aside while the
+ * room cannot hold both and steps back without being asked when it can. The
+ * saved setting is left alone: this is the window's fault, not the user's.
+ */
+function renderTight() {
+  const wanted =
+    Number.parseInt(getComputedStyle(document.documentElement).getPropertyValue("--files-width"), 10) || 340;
+  el.shell.classList.toggle("tight", !el.sidePanel.hidden && el.work.clientWidth < wanted + 360);
 }
 
 /** @param {KeyboardEvent} event */
@@ -708,6 +741,7 @@ async function openTab(id) {
   stream?.close();
   stream = null;
   transcript.clear();
+  meter.reset();
   painted.clear();
   signatures.clear();
   renderQueue();
@@ -790,6 +824,40 @@ function connect(id) {
 }
 
 /**
+ * Whether the server is still there at all.
+ *
+ * While it is gone the page keeps everything it has: the chat, the draft, the
+ * panels. Coming back is automatic, and a reload only happens when the server
+ * is running different code than the one this page was written against — a
+ * tab that survived a restart would otherwise keep an old script forever.
+ */
+async function watchServer() {
+  const health = await getJSON("/api/health").catch(() => null);
+  if (!health) {
+    if (!state.offline) {
+      state.offline = true;
+      renderOffline();
+    }
+    return;
+  }
+
+  const build = typeof health.build === "string" ? health.build : "";
+  if (state.build.length > 0 && build.length > 0 && build !== state.build) {
+    location.reload();
+    return;
+  }
+
+  if (state.offline) {
+    state.offline = false;
+    renderOffline();
+  }
+}
+
+function renderOffline() {
+  el.offline.hidden = !state.offline;
+}
+
+/**
  * Ask pi for something over the tab's command pipe.
  *
  * @param {string} type
@@ -851,10 +919,14 @@ function handle(frame) {
     meter.stop();
     void loadTabs();
   }
+  if (frame.type === "message_start" && frame.message?.role === "assistant") turnStartedAt = Date.now();
   if (frame.type === "message_update" && frame.assistantMessageEvent?.type === "text_delta") {
     meter.addText(frame.assistantMessageEvent.delta ?? "");
   }
-  if (frame.type === "message_end" && frame.message?.role === "assistant") meter.addUsage(frame.message.usage);
+  if (frame.type === "message_end" && frame.message?.role === "assistant") {
+    meter.addUsage(frame.message.usage);
+    meter.turn(frame.message.usage?.output ?? 0, Date.now() - turnStartedAt);
+  }
   if (frame.type === "session_info_changed") {
     const tab = active();
     if (tab) tab.sessionName = frame.name ?? null;
@@ -879,7 +951,11 @@ function response(frame) {
 
   if (frame.command === "get_messages") {
     const tab = active();
-    transcript.replay(Array.isArray(data.messages) ? data.messages : [], !!tab?.running);
+    const messages = Array.isArray(data.messages) ? data.messages : [];
+    transcript.replay(messages, !!tab?.running);
+    // A reload should not have to wait for the next answer to know how fast
+    // this model has been writing. The stored chat already says so.
+    meter.history(messages);
     markDirty();
     render();
     return;
@@ -941,6 +1017,17 @@ function replaceTab(tab) {
 async function closeTab() {
   if (!state.active) return;
   const id = state.active;
+
+  // The ✕ sits close enough to the other buttons that it is clicked by
+  // accident, and on a chat that is working it is not a close but an end.
+  if (active()?.running === true) {
+    const yes = await askUser({
+      title: "Stop this chat?",
+      body: "pi is still working here. Closing the tab ends the run, and the answer will not arrive.",
+      confirm: "Stop and close",
+    });
+    if (!yes) return;
+  }
   await request(`/api/tab?id=${encodeURIComponent(id)}`, { method: "DELETE" }).catch(() => {});
   state.tabs = state.tabs.filter((tab) => tab.id !== id);
   state.active = null;
@@ -1590,6 +1677,10 @@ function menuButton(build) {
   button.onclick = (event) => {
     event.stopPropagation();
     if (rowMenu?.anchor === button) return closeMenuButton();
+    // The open menu belongs to another row. Nothing else takes it down: the
+    // record of it is about to be overwritten, and the node would keep hanging
+    // on the page over the next one.
+    closeMenu();
     const list = element("div", "row-actions");
     for (const action of build()) {
       const item = element("button", `row-action${action.danger ? " danger" : ""}`, action.label);
@@ -1620,12 +1711,52 @@ function menuButton(build) {
 /** @type {{anchor: HTMLElement, list: HTMLElement} | null} */
 let rowMenu = null;
 
-function closeMenuButton() {
+/** Take the open row menu off the page. The lists around it are left alone. */
+function closeMenu() {
   if (!rowMenu) return;
   rowMenu.list.remove();
   rowMenu.anchor.parentElement?.classList.remove("menu-open");
   rowMenu = null;
+}
+
+function closeMenuButton() {
+  if (!rowMenu) return;
+  closeMenu();
   renderSidebar();
+}
+
+/** @type {((yes: boolean) => void) | null} */
+let askResolve = null;
+
+/**
+ * A question with two buttons, asked before something destructive. Escape and
+ * the scrim both answer no, because doing nothing is always allowed.
+ *
+ * @param {{title: string, body: string, confirm: string}} question
+ * @returns {Promise<boolean>}
+ */
+function askUser(question) {
+  return new Promise((resolve) => {
+    askResolve = resolve;
+    const row = element("div", "row-buttons");
+    row.append(
+      button("Cancel", () => answerAsk(false)),
+      button(question.confirm, () => answerAsk(true)),
+    );
+    el.askModal.replaceChildren(card(question.title, span(question.body, "ask-body"), row));
+    el.askModal.hidden = false;
+    row.querySelector("button")?.focus();
+  });
+}
+
+/** @param {boolean} yes */
+function answerAsk(yes) {
+  const resolve = askResolve;
+  if (!resolve) return;
+  askResolve = null;
+  el.askModal.hidden = true;
+  el.askModal.replaceChildren();
+  resolve(yes);
 }
 
 /** @param {string} text */
@@ -1793,11 +1924,13 @@ function paint(node, block, before = null) {
     case "thinking": {
       if (state.ui.show_thinking !== true) return;
       const text = block.text ?? "";
-      const { fold, summary, body } = foldFor(block, false);
+      const { fold, summary, body } = foldFor(block, false, block.lastWord === true);
+      if (block.lastWord) node.classList.add("last-word");
       summary.append(
         span(block.done ? "thoughts" : "thinking", "name"),
         span(truncate(block.done ? firstLine(text) : lastLine(text), 90), "title"),
       );
+      if (block.lastWord) summary.append(span("nothing after", "state"));
       body.append(markdownBox(text, "thinking-body"));
       node.append(fold);
       break;
@@ -1908,14 +2041,17 @@ function foldFor(block, opened, open = false) {
 }
 
 /**
- * How long a finished tool ran, from the frames that opened and closed it.
- * A blink is not worth a number.
+ * How long a finished tool ran. The tool's own number comes with its result
+ * and is the one worth showing; the two stamps are the fallback, and they can
+ * both be missing when a tab joined a run that was already going. A blink is
+ * not worth a number.
  *
  * @param {Block} block
  */
 function elapsed(block) {
-  const ms = block.doneAt !== undefined && block.startedAt !== undefined ? block.doneAt - block.startedAt : 0;
-  return ms > 1500 ? duration(ms) : "";
+  const measured =
+    block.durationMs ?? (block.doneAt !== undefined && block.startedAt !== undefined ? block.doneAt - block.startedAt : 0);
+  return measured > 1500 ? duration(measured) : "";
 }
 
 /**
@@ -2131,6 +2267,9 @@ function trackRun(tab, running) {
   el.busyTime.textContent = runSince ? duration(Date.now() - runSince) : "";
 }
 
+/** When the answer that is streaming now began. */
+let turnStartedAt = 0;
+
 function renderFooter() {
   const tab = active();
   const reading = meter.reading();
@@ -2140,14 +2279,18 @@ function renderFooter() {
 
   const parts = [];
   if (meter.cost() > 0) parts.push(cost(meter.cost()));
-  if (reading.elapsedMs > 0 && transcript.running) parts.push(duration(reading.elapsedMs));
   el.status.textContent = state.active
     ? state.connected
       ? parts.join(" · ")
       : "disconnected"
     : "no chat open";
 
-  el.rate.textContent = transcript.running || reading.tokens > 0 ? perSecond(reading.tokensPerSecond) : "";
+  // The pace of the last few answers, not of the last second: a run that is
+  // only thinking, or a page that was reloaded mid-answer, has nothing honest
+  // to say about the moment and plenty to say about the model.
+  const pace = meter.pace();
+  const speed = pace > 0 ? pace : reading.tokensPerSecond;
+  el.rate.textContent = state.active && (speed > 0 || transcript.running) ? perSecond(speed) : "";
   el.rate.classList.toggle("live", transcript.running);
   el.abort.hidden = !tab?.running;
   el.send.disabled = state.active ? !state.connected : false;
@@ -2596,6 +2739,7 @@ function applyUi() {
   el.shell.classList.toggle("side-collapsed", state.ui.sidebar === false);
   el.sidePanel.hidden = state.ui.files !== true;
   renderPanelTabs();
+  renderTight();
 }
 
 // --------------------------------------------------------------- side panel
