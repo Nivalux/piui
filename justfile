@@ -13,9 +13,12 @@ build:
 test:
     zig build test
 
-# put this build in front of the service; nothing that fails a test gets copied
+# put this build in front of the service; nothing that fails a test gets copied.
+# a rename, not a write: the running service holds the old file open for execution.
+# it keeps serving that old inode until systemctl --user restart piui.service
 live: test build
-    cp zig-out/bin/piui zig-out/bin/piui-live
+    cp zig-out/bin/piui zig-out/bin/piui-live.new
+    mv zig-out/bin/piui-live.new zig-out/bin/piui-live
 
 # the server, serving web/ embedded
 run ADDR=addr:
