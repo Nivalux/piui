@@ -39,11 +39,13 @@ test-js:
 # the browser tests on their own. Both chromium and playwright come from this
 # shell: PIUI_CHROMIUM is the browser to drive, PLAYWRIGHT_CORE the library that
 # drives it, and the file skips itself when either is missing.
-test-browser:
+# built first: the server under test carries web/ inside it, so a binary from
+# before an edit would answer for that edit.
+test-browser: build
     PIUI_BINARY="$PWD/zig-out/bin/piui" node --test --test-reporter=spec web/test/browser.test.js
 
 # one browser test, by part of its name
-test-one PATTERN:
+test-one PATTERN: build
     PIUI_BINARY="$PWD/zig-out/bin/piui" node --test --test-reporter=spec --test-name-pattern="{{PATTERN}}" web/test/browser.test.js
 
 # typecheck the js against its own jsdoc types
