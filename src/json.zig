@@ -9,9 +9,8 @@ pub fn nowMs(io: Io) i64 {
     return Io.Timestamp.now(io, .awake).toMilliseconds();
 }
 
-/// Wall-clock milliseconds since the Unix epoch — the only clock a browser can
-/// read. `nowMs` counts from an unspecified point and is good inside this
-/// process alone.
+/// Wall-clock milliseconds since the Unix epoch — the only clock a browser can read. `nowMs` counts
+/// from an unspecified point and is good inside this process alone.
 pub fn epochMs(io: Io) i64 {
     return Io.Timestamp.now(io, .real).toMilliseconds();
 }

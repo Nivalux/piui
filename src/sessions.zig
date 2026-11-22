@@ -1,11 +1,3 @@
-//! Read-only view of Pi's own session store.
-//!
-//! Pi keeps one JSONL file per session, named `<timestamp>_<id>.jsonl`. Older
-//! builds filed them into a directory per project, current ones drop them
-//! straight into the root - so piui scans the root *and* its subdirectories and
-//! filters on the `cwd` of the header instead of rebuilding Pi's path encoding.
-//! A change upstream then costs a scan, not a broken sidebar.
-
 const std = @import("std");
 const Io = std.Io;
 const protocol = @import("protocol.zig");
@@ -69,9 +61,8 @@ pub const Index = struct {
         return found.items;
     }
 
-    /// The project a session file was started in. Pi writes it in the header,
-    /// so resuming a chat can put it back where it belongs instead of in a
-    /// scratch folder it has nothing to do with.
+    /// The project a session file was started in. Pi writes it in the header, so resuming a chat
+    /// can put it back where it belongs instead of in a scratch folder it has nothing to do with.
     pub fn cwdOf(self: Index, path: []const u8) ?[]const u8 {
         const entry = self.readHead(path) catch return null;
         return entry.cwd;
@@ -96,8 +87,8 @@ pub const Index = struct {
         return error.NotFound;
     }
 
-    /// The root plus every directory under it: Pi has moved this layout before
-    /// and the scan has to survive the next move.
+    /// The root plus every directory under it: Pi has moved this layout before and the scan has to
+    /// survive the next move.
     fn directories(self: Index) ![]const []const u8 {
         var out: std.ArrayList([]const u8) = .empty;
         out.append(self.allocator, self.root) catch return error.OutOfMemory;
@@ -145,24 +136,15 @@ pub const Index = struct {
             if (protocol.string(object, "timestamp")) |seen| stamp = seen;
         }
 
-        // A file that never carried a `session` header is not a session, however
-        // well the lines around it parsed.
         if (entry.created == null and entry.cwd == null) return error.NotASession;
 
         entry.updated = self.tailStamp(path) orelse (if (stamp) |seen| own(self.allocator, seen) else null);
         return entry;
     }
 
-    /// The `timestamp` of the last line of a file, which is the activity the
-    /// sidebar sorts on. A session longer than the head read has its newest line
-    /// far behind it, so the end gets its own look.
-    ///
-    /// One answer can append a line far bigger than a window - a file read whole,
-    /// a tool result with a trace in it - and while that line is still going in,
-    /// nothing in the last window parses. Stepping back a window at a time is
-    /// what keeps the sidebar showing the last thing that finished rather than
-    /// falling back on a header from the start of the chat, which is how a row
-    /// used to lose its time and its place in the list until the next line landed.
+    /// The `timestamp` of the last line of a file, which is the activity the sidebar sorts on. A
+    /// session longer than the head read has its newest line far behind it, so the end gets its own
+    /// look.
     fn tailStamp(self: Index, path: []const u8) ?[]const u8 {
         var file = Io.Dir.cwd().openFile(self.io, path, .{}) catch return null;
         defer file.close(self.io);
@@ -176,8 +158,6 @@ pub const Index = struct {
         while (back < size and back <= tail_scan_limit) {
             const length: usize = @min(tail_limit, size - back);
             const read = file.readPositionalAll(self.io, buffer[0..length], size - back - length) catch return null;
-            // A fragment at either edge belongs to a line that began or ends
-            // outside the window. It will not parse, so it costs nothing.
             if (lastTimestamp(self.allocator, buffer[0..read])) |stamp| return stamp;
             back += length;
         }
@@ -203,8 +183,8 @@ pub const Index = struct {
     }
 };
 
-/// The text of the first user message, which is what the sidebar shows when a
-/// session has no explicit name.
+/// The text of the first user message, which is what the sidebar shows when a session has no
+/// explicit name.
 fn userText(allocator: std.mem.Allocator, object: std.json.ObjectMap) ?[]const u8 {
     const message = protocol.get(object, "message") orelse return null;
     if (message != .object) return null;
@@ -248,8 +228,8 @@ pub fn sessionId(file_name: []const u8) []const u8 {
     return base;
 }
 
-/// The `timestamp` of the last parseable line, copied out so it outlives the
-/// window it was read from.
+/// The `timestamp` of the last parseable line, copied out so it outlives the window it was read
+/// from.
 fn lastTimestamp(allocator: std.mem.Allocator, raw: []const u8) ?[]const u8 {
     var found: ?[]const u8 = null;
     var lines = std.mem.splitScalar(u8, raw, '\n');
@@ -263,9 +243,9 @@ fn lastTimestamp(allocator: std.mem.Allocator, raw: []const u8) ?[]const u8 {
     return if (found) |text| own(allocator, text) else null;
 }
 
-/// Newest activity first. Two sessions touched in the same millisecond are
-/// ordered by id, because a sort that leaves a tie to whatever the folder
-/// iterator happened to return makes the sidebar reshuffle on every poll.
+/// Newest activity first. Two sessions touched in the same millisecond are ordered by id, because a
+/// sort that leaves a tie to whatever the folder iterator happened to return makes the sidebar
+/// reshuffle on every poll.
 fn newer(_: void, a: Entry, b: Entry) bool {
     const left = a.updated orelse a.created orelse "";
     const right = b.updated orelse b.created orelse "";
@@ -318,16 +298,12 @@ test "a session still writing its last line keeps the stamp before it" {
     var body: std.ArrayList(u8) = .empty;
     try body.appendSlice(a, "{\"type\":\"session\",\"cwd\":\"/srv/app\",\"timestamp\":\"2026-11-20T09:00:00.000Z\"}\n");
 
-    // One line longer than the head read, so the end of the file is all the
-    // sidebar has to go on.
     try body.appendSlice(a, "{\"type\":\"message\",\"timestamp\":\"2026-11-20T10:00:00.000Z\",\"text\":\"");
     while (body.items.len <= head_limit) try body.append(a, 'x');
     try body.appendSlice(a, "\"}\n");
 
     try body.appendSlice(a, "{\"type\":\"message\",\"timestamp\":\"2026-11-20T18:30:00.000Z\"}\n");
 
-    // And a line still going in, bigger than one window, so no window at the end
-    // of the file holds a line that ends.
     try body.appendSlice(a, "{\"type\":\"message\",\"timestamp\":\"2026-11-20T19:00:00.000Z\",\"text\":\"");
     var trailing: usize = 0;
     while (trailing < tail_limit * 2) : (trailing += 1) try body.append(a, 'y');

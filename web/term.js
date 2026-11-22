@@ -1,17 +1,6 @@
 // @ts-check
 
-/**
- * A terminal window drawn from what a shell writes.
- *
- * Small on purpose: the parts of a VT that a shell, a build and a git command
- * actually use — printing, lines, cursor moves, erasing, colours, a scroll
- * region, an alternate screen. Anything rarer is swallowed rather than drawn
- * wrong, because a swallowed sequence leaves the screen readable and a
- * half-implemented one does not.
- *
- * Nothing here touches the DOM. `write` takes text, `render` hands back rows of
- * runs with a class and a style each, and the page turns those into spans.
- */
+/** A terminal window drawn from what a shell writes. */
 
 const bel = "\x07";
 const esc = "\x1b";
@@ -55,14 +44,7 @@ export class Terminal {
     const width = Math.max(1, cols);
     if (height === this.rows && width === this.cols) return;
 
-    // Rewound from the text rather than moved cell for cell: a line folded in
-    // two is two lines of content, and dragging cells across a narrower window
-    // would put words where the shell never wrote them. Colour along a line is
-    // lost this way, which is what a real terminal does to a line it has to
-    // break again.
     const lines = [...this.history, ...this.screen()].map(lineToText);
-    // Blank rows at the bottom are the empty part of the window, not content to
-    // carry over: kept, they would push the text off the top of a shorter one.
     while (lines.length > 0 && lines[lines.length - 1].length === 0) lines.pop();
 
     this.rows = height;
@@ -178,7 +160,6 @@ export class Terminal {
   #osc(ch) {
     if (ch === bel) return this.#endOsc("ground");
     if (ch === esc) {
-      // The string terminator is ESC \; whatever follows the backslash ends it.
       return this.#endOsc("st");
     }
     if (this.fallback.length < 512) this.fallback += ch;
@@ -186,8 +167,6 @@ export class Terminal {
 
   /** @param {string} state */
   #endOsc(state) {
-    // "0;title" and "2;title" both set the title; the number says which of the
-    // two slots and is not part of the text.
     this.title = this.fallback.replace(/^\d+;/, "");
     this.onTitle(this.title);
     this.state = state;
@@ -228,8 +207,6 @@ export class Terminal {
       const on = final === "h";
       if (priv && first === 25) return void (this.cursorVisible = on);
       if (priv && (first === 1049 || first === 1047 || first === 47)) return this.useAlternate(on, first === 1049);
-      // Bracketed paste, application cursor keys, auto-wrap: the page sends what
-      // it sends either way, and nothing here changes shape over it.
       return;
     }
 

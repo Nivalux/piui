@@ -1,11 +1,3 @@
-//! Random bytes through the two places piui trusts its input: the JSONL framer
-//! and the record parser.
-//!
-//! `zig build test` replays a few thousand steps of the generator below, seeded
-//! so a failure repeats. `zig build test -Dfuzz=200000` is the run to do before
-//! a release; a finding becomes a test beside the others, never just a fixed
-//! generator.
-
 const std = @import("std");
 const options = @import("options");
 const Io = std.Io;
@@ -60,7 +52,6 @@ fn text(allocator: std.mem.Allocator, random: std.Random, pieces: []const []cons
         }
     }
 
-    // Half of the inputs end on a record boundary, the other half cut mid-line.
     if (random.boolean()) try out.appendSlice(allocator, "\n");
     return out.items;
 }

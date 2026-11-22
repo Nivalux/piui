@@ -1,6 +1,3 @@
-//! Reading a working tree: what changed, against which base, and what happens
-//! in a directory that holds no repository at all.
-
 const std = @import("std");
 const Io = std.Io;
 const testing = std.testing;
@@ -8,8 +5,6 @@ const piui = @import("piui");
 const git = piui.git;
 
 test "status and diff of a working tree" {
-    // Git has to be found in PATH, and a Threaded with default options hands
-    // children an empty environment.
     var threaded: Io.Threaded = .init(testing.allocator, .{ .environ = testing.environ });
     defer threaded.deinit();
     const io = threaded.io();
@@ -55,8 +50,6 @@ test "a directory without a repository says so" {
     try Io.Dir.cwd().deleteTree(io, bare);
     try Io.Dir.cwd().createDirPath(io, bare);
 
-    // Git searches above the directory it was asked about, so a checkout of
-    // piui (or of anything else in $TMPDIR) would answer for the fixture.
     if (git.isRepository(a, io, bare)) return error.TestUnexpectedResult;
 
     const status = git.status(a, io, bare, .working);
@@ -88,8 +81,8 @@ fn buildRepo(io: Io, a: std.mem.Allocator) ![]const u8 {
     return repo;
 }
 
-/// Outside the project directory, so that a checkout can never become the
-/// repository the tests below are looking at.
+/// Outside the project directory, so that a checkout can never become the repository the tests
+/// below are looking at.
 fn root(allocator: std.mem.Allocator) ![]const u8 {
     const tmp = std.process.Environ.getPosix(testing.environ, "TMPDIR") orelse "/tmp";
     return join(allocator, &.{ tmp, "piui-git-fixture" });

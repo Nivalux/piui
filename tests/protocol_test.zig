@@ -1,5 +1,3 @@
-//! Reducing Pi's stdout records to what the server routes on.
-
 const std = @import("std");
 const testing = std.testing;
 const piui = @import("piui");
@@ -8,8 +6,8 @@ const protocol = piui.protocol;
 const stream = @embedFile("../testdata/stream.jsonl");
 const commands_fixture = @embedFile("../testdata/commands.json");
 
-/// A record owns its strings, so the test keeps the allocator alive for as long
-/// as it holds the record.
+/// A record owns its strings, so the test keeps the allocator alive for as long as it holds the
+/// record.
 const Parse = struct {
     arena: std.heap.ArenaAllocator,
 

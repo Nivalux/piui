@@ -1,12 +1,7 @@
 #!/usr/bin/env node
 /**
- * Stands in for `pi --mode rpc` so the browser tests need no model, no key and
- * no network. Speaks the same line-delimited JSON on stdin and stdout.
- *
- * Two turns are scripted. The plain one replays thinking, a bash call that
- * streams while it runs, a write, a failing read and a markdown answer. Ask for
- * "the long one" and only a slow bash call runs, so a test can open a call that
- * is genuinely still going.
+ * Stands in for `pi --mode rpc` so the browser tests need no model, no key and no network. Speaks
+ * the same line-delimited JSON on stdin and stdout.
  */
 import fs from "node:fs";
 import path from "node:path";

@@ -1,16 +1,4 @@
 #!/usr/bin/env node
-// What the browser makes of a chat: render a copy of a session in a throwaway
-// piui and print one line per transcript block.
-//
-//   nix-shell
-//   just peek                       # newest chat of this checkout
-//   just peek <session.jsonl>       # any chat pi has stored
-//   just peek --grep "text" --lines 12
-//   just peek --web web             # the frontend on disk, not the embedded one
-//
-// Nothing here touches ~/.piui or the real session store: the chat is copied
-// into a temporary directory, the server runs on a free port with a throwaway
-// token, and the directory is gone when the process leaves.
 
 import { createRequire } from "node:module";
 import { spawn } from "node:child_process";
@@ -130,8 +118,6 @@ async function stop() {
 }
 
 try {
-  // The chat goes under its own project folder so the sidebar groups it the
-  // way it groups the real one.
   const store = path.join(dir, "sessions", path.basename(path.dirname(source)));
   fs.mkdirSync(store, { recursive: true });
   const copy = path.join(store, path.basename(source));

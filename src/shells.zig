@@ -1,10 +1,3 @@
-//! The shells that are open right now, and the way to them from the browser.
-//!
-//! A shell outlives the request that opened it, just as a chat does: it is
-//! started once, its output is pushed to whoever is listening, and it is stopped
-//! by name. What it does not do is come back — a shell whose reader went away
-//! for good is a shell nobody is looking at, and it goes.
-
 const std = @import("std");
 const Io = std.Io;
 
@@ -19,9 +12,8 @@ const Subscriber = hub.Subscriber;
 pub const Shell = struct {
     id: []const u8,
     cwd: []const u8,
-    /// The chat this terminal was opened from. A terminal belongs to a session
-    /// the way a diff view does: it lives in that session's tab strip and goes
-    /// away with it.
+    /// The chat this terminal was opened from. A terminal belongs to a session the way a diff view
+    /// does: it lives in that session's tab strip and goes away with it.
     tab: []const u8,
     process: *pty.Pty,
     /// Set once the shell has stopped; the code it left is kept for the notice.
@@ -29,19 +21,18 @@ pub const Shell = struct {
     exit_code: i32 = -1,
     created_epoch: i64,
     last_output_epoch: i64,
-    /// When the last reader left. A shell nobody has looked at for a while is
-    /// one that was closed on the way out without saying so.
+    /// When the last reader left. A shell nobody has looked at for a while is one that was closed
+    /// on the way out without saying so.
     orphaned_epoch: i64 = 0,
-    /// What the shell wrote most recently, kept so that a browser arriving late —
-    /// or coming back after a dropped connection — sees a screen instead of a
-    /// blank one.
+    /// What the shell wrote most recently, kept so that a browser arriving late — or coming back
+    /// after a dropped connection — sees a screen instead of a blank one.
     backlog: std.ArrayList(u8) = .empty,
     subscribers: std.ArrayList(*Subscriber) = .empty,
     lock: Io.Mutex = .init,
 };
 
-/// How much of a shell's output to keep for the next reader. A screen full is a
-/// couple of kilobytes; this is room to spare.
+/// How much of a shell's output to keep for the next reader. A screen full is a couple of
+/// kilobytes; this is room to spare.
 pub const screen_keep_bytes = 32 * 1024;
 
 pub const ShellInfo = struct {
@@ -67,8 +58,8 @@ const Announce = struct {
     shell: ShellInfo,
 };
 
-/// A chunk of what the shell wrote, in the only shape that survives an event
-/// stream: control characters do not travel as themselves.
+/// A chunk of what the shell wrote, in the only shape that survives an event stream: control
+/// characters do not travel as themselves.
 pub const Output = struct {
     type: []const u8 = "piui",
     event: []const u8 = "shellOut",
@@ -88,8 +79,8 @@ pub const Pool = struct {
     allocator: std.mem.Allocator,
     io: Io,
     group: *Io.Group,
-    /// What a shell inherits. A shell without a PATH is a shell that cannot do
-    /// anything, so this is the environment piui was started with.
+    /// What a shell inherits. A shell without a PATH is a shell that cannot do anything, so this is
+    /// the environment piui was started with.
     environ: std.process.Environ,
     /// How long a shell may go without a reader before it is taken as closed.
     abandoned_after_ms: i64 = 30 * 60 * 1000,
@@ -165,8 +156,6 @@ pub const Pool = struct {
 
         const now = json.epochMs(self.io);
 
-        // Given-up shells are collected first and dropped afterwards: an
-        // iterator may not be disturbed while it walks.
         var abandoned: std.ArrayList(*Shell) = .empty;
         var iterator = self.shells.iterator();
         while (iterator.next()) |item| {
@@ -266,8 +255,8 @@ pub const Pool = struct {
         stop(shell);
     }
 
-    /// Stops every terminal that was opened from one chat. The chat was the
-    /// only way back to them, so a terminal left behind has no tab to live in.
+    /// Stops every terminal that was opened from one chat. The chat was the only way back to them,
+    /// so a terminal left behind has no tab to live in.
     pub fn closeTab(self: *Pool, tab: []const u8) void {
         if (tab.len == 0) return;
 
@@ -282,9 +271,8 @@ pub const Pool = struct {
         for (mine.items) |shell| self.close(shell, "the chat it belonged to closed");
     }
 
-    /// Turns the listeners off and stops the shell. The reader task is the one
-    /// that lets go of the descriptors, because it is the one that may be
-    /// waiting on them.
+    /// Turns the listeners off and stops the shell. The reader task is the one that lets go of the
+    /// descriptors, because it is the one that may be waiting on them.
     fn stop(shell: *Shell) void {
         shell.lock.lockUncancelable(shell.process.io);
         const subscribers = shell.subscribers.clone(shell.process.allocator) catch std.ArrayList(*Subscriber).empty;
@@ -296,8 +284,8 @@ pub const Pool = struct {
     }
 };
 
-/// Carries the shell's output to whoever is listening, and reports the moment
-/// it stops. One of these runs per shell for as long as the shell does.
+/// Carries the shell's output to whoever is listening, and reports the moment it stops. One of
+/// these runs per shell for as long as the shell does.
 fn pump(pool: *Pool, shell: *Shell) void {
     var buffer: [8 * 1024]u8 = undefined;
     while (true) {
@@ -332,8 +320,8 @@ fn pump(pool: *Pool, shell: *Shell) void {
     log.info("shell ended {s} code={d}", .{ shell.id, code });
 }
 
-/// Drops the oldest output once what is kept grows past a screen. The caller
-/// holds the shell's lock.
+/// Drops the oldest output once what is kept grows past a screen. The caller holds the shell's
+/// lock.
 fn trimBacklog(shell: *Shell) void {
     const length = shell.backlog.items.len;
     if (length <= screen_keep_bytes) return;
@@ -342,16 +330,16 @@ fn trimBacklog(shell: *Shell) void {
     shell.backlog.shrinkRetainingCapacity(screen_keep_bytes);
 }
 
-/// What a reader arriving now has to draw: everything kept so far, copied out so
-/// that the shell can carry on writing while it is being sent.
+/// What a reader arriving now has to draw: everything kept so far, copied out so that the shell can
+/// carry on writing while it is being sent.
 pub fn backlogOf(shell: *Shell, a: std.mem.Allocator) ?[]u8 {
     shell.lock.lockUncancelable(shell.process.io);
     defer shell.lock.unlock(shell.process.io);
     return a.dupe(u8, shell.backlog.items) catch null;
 }
 
-/// One read turned into one event. The encoding is base64 because a terminal
-/// speaks in control characters and an event stream is made of text.
+/// One read turned into one event. The encoding is base64 because a terminal speaks in control
+/// characters and an event stream is made of text.
 fn emit(pool: *Pool, shell: *Shell, bytes: []const u8) void {
     const a = pool.allocator;
 

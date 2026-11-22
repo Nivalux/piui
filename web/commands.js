@@ -3,22 +3,15 @@
 /**
  * The `/` palette.
  *
- * The list is pi's own — `get_commands` answers with everything the session
- * offers, extensions and prompt templates included — so this only decides what
- * counts as a slash query and in which order the matches are worth showing.
+ * @typedef {import("./protocol.js").Command} Command
+ *
+ * @typedef {{query: string}} SlashQuery
  */
-
-/** @typedef {import("./protocol.js").Command} Command */
-
-/** @typedef {{query: string}} SlashQuery */
-
-/** How many rows the palette shows before the user has to type more. */
 export const limit = 12;
 
 /**
- * A slash query is a `/` at the very start of an otherwise unbroken word. Once
- * a space follows, the user is writing an argument and the palette has said its
- * piece.
+ * A slash query is a `/` at the very start of an otherwise unbroken word. Once a space follows,
+ * the user is writing an argument and the palette has said its piece.
  *
  * @param {string} text
  * @returns {SlashQuery | null}
@@ -35,9 +28,8 @@ export function parseCommands(text) {
 }
 
 /**
- * Prefix matches first, then word-boundary matches, then anything containing the
- * query at all. Ties keep pi's own order, which already puts the built-ins
- * before extensions.
+ * Prefix matches first, then word-boundary matches, then anything containing the query at all.
+ * Ties keep pi's own order, which already puts the built-ins before extensions.
  *
  * @param {Command[]} commands
  * @param {string} query

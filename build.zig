@@ -4,8 +4,6 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
-    // The page is baked in, and the folder itself decides what that means: see
-    // `webAssets`.
     const assets = b.createModule(.{ .root_source_file = webAssets(b), .target = target });
 
     const mod = b.addModule("piui", .{
@@ -55,8 +53,6 @@ pub fn build(b: *std.Build) void {
     run_suite.addPassthruArgs();
     test_step.dependOn(&run_suite.step);
 
-    // The browser tests drive the built binary, so the binary has to exist by
-    // the time node runs. Without chromium they skip themselves.
     const js = b.addSystemCommand(&.{ "node", "--test", "web/test/**/*.test.js" });
     js.step.dependOn(b.getInstallStep());
     test_step.dependOn(&js.step);
@@ -65,11 +61,7 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&types.step);
 }
 
-/// The client files, as a Zig module of `{name, body}` pairs. The folder is the
-/// list: a file added to web/ is served from the next build, and a rename
-/// cannot leave a stale name behind, because nothing here spells out a name.
-///
-/// `web/test` stays out of the binary; it is the harness, not the page.
+/// The client files, as a Zig module of `{name, body}` pairs.
 fn webAssets(b: *std.Build) std.Build.LazyPath {
     const alloc = b.allocator;
 
@@ -77,8 +69,6 @@ fn webAssets(b: *std.Build) std.Build.LazyPath {
     collect(b, "web", "", &names) catch @panic("web/ cannot be read");
     std.mem.sort([]const u8, names.items, {}, lessByName);
 
-    // The files are copied next to the list they are named in, so each embed is
-    // a plain relative path and the build system sees a change to any of them.
     const staged = b.addWriteFiles();
     for (names.items) |name| {
         const source = std.fs.path.join(alloc, &.{ "web", name }) catch @panic("OOM");

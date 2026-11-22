@@ -3,15 +3,8 @@
 /**
  * The order of the sidebar, and which chats are still waiting to be read.
  *
- * Working chats lead, settled ones follow. A settled chat is ordered by what it
- * did last; a working one holds the place its run started in, because a list
- * that reshuffles every few seconds is a list you cannot click. A run that
- * ended while the reader was somewhere else stays marked until they look.
- *
  * @typedef {import("./protocol.js").TabInfo} TabInfo
- */
-
-/**
+ *
  * @param {TabInfo[]} tabs
  * @returns {{working: TabInfo[], settled: TabInfo[]}}
  */
@@ -20,8 +13,8 @@ export function splitTabs(tabs) {
 }
 
 /**
- * Ordered by the moment each chat last did something. Only safe once a chat is
- * quiet: while it runs, this number moves with every token.
+ * Ordered by the moment each chat last did something. Only safe once a chat is quiet: while it
+ * runs, this number moves with every token.
  *
  * @param {TabInfo[]} tabs
  * @returns {TabInfo[]}
@@ -31,9 +24,9 @@ export function byActivity(tabs) {
 }
 
 /**
- * Ordered by the start of the run in progress. Steady for the whole answer,
- * and a chat that has not been told it is running yet falls back to the time it
- * was opened, which is also not going to move.
+ * Ordered by the start of the run in progress. Steady for the whole answer, and a chat that has
+ * not been told it is running yet falls back to the time it was opened, which is also not going to
+ * move.
  *
  * @param {TabInfo[]} tabs
  * @returns {TabInfo[]}
@@ -57,8 +50,8 @@ export function stamp(tab) {
 }
 
 /**
- * A finished run nobody has looked at: it ended after the last time the reader
- * opened this chat, and they are not in it right now.
+ * A finished run nobody has looked at: it ended after the last time the reader opened this chat,
+ * and they are not in it right now.
  *
  * @param {TabInfo} tab
  * @param {Record<string, number>} seen

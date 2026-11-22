@@ -1,15 +1,9 @@
 /**
  * Typing at the sidebar: fzf-style subsequence matching.
  *
- * `piui scroll` finds "scroll to bottom", and `sb` finds "session bar", which
- * a substring filter cannot. What it costs is ranking, so the rules are here
- * and tested here: word starts beat mid-word, runs beat scattered letters, an
- * exact substring beats everything, and a match late in a long title is worth
- * less than one at the front.
+ * @typedef {{ score: number, ranges: [number, number][] }} Hit
+ * @typedef {{ score: number, index: number, ranges: [number, number][] }} Best
  */
-
-/** @typedef {{ score: number, ranges: [number, number][] }} Hit */
-/** @typedef {{ score: number, index: number, ranges: [number, number][] }} Best */
 
 const word_start = /[\s/\-_.:,@]/;
 
@@ -58,8 +52,8 @@ export function fuzzyMatch(query, text) {
 }
 
 /**
- * The strongest field for one item. Index 0 is the field the row shows, so
- * only a hit there gets highlighted.
+ * The strongest field for one item. Index 0 is the field the row shows, so only a hit there gets
+ * highlighted.
  *
  * @param {string} query
  * @param {string[]} texts
@@ -78,8 +72,8 @@ export function bestMatch(query, texts) {
 }
 
 /**
- * Items a query reaches, best first. An empty query keeps the incoming order,
- * which is the order the caller chose (newest first).
+ * Items a query reaches, best first. An empty query keeps the incoming order, which is the order
+ * the caller chose (newest first).
  *
  * @template T
  * @param {string} query

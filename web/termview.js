@@ -1,13 +1,6 @@
 // @ts-check
 
-/**
- * The terminal on the page: a {@link Terminal} plus the DOM that shows it.
- *
- * The emulator keeps the screen, this keeps the pixels. It measures the font,
- * works out how many lines fit, paints on the next frame rather than on every
- * chunk (a build writes faster than a browser can build spans), and turns
- * keystrokes into the bytes a tty expects.
- */
+/** The terminal on the page: a {@link Terminal} plus the DOM that shows it. */
 
 import { Terminal } from "./term.js";
 
@@ -15,7 +8,8 @@ import { Terminal } from "./term.js";
 
 export class TermView {
   /**
-   * @param {{write: Sink, resize?: (rows: number, cols: number) => void, title?: (text: string) => void}} hooks
+   * @param {{write: Sink, resize?: (rows: number, cols: number) => void, title?: (text: string) =>
+   * void}} hooks
    * @param {{rows?: number, cols?: number}} [start]
    */
   constructor(hooks, start = { rows: 24, cols: 80 }) {

@@ -1,27 +1,17 @@
-//! A shell on a pseudo terminal: what it echoes back, the window it believes
-//! it has, and the exit code it leaves behind.
-//!
-//! These run without a PATH and without the process environment: `/proc/self/environ`
-//! reads as empty in a sandbox, and a test that leans on whatever the machine
-//! happens to have installed fails for reasons that have nothing to do with the
-//! code. Everything a shell here runs is one of its own builtins.
-
 const std = @import("std");
 const Io = std.Io;
 const testing = std.testing;
 const piui = @import("piui");
 const pty = piui.pty;
 
-/// An environment of the shape piui hands a shell: the entries given, and the
-/// ones the terminal has to own.
+/// An environment of the shape piui hands a shell: the entries given, and the ones the terminal has
+/// to own.
 fn environOf(a: std.mem.Allocator, given: []const []const u8) !std.process.Environ {
     var entries: std.ArrayList(?[*:0]const u8) = .empty;
     for (given) |entry| entries.append(a, a.dupeSentinel(u8, entry, 0) catch return error.OutOfMemory) catch
         return error.OutOfMemory;
     entries.append(a, null) catch return error.OutOfMemory;
 
-    // The last entry is the null the sentinel asks for, so the slice stops one
-    // before it.
     const ended: [*:null]const ?[*:0]const u8 = @ptrCast(entries.items);
     return .{ .block = .{ .slice = ended[0 .. entries.items.len - 1 :null] } };
 }
@@ -120,8 +110,6 @@ test "the shell is handed the environment, and a terminal it can be typed into" 
                 .shell = "/bin/sh",
                 .args = &.{ "-c", "printf '%s/%s\\n' \"$piui_test\" \"$TERM\"" },
                 .cwd = cwd,
-                // A caller that brings its own TERM and its own idea of the
-                // width is wrong about both: the window is ours to know.
                 .environ = try environOf(a, &.{ "piui_test=from-the-parent", "TERM=dumb", "COLUMNS=7" }),
             });
             defer shell.close();
@@ -162,8 +150,6 @@ test "a window that changes size is a window the kernel passes on" {
             });
             defer shell.close();
 
-            // Still 24x80 while the shell sits there waiting: the size is the
-            // one that was asked for at the start.
             try testing.expectEqual(@as(u16, 24), shell.window().row);
 
             shell.resize(50, 200);
@@ -202,9 +188,6 @@ test "closing the window hangs the shell up" {
             try testing.expect(std.mem.indexOf(u8, slurp(shell, 4096), "awake") != null);
             const pid = shell.pid;
 
-            // The master fd is all that holds a session to its terminal. piui
-            // going away — after a crash just as after a kill -9 — closes it,
-            // and the kernel hangs the session up behind it.
             shell.close();
 
             try testing.expectEqual(@as(i32, 0), eventuallyGone(io, pid));
@@ -217,9 +200,6 @@ test "a kill takes the jobs running in the window with it" {
         fn go(io: Io, a: std.mem.Allocator, cwd: []const u8) !void {
             const shell = try pty.Pty.start(a, io, .{
                 .shell = "/bin/sh",
-                // A busy subshell rather than `sleep`: there is no PATH in this
-                // environment, and the job only has to be alive and in the same
-                // process group.
                 .args = &.{ "-c", "while :; do :; done & echo job=$!" },
                 .cwd = cwd,
                 .environ = try environOf(a, &.{}),
@@ -234,16 +214,14 @@ test "a kill takes the jobs running in the window with it" {
             shell.kill();
             _ = shell.wait();
 
-            // A shell that is a session leader leads its group as well, so the
-            // number behind the minus reaches the job in the background too.
             try testing.expectEqual(@as(i32, 0), eventuallyGone(io, started));
         }
     }.go);
 }
 
-/// Waits for the kernel to stop answering for a process, and says how many
-/// tries it took; zero means it is gone. One that is only still lying around as
-/// a zombie counts as gone: it runs no more.
+/// Waits for the kernel to stop answering for a process, and says how many tries it took; zero
+/// means it is gone. One that is only still lying around as a zombie counts as gone: it runs no
+/// more.
 fn eventuallyGone(io: Io, pid: i32) i32 {
     var tries: i32 = 0;
     while (tries < 40) : (tries += 1) {
@@ -265,8 +243,6 @@ fn alive(io: Io, pid: i32) bool {
     var source = handle.reader(io, &buffer);
     const stat = source.interface.allocRemaining(testing.allocator, .limited(4096)) catch return false;
 
-    // The third field of /proc/<pid>/stat is the state, and 'Z' is a process
-    // that is over and only not yet collected.
     const closed = std.mem.indexOf(u8, stat, ") ") orelse return false;
     return stat[closed + 2] != 'Z';
 }

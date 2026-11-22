@@ -1,5 +1,3 @@
-//! Walking Pi's session store.
-
 const std = @import("std");
 const Io = std.Io;
 const testing = std.testing;
@@ -21,9 +19,8 @@ const other_session =
     \\
 ;
 
-/// The store lives under the cache so a test run cannot touch a real Pi session,
-/// and each test gets its own directory because the runner may run tests side by
-/// side.
+/// The store lives under the cache so a test run cannot touch a real Pi session, and each test gets
+/// its own directory because the runner may run tests side by side.
 fn build(comptime store: []const u8, io: Io) !void {
     const piui_dir = store ++ "/--cache-projects-piui--";
     const other_dir = store ++ "/--tmp-other--";
@@ -176,8 +173,6 @@ test "cwdOf names the project a session file belongs to" {
 
     const index = sessions.Index.init(arena, io, ".zig-cache/piui-sessions-cwd");
 
-    // Resuming a chat has to know where it ran: the header is the only record
-    // of that once the tab which started it is gone.
     const path = try index.resolve("bbbbbbbb");
     try testing.expectEqualStrings("/tmp/other", index.cwdOf(path).?);
 

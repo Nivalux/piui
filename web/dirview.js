@@ -1,19 +1,12 @@
 // @ts-check
 
-/**
- * The cursor of the folder picker.
- *
- * The picker itself lives in app.js: a field holding a path and the folders
- * underneath it, filtered by whatever is typed after the last slash. What is
- * decided here is which row that leaves highlighted and which path a keystroke
- * therefore means - the two pieces worth testing without a browser.
- */
+/** The cursor of the folder picker. */
 
 import { rank } from "./filter.js";
 
 /**
- * The row a list lands on after `delta` steps, wrapping at both ends. A list
- * with no rows has no cursor at all, which is `-1`.
+ * The row a list lands on after `delta` steps, wrapping at both ends. A list with no rows has no
+ * cursor at all, which is `-1`.
  *
  * @param {number} length
  * @param {number} cursor
@@ -28,9 +21,9 @@ export function step(length, cursor, delta) {
 }
 
 /**
- * Splits a path being typed into the directory to list and the words to filter
- * its folders with. A path always ends at a slash, so typing continues a name;
- * a field without one is a search of the filesystem root.
+ * Splits a path being typed into the directory to list and the words to filter its folders with. A
+ * path always ends at a slash, so typing continues a name; a field without one is a search of the
+ * filesystem root.
  *
  * @param {string} value
  * @returns {{base: string, needle: string}}
@@ -43,8 +36,8 @@ export function splitTyping(value) {
 }
 
 /**
- * The folders the list shows: everything typed reaches, best first, an empty
- * needle keeping the order the server sent.
+ * The folders the list shows: everything typed reaches, best first, an empty needle keeping the
+ * order the server sent.
  *
  * @param {{name: string, path: string}[]} dirs
  * @param {string} needle
@@ -55,8 +48,8 @@ export function suggestions(dirs, needle) {
 }
 
 /**
- * The path a keystroke means. A highlighted row wins; otherwise it is what
- * stands in the field, without the slash that only marks it as a folder.
+ * The path a keystroke means. A highlighted row wins; otherwise it is what stands in the field,
+ * without the slash that only marks it as a folder.
  *
  * @param {{path: string}[]} rows
  * @param {number} cursor

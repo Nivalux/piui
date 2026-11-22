@@ -77,8 +77,6 @@ pub const Server = struct {
 
         if (std.mem.eql(u8, path, "/api/login")) return self.login(request, a);
 
-        // Everything past here can start a pi, read a session or write the
-        // config, so it needs the cookie the login handed out.
         if (!self.signedIn(request)) {
             return self.sendJson(request, .unauthorized, "{\"error\":\"token required\"}");
         }
@@ -108,8 +106,6 @@ pub const Server = struct {
             return self.events(request, tab);
         }
 
-        // The terminal windows. The list is what a page opens tabs for when it
-        // loads; everything else addresses one shell by its number.
         if (std.mem.eql(u8, path, "/api/pty")) {
             if (request.head.method == .GET) {
                 const payload = json.encode(a, ShellList{ .shells = self.options.shells.alive(a) }) catch
@@ -160,8 +156,6 @@ pub const Server = struct {
         }
 
         if (std.mem.eql(u8, path, "/api/sessions")) {
-            // A scratch chat has no project worth filtering to: asking for its
-            // sessions means asking for the newest there is anywhere.
             const wanted = if (query(a, target, "cwd")) |cwd|
                 (if (self.options.hub.isScratch(cwd)) null else cwd)
             else
@@ -270,20 +264,12 @@ pub const Server = struct {
         return self.sendJson(request, .unauthorized, "{\"error\":\"wrong token\"}");
     }
 
-    /// Starts a chat. A resumed session knows the project it began in, and a
-    /// chat taken from that list belongs there: leaving it in a fresh scratch
-    /// folder would make a project chat look like it has no project. A project
-    /// that has since been deleted still gets its chat, in the scratch root.
-    /// Open a chat, and say what it took. A chat whose folder is gone comes back
-    /// as a copy rather than a failure, so the page is told which of the two it
-    /// is looking at.
+    /// Starts a chat. A resumed session knows the project it began in, and a chat taken from that
+    /// list belongs there: leaving it in a fresh scratch folder would make a project chat look like
+    /// it has no project.
     const Opened = struct { tab: *hub.Tab, copiedFrom: ?[]const u8 = null, goneFolder: ?[]const u8 = null };
 
     fn start(self: *Server, cwd: ?[]const u8, session: ?[]const u8, recreate: bool) hub.Error!Opened {
-        // A scratch folder is not a project, so it does not outrank the one the
-        // session remembers. That is also how a chat put back after a restart
-        // finds its project again: what was saved next to the session was
-        // wherever Pi happened to be running.
         var given = cwd;
         if (session != null and self.options.hub.isScratch(cwd orelse "")) given = null;
 
@@ -296,10 +282,6 @@ pub const Server = struct {
         var read = session;
         var copied: ?[]const u8 = null;
 
-        // A folder is only ever created because a person asked for it. The one a
-        // chat remembers is usually gone for a reason, so the chat is copied to
-        // the scratch root and read from there until someone asks for the folder
-        // back.
         if (where) |path| {
             if (!self.exists(path)) {
                 if (session == null) return error.NoWorkdir;
@@ -316,8 +298,6 @@ pub const Server = struct {
         }
 
         const tab = self.options.hub.create(where, read) catch |err| {
-            // The copy was made in a folder of its own, so a chat that still
-            // cannot start has no excuse left for failing.
             if (err == error.NoWorkdir and copied != null) return error.NoWorkdir;
             return err;
         };
@@ -340,8 +320,6 @@ pub const Server = struct {
                     return self.text(request, .bad_request, "not json");
                 defer parsed.deinit();
                 if (parsed.value == .object) {
-                    // The parse dies with this block, so whatever is used after
-                    // it is copied out first.
                     if (protocol.string(parsed.value.object, "cwd")) |given| {
                         cwd = a.dupe(u8, given) catch return self.text(request, .internal_server_error, "out of memory");
                     }
@@ -373,8 +351,8 @@ pub const Server = struct {
         return self.respond(request, .created, "application/json", payload);
     }
 
-    /// A session can be named by id or by the file that stores it, but the file
-    /// has to sit in the session store: Pi is handed the path verbatim.
+    /// A session can be named by id or by the file that stores it, but the file has to sit in the
+    /// session store: Pi is handed the path verbatim.
     fn insideStore(self: *Server, path: []const u8) bool {
         return std.mem.startsWith(u8, path, self.options.index.root) and
             std.mem.indexOf(u8, path, "..") == null;
@@ -442,12 +420,8 @@ pub const Server = struct {
         return self.stream(request, sub, snapshot);
     }
 
-    /// The loop behind both event streams: say what is already there, then
-    /// whatever arrives, then a ping when nothing does.
-    ///
-    /// Whoever calls this subscribes first and hands over what was already worth
-    /// sending, because from that moment new frames queue up behind the one the
-    /// caller is about to write by hand.
+    /// The loop behind both event streams: say what is already there, then whatever arrives, then a
+    /// ping when nothing does.
     fn stream(
         self: *Server,
         request: *std.http.Server.Request,
@@ -514,8 +488,6 @@ pub const Server = struct {
                     return self.text(request, .bad_request, "not json");
                 defer parsed.deinit();
                 if (parsed.value == .object) {
-                    // The strings live in the parse, and the parse is over with
-                    // this block, so anything wanted later is copied out first.
                     cwd = a.dupe(u8, protocol.string(parsed.value.object, "cwd") orelse "") catch
                         return self.text(request, .internal_server_error, "out of memory");
                     tab = a.dupe(u8, protocol.string(parsed.value.object, "tab") orelse "") catch
@@ -545,8 +517,8 @@ pub const Server = struct {
         return self.options.shells.get(id);
     }
 
-    /// What is typed in a terminal window, sent on as it came. No JSON in here:
-    /// a keystroke is a byte and the body is already bytes.
+    /// What is typed in a terminal window, sent on as it came. No JSON in here: a keystroke is a
+    /// byte and the body is already bytes.
     fn shellWrite(
         self: *Server,
         request: *std.http.Server.Request,
@@ -581,8 +553,6 @@ pub const Server = struct {
             return self.text(request, .internal_server_error, "oom");
         defer self.options.shells.unsubscribe(shell, sub);
 
-        // What the shell wrote before this reader showed up. Reading it out is
-        // honest from here on: the queue behind it holds only what came after.
         var scratch: std.heap.ArenaAllocator = .init(a);
         defer scratch.deinit();
 
@@ -623,10 +593,8 @@ pub const Server = struct {
         return self.sendAsset(request, a, asset.mime, asset.body);
     }
 
-    /// Pages and scripts are baked into the binary, so a rebuild changes them, and
-    /// a tab that has been open since the previous server keeps running the
-    /// script it arrived with. The browser is told to ask every time, and gets a
-    /// bare 304 when the bytes are the ones it already has.
+    /// Pages and scripts are baked into the binary, so a rebuild changes them, and a tab that has
+    /// been open since the previous server keeps running the script it arrived with.
     fn sendAsset(
         self: *Server,
         request: *std.http.Server.Request,
@@ -698,9 +666,9 @@ pub const Server = struct {
     }
 };
 
-/// The access log. Every API call gets a line, failures get the reason the
-/// browser saw, and a broken static file still shows up. `/api/health` is the
-/// one exception: it fires on every page load and can only ever say 200.
+/// The access log. Every API call gets a line, failures get the reason the browser saw, and a
+/// broken static file still shows up. `/api/health` is the one exception: it fires on every page
+/// load and can only ever say 200.
 fn note(status: std.http.Status, body: []const u8) void {
     const target = log.target();
     const code = @backingInt(status);
@@ -732,9 +700,8 @@ fn collect(collector: *Collector, item: *hub.Tab) void {
     collector.list.append(collector.allocator, hub.infoOf(item, collector.io)) catch {};
 }
 
-/// A server-sent frame has to leave now, not when the buffer fills: the chunk
-/// encoder keeps a partial chunk until it is full, and the connection buffers on
-/// top of that. Both have to be emptied for the browser to see one event.
+/// A server-sent frame has to leave now, not when the buffer fills: the chunk encoder keeps a
+/// partial chunk until it is full, and the connection buffers on top of that.
 fn flushStream(body: *std.http.BodyWriter) !void {
     try Io.Writer.defaultFlush(&body.writer);
     try body.flush();
@@ -781,8 +748,8 @@ const ShellOne = struct { ok: bool = true, shell: shells.ShellInfo };
 /// The shells standing right now.
 const ShellList = struct { ok: bool = true, shells: []const shells.ShellInfo };
 
-/// A size from a browser payload, where anything that is not a plausible number
-/// means the caller did not say and the default stands.
+/// A size from a browser payload, where anything that is not a plausible number means the caller
+/// did not say and the default stands.
 fn number(object: std.json.ObjectMap, key: []const u8, fallback: u16) u16 {
     const value = object.get(key) orelse return fallback;
     return switch (value) {
@@ -791,8 +758,8 @@ fn number(object: std.json.ObjectMap, key: []const u8, fallback: u16) u16 {
     };
 }
 
-/// Terminal bytes in the only shape an event stream carries without one of them
-/// being read as part of the framing.
+/// Terminal bytes in the only shape an event stream carries without one of them being read as part
+/// of the framing.
 fn base64Of(a: std.mem.Allocator, bytes: []const u8) ?[]const u8 {
     const out = a.alloc(u8, std.base64.standard.Encoder.calcSize(bytes.len)) catch return null;
     return std.base64.standard.Encoder.encode(out, bytes);
@@ -809,8 +776,8 @@ fn query(a: std.mem.Allocator, target: []const u8, name: []const u8) ?[]const u8
     return null;
 }
 
-/// A browser sends a path as mostly `%2F`, which is useless until it comes back
-/// off. Values without an escape keep pointing at the request line.
+/// A browser sends a path as mostly `%2F`, which is useless until it comes back off. Values without
+/// an escape keep pointing at the request line.
 fn unescape(a: std.mem.Allocator, value: []const u8) []const u8 {
     if (std.mem.indexOfScalar(u8, value, '%') == null) return value;
     const buffer = a.alloc(u8, value.len) catch return value;

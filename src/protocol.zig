@@ -21,13 +21,6 @@ pub const Response = struct {
 };
 
 /// What pi sent, reduced to the handful of fields the server routes on.
-///
-/// Everything else stays untouched on its way to the browser: the transcript is
-/// assembled there, so the server has no reason to model all thirty event shapes.
-///
-/// The fields are copies: `std.json` allocates the strings it parses, so they
-/// cannot be borrowed out of a `parseFromSlice` that is already deinited. Whoever
-/// calls `parse` owns the copies until it calls `deinit`.
 pub const Record = struct {
     kind: Kind,
     id: ?[]const u8 = null,
@@ -113,8 +106,8 @@ pub fn string(object: std.json.ObjectMap, key: []const u8) ?[]const u8 {
     };
 }
 
-/// A switch a request body turned on. Absent, null, or any other type reads as
-/// off, so a client that sends nothing gets the careful behaviour.
+/// A switch a request body turned on. Absent, null, or any other type reads as off, so a client
+/// that sends nothing gets the careful behaviour.
 pub fn flag(object: std.json.ObjectMap, key: []const u8) bool {
     const value = object.get(key) orelse return false;
     return switch (value) {
@@ -131,8 +124,8 @@ pub fn integer(object: std.json.ObjectMap, key: []const u8) ?i64 {
     };
 }
 
-/// Adds a request id when the browser did not supply one, so the response can
-/// be matched to the command that caused it.
+/// Adds a request id when the browser did not supply one, so the response can be matched to the
+/// command that caused it.
 pub fn ensureId(allocator: std.mem.Allocator, raw: []const u8, id: []const u8) ![]u8 {
     var parsed = std.json.parseFromSlice(std.json.Value, allocator, raw, .{}) catch
         return error.InvalidRecord;

@@ -1,5 +1,3 @@
-//! Zig test suite: one binary, run with `zig build test`.
-
 test {
     _ = @import("tests/framing_test.zig");
     _ = @import("tests/protocol_test.zig");

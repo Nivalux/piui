@@ -71,8 +71,8 @@ pub const Error = error{ GitFailed, NotRepository, TooLarge, OutOfMemory };
 /// Said in one place, because the browser shows it.
 pub const not_a_repository = "not a git repository";
 
-/// Git's own letters. A status is handed over as a slice of this string so a
-/// `FileStatus` never owns memory it has to free.
+/// Git's own letters. A status is handed over as a slice of this string so a `FileStatus` never
+/// owns memory it has to free.
 const codes = "MADRCTU?!";
 
 fn codeText(code: u8) []const u8 {
@@ -118,9 +118,6 @@ pub const Collector = struct {
 
 /// Everything returned lives on `allocator`; the caller owns it as a block.
 pub fn status(allocator: std.mem.Allocator, io: Io, cwd: []const u8, base: Base) Status {
-    // Git's own complaint about a missing repository is translated and, outside
-    // of a repository, followed by the whole `--no-index` usage page, so neither
-    // the exit code nor the text can be relied on to say what happened.
     if (!isRepository(allocator, io, cwd)) {
         return .{ .base = base.text(), .label = base.label(), .errorMessage = not_a_repository };
     }
@@ -182,10 +179,8 @@ fn parsePorcelain(collector: *Collector, output: []const u8) void {
     }
 }
 
-/// `git diff --name-status -z` answers one field per NUL, so the letter and the
-/// path are separate records: `M\0web/app.js\0`. A rename is three: `R100\0old\0new\0`.
-/// Reading it as the tab-separated text form is what put a row of bare `M`s
-/// above a row of paths in the diff list.
+/// `git diff --name-status -z` answers one field per NUL, so the letter and the path are separate
+/// records: `M\0web/app.js\0`. A rename is three: `R100\0old\0new\0`.
 fn parseNameStatus(collector: *Collector, output: []const u8) void {
     var fields = std.mem.splitScalar(u8, output, 0);
     while (fields.next()) |field| {
@@ -204,8 +199,8 @@ fn parseNameStatus(collector: *Collector, output: []const u8) void {
     }
 }
 
-/// `path` null means the whole worktree. A file that git does not track yet is
-/// diffed against /dev/null, so the browser renders one kind of patch text.
+/// `path` null means the whole worktree. A file that git does not track yet is diffed against
+/// /dev/null, so the browser renders one kind of patch text.
 pub fn diff(allocator: std.mem.Allocator, io: Io, cwd: []const u8, base: Base, path: ?[]const u8) Error![]u8 {
     const a = allocator;
     if (!isRepository(a, io, cwd)) return error.NotRepository;
@@ -259,7 +254,6 @@ fn invoke(allocator: std.mem.Allocator, io: Io, cwd: []const u8, argv: []const [
         .argv = full.items,
         .cwd = .{ .path = cwd },
         .stdout_limit = limit,
-        // Enough for a real complaint, short enough to stop a chatty hook.
         .stderr_limit = .limited(64 << 10),
     }) catch |err| switch (err) {
         error.StreamTooLong => return error.TooLarge,

@@ -1,16 +1,3 @@
-//! `~/.piui/config.json`: how the server listens and what the browser last chose.
-//!
-//! Two audiences share one file. `server` is read at startup and CLI flags win
-//! over it, so a flag is still the fastest way to try a port. `ui` and `diffBase`
-//! are written while the server runs: they describe a project or a window, not a
-//! browser, so they survive a reload, a panel toggle and a second machine.
-//!
-//! A file rather than sqlite: the whole state is a dozen small values, written by
-//! one process a few times an hour and never queried. SQLite would add a C
-//! dependency to a tree that otherwise needs no compiler, and the result could no
-//! longer be read or fixed with an editor. Writes go through a temporary file and
-//! a rename, so a crash leaves the previous config intact instead of half a file.
-
 const std = @import("std");
 const Io = std.Io;
 const protocol = @import("protocol.zig");
@@ -33,8 +20,7 @@ pub const Server = struct {
     idle_seconds: i64 = default_idle_seconds,
 };
 
-/// The browser's own state, kept server-side so any window opens the way the last
-/// one was left.
+/// The browser's own state, kept server-side so any window opens the way the last one was left.
 pub const Ui = struct {
     theme: []const u8 = "dark",
     sidebar: bool = true,
@@ -137,8 +123,8 @@ pub const Settings = struct {
         return out.toOwnedSlice();
     }
 
-    /// Merge the objects a browser sent into `ui` and store the result. Unknown
-    /// keys are ignored so an older server survives a newer frontend.
+    /// Merge the objects a browser sent into `ui` and store the result. Unknown keys are ignored so
+    /// an older server survives a newer frontend.
     pub fn patchUi(self: *Settings, patch: std.json.ObjectMap) !void {
         self.lock.lockUncancelable(self.io);
         defer self.lock.unlock(self.io);

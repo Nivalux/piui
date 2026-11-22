@@ -1,12 +1,6 @@
 // @ts-check
 
-/**
- * The page.
- *
- * Everything in here is glue: fetch, SSE, DOM. The parts with real decisions in
- * them — folding events into blocks, parsing a diff, the rate, the command
- * filter — live in their own modules and are tested without a browser.
- */
+/** The page. */
 
 import { Transcript } from "./transcript.js";
 import { filterCommands, parseCommands } from "./commands.js";
@@ -58,15 +52,19 @@ import {
  * @typedef {import("./protocol.js").ShellInfo} ShellInfo
  * @typedef {import("./protocol.js").PiModel} PiModel
  * @typedef {import("./transcript.js").Block} Block
+ *
+ * @typedef {{id: string, path: string, name?: string | null, cwd?: string | null, created?: string
+ * | null, updated?: string | null, first_text?: string | null, messages: number, running:
+ * boolean}} SessionEntry
+ *
+ * @typedef {{base: string, label: string, branch: string, ahead: number, behind: number, files:
+ * import("./panel.js").Changed[], truncated: boolean, errorMessage?: string | null}} GitStatus
+ *
+ * @typedef {import("./panel.js").View} View
+ *
+ * @typedef {{path: string, text: string, size: number, truncated: boolean, binary: boolean}}
+ * FileContent
  */
-
-/** @typedef {{id: string, path: string, name?: string | null, cwd?: string | null, created?: string | null, updated?: string | null, first_text?: string | null, messages: number, running: boolean}} SessionEntry */
-
-/** @typedef {{base: string, label: string, branch: string, ahead: number, behind: number, files: import("./panel.js").Changed[], truncated: boolean, errorMessage?: string | null}} GitStatus */
-
-/** @typedef {import("./panel.js").View} View */
-
-/** @typedef {{path: string, text: string, size: number, truncated: boolean, binary: boolean}} FileContent */
 
 const ids = {
   gate: "gate",
@@ -1008,8 +1006,8 @@ async function pickRow(path) {
 }
 
 /**
- * Open a chat. `recreate` is the one case in which piui makes a folder: a
- * reader who was shown that a chat's folder is gone and asked for it back.
+ * Open a chat. `recreate` is the one case in which piui makes a folder: a reader who was shown
+ * that a chat's folder is gone and asked for it back.
  *
  * @param {{cwd?: string, session?: string, recreate?: boolean}} body
  */
@@ -1047,9 +1045,6 @@ async function openTab(id) {
   state.follow = true;
   el.jump.hidden = true;
 
-  // Files belong to the project of the chat they were opened from, so a new
-  // chat starts with a clean strip rather than someone else's files. The
-  // terminals of this chat are the one thing that comes back with it.
   state.views = [{ kind: "chat" }, ...terminalViews(id)];
   state.files = [];
   state.filesTruncated = false;
@@ -2884,8 +2879,6 @@ async function refreshGit() {
     ? `${status.branch}${status.ahead ? ` ↑${status.ahead}` : ""}${status.behind ? ` ↓${status.behind}` : ""}`
     : "";
 
-  // The branch and the base are wanted either way; the list of changed files
-  // only matters while the panel is up on that tab.
   if (state.ui.files !== true || state.panel !== "diff") return;
 
   const problem = gitHint(status?.errorMessage);

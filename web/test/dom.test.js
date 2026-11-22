@@ -4,10 +4,9 @@ import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
 
 /**
- * The page wires itself up by looking ids up in one map, so two things can go
- * wrong and both are invisible until someone clicks: a key that the map does
- * not have (`el.kill` with no `kill` entry, which throws in the middle of
- * `wire`) and a map entry whose node is not in the document.
+ * The page wires itself up by looking ids up in one map, so two things can go wrong and both are
+ * invisible until someone clicks: a key that the map does not have (`el.kill` with no `kill`
+ * entry, which throws in the middle of `wire`) and a map entry whose node is not in the document.
  */
 
 const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");

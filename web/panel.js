@@ -1,40 +1,27 @@
 // @ts-check
-/**
- * What the side panel offers and what the main area shows.
- *
- * The panel lists files and the diff; both are a way to get somewhere else, so
- * the interesting part is the reducer behind a click: a file opens as a view
- * next to the chat, opening the same file twice focuses the view that is
- * already there, and closing one leaves the reader where they were looking.
- */
+/** What the side panel offers and what the main area shows. */
 
 import { rank } from "./filter.js";
 
 /**
- * What the main area can hold. A file and the patch of that file are two views:
- * one is what it is, the other is what changed.
+ * What the main area can hold. A file and the patch of that file are two views: one is what it is,
+ * the other is what changed.
+ *
+ * @typedef {{kind: "chat"}} ChatView
+ * @typedef {{kind: "file", path: string, preview?: boolean}} FileView
+ * @typedef {{kind: "diff", path: string, preview?: boolean}} DiffView
+ *
+ * @typedef {{kind: "terminal", shell: string}} TerminalView
+ * @typedef {ChatView | FileView | DiffView | TerminalView} View
+ *
+ * @typedef {{path: string, dir: string, name: string, ranges: [number, number][]}} FileRow
+ * @typedef {{name: string, path: string, count: number}} DirRow
+ *
+ * @typedef {{path: string, display: string, status: string, staged?: boolean, untracked?:
+ * boolean}} Changed
+ *
+ * @param {string} path @returns {string}
  */
-/**
- * `preview` marks a view that was only glanced at: it holds the slot until the
- * next glance replaces it, and it is the one thing a click on the tab settles.
- */
-/** @typedef {{kind: "chat"}} ChatView */
-/** @typedef {{kind: "file", path: string, preview?: boolean}} FileView */
-/** @typedef {{kind: "diff", path: string, preview?: boolean}} DiffView */
-/**
- * A terminal window belonging to this chat. `shell` is the number the server
- * gave the process; the view is only a way of looking at it, and closing the
- * view closes the shell, because nothing else would ever come back to it.
- */
-/** @typedef {{kind: "terminal", shell: string}} TerminalView */
-/** @typedef {ChatView | FileView | DiffView | TerminalView} View */
-
-/** @typedef {{path: string, dir: string, name: string, ranges: [number, number][]}} FileRow */
-/** @typedef {{name: string, path: string, count: number}} DirRow */
-
-/** @typedef {{path: string, display: string, status: string, staged?: boolean, untracked?: boolean}} Changed */
-
-/** @param {string} path @returns {string} */
 export function baseOf(path) {
   const text = String(path);
   const at = text.lastIndexOf("/");
@@ -49,9 +36,9 @@ export function dirOf(path) {
 }
 
 /**
- * The Files tab while a query is typed: rows anywhere in the tree, best first,
- * capped so a huge repository still paints. A row says which folder it came
- * from, because a search leaves the folder you were looking at.
+ * The Files tab while a query is typed: rows anywhere in the tree, best first, capped so a huge
+ * repository still paints. A row says which folder it came from, because a search leaves the
+ * folder you were looking at.
  *
  * @param {{path: string}[]} files
  * @param {string} query
@@ -84,9 +71,8 @@ function rowOf(hit) {
 }
 
 /**
- * How far below the project root a file sits; the shallower one is the closer
- * read, so typing three letters brings the file you meant before the copy of it
- * buried in a vendor folder.
+ * How far below the project root a file sits; the shallower one is the closer read, so typing
+ * three letters brings the file you meant before the copy of it buried in a vendor folder.
  *
  * @param {string} path
  */
@@ -97,9 +83,9 @@ function depth(path) {
 }
 
 /**
- * One folder of the tree: what sits directly under `dir`, folders before files.
- * A folder carries how much is below it, which is how a reader tells a dead end
- * from a deep one before opening either.
+ * One folder of the tree: what sits directly under `dir`, folders before files. A folder carries
+ * how much is below it, which is how a reader tells a dead end from a deep one before opening
+ * either.
  *
  * @param {{path: string}[]} files
  * @param {string} dir "" for the project root
@@ -153,9 +139,9 @@ function byName(a, b) {
 }
 
 /**
- * Open a view beside the chat. The same view is focused rather than opened
- * twice, so clicking a file in both tabs of the panel cannot stack copies. A
- * preview takes the slot another preview was holding.
+ * Open a view beside the chat. The same view is focused rather than opened twice, so clicking a
+ * file in both tabs of the panel cannot stack copies. A preview takes the slot another preview was
+ * holding.
  *
  * @param {View[]} views
  * @param {number} active
@@ -178,8 +164,8 @@ export function openView(views, active, view, preview = false) {
 }
 
 /**
- * Stop previewing a view. From here it is a tab of its own, and the next file
- * clicked in the panel opens beside it instead of over it.
+ * Stop previewing a view. From here it is a tab of its own, and the next file clicked in the panel
+ * opens beside it instead of over it.
  *
  * @param {View[]} views
  * @param {number} at

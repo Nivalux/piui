@@ -1,29 +1,19 @@
 /**
  * Tokens per second for the chat footer.
  *
- * Pi reports usage once a message ends, so a live number has to be estimated
- * from the streamed characters until that arrives. The estimate is cumulative
- * rather than sampled, which keeps it steady instead of flickering, and the
- * exact count replaces it the moment pi sends it.
- */
-
-/** @typedef {import("./protocol.js").Usage} Usage */
-/** @typedef {import("./protocol.js").Message} Message */
-
-/**
+ * @typedef {import("./protocol.js").Usage} Usage
+ * @typedef {import("./protocol.js").Message} Message
+ *
  * @typedef {Object} Reading
  * @property {number} tokens output tokens so far
  * @property {number} tokensPerSecond
  * @property {boolean} exact false while the character estimate is in use
  */
-
-/** Characters per token, the rule of thumb every tokenizer agrees close enough. */
 const characters_per_token = 4;
 
 /**
- * How many finished answers the pace is drawn over. One is a coincidence, all
- * of them is the whole chat, and three is about what a reader remembers of how
- * fast this model has been writing.
+ * How many finished answers the pace is drawn over. One is a coincidence, all of them is the whole
+ * chat, and three is about what a reader remembers of how fast this model has been writing.
  */
 const remembered_turns = 3;
 
@@ -40,7 +30,6 @@ export class Meter {
   /** @type {{tokens: number, ms: number}[]} */
   #turns = [];
 
-  /** Nothing from the chat before this one is worth keeping. */
   reset() {
     this.#start = null;
     this.#end = null;
@@ -70,8 +59,8 @@ export class Meter {
   }
 
   /**
-   * Usage from a `message_end`. Cumulative across the run, because pi counts per
-   * message and the footer shows the run.
+   * Usage from a `message_end`. Cumulative across the run, because pi counts per message and the
+   * footer shows the run.
    *
    * @param {Usage | undefined} usage
    */
@@ -105,8 +94,8 @@ export class Meter {
   }
 
   /**
-   * One finished model turn: what it wrote and how long it took. A turn that
-   * wrote nothing, or that only blinked, says nothing about speed.
+   * One finished model turn: what it wrote and how long it took. A turn that wrote nothing, or
+   * that only blinked, says nothing about speed.
    *
    * @param {number} tokens
    * @param {number} ms
@@ -118,8 +107,8 @@ export class Meter {
   }
 
   /**
-   * Tokens per second over the answers that are finished. Worth more than a
-   * guess about the one still arriving, and it is there after a reload.
+   * Tokens per second over the answers that are finished. Worth more than a guess about the one
+   * still arriving, and it is there after a reload.
    */
   pace() {
     let tokens = 0;
@@ -132,9 +121,9 @@ export class Meter {
   }
 
   /**
-   * The pace of a chat that was just opened, measured from the messages it was
-   * read with. A turn is timed from the line before it: that is where pi stopped
-   * waiting for a tool and started writing.
+   * The pace of a chat that was just opened, measured from the messages it was read with. A turn
+   * is timed from the line before it: that is where pi stopped waiting for a tool and started
+   * writing.
    *
    * @param {Message[]} messages
    */
@@ -160,8 +149,8 @@ export class Meter {
 }
 
 /**
- * When something happened, in epoch milliseconds. pi sends a number live and an
- * ISO string on disk.
+ * When something happened, in epoch milliseconds. pi sends a number live and an ISO string on
+ * disk.
  *
  * @param {number | string | undefined} value
  * @returns {number | undefined}

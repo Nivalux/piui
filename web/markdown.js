@@ -3,15 +3,6 @@
 /**
  * Markdown, read the way the chat needs it.
  *
- * The parser is pure: text in, plain objects out, so it is testable without a
- * browser and the DOM builder stays thin. It covers what an assistant actually
- * writes — headings, paragraphs, lists inside lists, fenced code, quotes, pipe
- * tables, bold, italic, strike, inline code and links — and nothing else. Text
- * is never treated as markup by the renderer: it lands in `textContent`, so a
- * model that answers with `<script>` gets the characters.
- */
-
-/**
  * @typedef {{kind:"text", text: string}} Text
  * @typedef {{kind:"code", text: string}} Code
  * @typedef {{kind:"strong", inline: Inline[]}} Strong
@@ -147,8 +138,7 @@ function blocks(lines) {
 }
 
 /**
- * A paragraph runs until a blank line or the start of anything with a shape of
- * its own.
+ * A paragraph runs until a blank line or the start of anything with a shape of its own.
  *
  * @param {string} line
  */
@@ -221,8 +211,7 @@ function collect(lines, start) {
 }
 
 /**
- * The first lines of a list item are its own text, anything deeper belongs to
- * it as nested blocks.
+ * The first lines of a list item are its own text, anything deeper belongs to it as nested blocks.
  *
  * @param {string} text
  * @returns {Item}
@@ -266,9 +255,9 @@ function pad(row, width) {
 }
 
 /**
- * One pass, left to right, named groups only. Numbered groups here were a
- * trap once: an alternative added in the middle shifted every later index and
- * the answer came out with pieces missing.
+ * One pass, left to right, named groups only. Numbered groups here were a trap once: an
+ * alternative added in the middle shifted every later index and the answer came out with pieces
+ * missing.
  */
 const inlineSource = [
   "(?<fence>`+)(?<codeBody>[\\s\\S]*?)\\k<fence>",
@@ -287,8 +276,6 @@ const inlineSource = [
  */
 export function parseInline(text) {
   const source = String(text ?? "");
-  // A fresh matcher per call: this recurses into the text it just matched, and
-  // one shared global pattern would have its position reset by the inner pass.
   const pattern = new RegExp(inlineSource, "g");
   /** @type {Inline[]} */
   const out = [];
@@ -322,7 +309,6 @@ export function parseInline(text) {
     } else if (found.angled !== undefined) {
       out.push({ kind: "link", href: found.angled, inline: [{ kind: "text", text: found.angled }] });
     } else if (found.bare !== undefined) {
-      // A url does not own the punctuation that follows it.
       const tail = /[.,;:!?)\]]+$/.exec(found.bare)?.[0] ?? "";
       const href = found.bare.slice(0, found.bare.length - tail.length);
       out.push({ kind: "link", href, inline: [{ kind: "text", text: href }] });
@@ -358,8 +344,8 @@ function underscoresInsideWord(marker, source, at) {
 }
 
 /**
- * The DOM half. Kept in the same file as the parser but doing nothing but
- * turning nodes into elements.
+ * The DOM half. Kept in the same file as the parser but doing nothing but turning nodes into
+ * elements.
  *
  * @param {Block[]} list
  * @returns {DocumentFragment}

@@ -1,23 +1,11 @@
-//! The token gate.
-//!
-//! piui can start a `pi` with the user's whole filesystem and credentials, so a
-//! free-for-all port is not acceptable even on a laptop: any other process, or
-//! any page the browser has open, could otherwise prompt its way to a shell. On
-//! first start piui mints a token, keeps it in `<config dir>/token` with mode
-//! 0600, and the browser has to show it once.
-//!
-//! The browser then carries it in an `HttpOnly` cookie. That is what keeps a
-//! reload signed in without the page ever being able to read the secret, and it
-//! works for the SSE stream, which cannot send a header of its own.
-
 const std = @import("std");
 const Io = std.Io;
 
 pub const cookie_name = "piui";
 pub const max_age_seconds = 30 * 24 * 60 * 60;
 
-/// 20 bytes is 40 hex characters: long enough that guessing is not a strategy,
-/// short enough to paste.
+/// 20 bytes is 40 hex characters: long enough that guessing is not a strategy, short enough to
+/// paste.
 pub const secret_len = 20;
 
 pub const Error = error{ OutOfMemory, StorageFailed };
@@ -75,8 +63,8 @@ pub const Token = struct {
         return std.fmt.bytesToHex(&self.secret, .lower);
     }
 
-    /// Constant time in the length of a token, so a wrong guess tells nothing
-    /// about which characters were right.
+    /// Constant time in the length of a token, so a wrong guess tells nothing about which
+    /// characters were right.
     pub fn matches(self: Token, candidate: []const u8) bool {
         const given = fromHex(candidate) orelse return false;
         return std.crypto.timing_safe.eql([secret_len]u8, self.secret, given.secret);
@@ -99,11 +87,8 @@ pub fn clearCookie(allocator: std.mem.Allocator) ![]u8 {
     ) catch error.OutOfMemory;
 }
 
-/// The value of one cookie from a raw request head.
-///
-/// `std.http.Server` keeps only the handful of headers it understands, so the
-/// cookie has to be fished out of the bytes the parser was given. `head_buffer`
-/// stays valid for the whole request, which is what makes this cheap.
+/// The value of one cookie from a raw request head. `std.http.Server` keeps only the handful of
+/// headers it understands, so the cookie has to be fished out of the bytes the parser was given.
 pub fn cookieValue(head: []const u8, name: []const u8) ?[]const u8 {
     var lines = std.mem.splitScalar(u8, head, '\n');
     while (lines.next()) |line| {

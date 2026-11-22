@@ -1,5 +1,3 @@
-//! Reading a chat whose folder is gone.
-
 const std = @import("std");
 const Io = std.Io;
 const testing = std.testing;

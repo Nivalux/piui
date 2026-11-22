@@ -1,14 +1,8 @@
-//! One line per event on stderr. Unbuffered, so a crash still leaves the line
-//! it reached.
-//!
-//! The clock is UTC with a `Z` on the end. The box may run any zone and the
-//! log may not quietly claim to run in the reader's.
-
 const std = @import("std");
 const Io = std.Io;
 
-/// Longest request line kept for the log; anything past it is a very long query
-/// string and rarely the interesting part.
+/// Longest request line kept for the log; anything past it is a very long query string and rarely
+/// the interesting part.
 pub const target_limit = 200;
 
 var io: Io = undefined;
@@ -18,8 +12,8 @@ threadlocal var request_method: []const u8 = "";
 threadlocal var request_target: [target_limit]u8 = undefined;
 threadlocal var request_len: usize = 0;
 
-/// Turns logging on. Until this runs the calls are silent, so a failure before
-/// the clock exists cannot take the process down while reporting it.
+/// Turns logging on. Until this runs the calls are silent, so a failure before the clock exists
+/// cannot take the process down while reporting it.
 pub fn init(at: Io) void {
     io = at;
     on = true;
@@ -33,9 +27,9 @@ pub fn warn(comptime format: []const u8, args: anytype) void {
     emit("warn", format, args);
 }
 
-/// Remembers what this thread is answering. The request line is only readable
-/// until the response goes out - by the time a handler knows the status code,
-/// the bytes it pointed at belong to the connection again.
+/// Remembers what this thread is answering. The request line is only readable until the response
+/// goes out - by the time a handler knows the status code, the bytes it pointed at belong to the
+/// connection again.
 pub fn begin(verb: []const u8, line: []const u8) void {
     if (!on) return;
     request_at = monotonic();

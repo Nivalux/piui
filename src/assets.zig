@@ -1,9 +1,3 @@
-//! The page, baked into the binary.
-//!
-//! `build.zig` walks `web/` and writes the list this file reads, so a file that
-//! lands in that folder is served from the next build and a renamed one leaves
-//! nothing stale behind. `--web <dir>` serves the same files off disk instead.
-
 const std = @import("std");
 const generated = @import("web_assets");
 
@@ -13,9 +7,7 @@ pub const Asset = struct {
     body: []const u8,
 };
 
-/// One fingerprint over every baked file. A page that arrived with a different
-/// one is running a script this server no longer has, and should go and get the
-/// one it was written against.
+/// One fingerprint over every baked file.
 pub const build: []const u8 = blk: {
     @setEvalBranchQuota(200_000_000);
     var sum: u64 = 0xcbf29ce484222325;
@@ -49,9 +41,6 @@ fn assetOf(entry: generated.Entry) Asset {
     return .{ .name = entry.name, .mime = mime(entry.name), .body = entry.body };
 }
 
-// The page names its scripts and its stylesheet, and a name the binary does not
-// carry is a blank page with a 404 in the console. The walk in build.zig is the
-// list, so this is the place that can tell a missing file from a renamed one.
 test "the page is served every file it names" {
     const page = (lookup("/") orelse return error.TestMissingIndex).body;
 

@@ -1,23 +1,15 @@
-//! The file list and the file view of the side panel.
-//!
-//! Two reads a reader actually makes: what is in this project, and what is in
-//! that file. Both stay inside the folder the chat runs in: a path with `..`, or
-//! an absolute path that lands elsewhere, is refused before anything is opened.
-//! The listing skips symlinks, so what the panel offers is what the folder
-//! itself holds. Nothing is cached: a file on disk is the only truth to show.
-
 const std = @import("std");
 const Io = std.Io;
 
-/// One screen of a file. More than this and the browser would build a wall of
-/// text nobody scrolls; the rest is reported as truncated.
+/// One screen of a file. More than this and the browser would build a wall of text nobody scrolls;
+/// the rest is reported as truncated.
 pub const max_read_bytes = 512 * 1024;
 pub const max_list = 4000;
 
 const max_depth = 12;
 
-/// Folders that are machine-made and never interesting to read. Dot folders are
-/// skipped on their own, so `.git` and `.zig-cache` need no mention here.
+/// Folders that are machine-made and never interesting to read. Dot folders are skipped on their
+/// own, so `.git` and `.zig-cache` need no mention here.
 const skip = [_][]const u8{ "node_modules", "zig-cache", "zig-out", "__pycache__", "target", "dist" };
 
 pub const Error = std.mem.Allocator.Error || error{ NotFound, NotFile, Outside };
@@ -40,9 +32,9 @@ pub const Content = struct {
     binary: bool,
 };
 
-/// Every readable file under `root`, relative to it and sorted, capped at `cap`.
-/// A folder that cannot be opened is passed over: a project full of sockets and
-/// mount points still lists what is readable in it.
+/// Every readable file under `root`, relative to it and sorted, capped at `cap`. A folder that
+/// cannot be opened is passed over: a project full of sockets and mount points still lists what is
+/// readable in it.
 pub fn list(a: std.mem.Allocator, io: Io, root: []const u8, cap: usize) !Listing {
     if (root.len == 0 or root[0] != '/') return error.NotFound;
 
@@ -102,8 +94,8 @@ fn walk(
     }
 }
 
-/// The contents of one file inside `root`. `path` is relative to it; an absolute
-/// path is accepted only when it lands inside anyway.
+/// The contents of one file inside `root`. `path` is relative to it; an absolute path is accepted
+/// only when it lands inside anyway.
 pub fn read(a: std.mem.Allocator, io: Io, root: []const u8, requested: []const u8) !Content {
     const path = try inside(a, root, requested);
 
@@ -132,9 +124,6 @@ pub fn read(a: std.mem.Allocator, io: Io, root: []const u8, requested: []const u
         out.appendSlice(a, chunk[0..got]) catch break;
     }
 
-    // A cut can land inside a codepoint, which would leave the last character
-    // broken and the text unencodable as json. Losing one partial character
-    // beats that.
     var text = out.items;
     if (truncated and !std.unicode.utf8ValidateSlice(text)) {
         var back: usize = 1;
@@ -146,8 +135,6 @@ pub fn read(a: std.mem.Allocator, io: Io, root: []const u8, requested: []const u
         }
     }
 
-    // Anything that is not text is not sent: the panel would show noise and the
-    // json encoder would have to escape it byte by byte.
     const binary = std.mem.indexOfScalar(u8, text, 0) != null or !std.unicode.utf8ValidateSlice(text);
     return .{
         .path = path,

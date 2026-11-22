@@ -1,5 +1,3 @@
-//! Splits Pi's stdout into JSONL records.
-
 const std = @import("std");
 const Io = std.Io;
 const testing = std.testing;
@@ -29,8 +27,8 @@ fn collect(allocator: std.mem.Allocator, data: []const u8, piece_size: usize) ![
     return out.items;
 }
 
-/// The framer must return exactly the non-empty lines of its input, in order,
-/// no matter where the pipe happens to cut them.
+/// The framer must return exactly the non-empty lines of its input, in order, no matter where the
+/// pipe happens to cut them.
 fn expectLines(allocator: std.mem.Allocator, data: []const u8, piece_size: usize) !void {
     const got = try collect(allocator, data, piece_size);
     defer allocator.free(got);

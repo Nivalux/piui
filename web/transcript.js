@@ -3,19 +3,6 @@
 /**
  * The transcript, folded from pi's events.
  *
- * pi speaks two layers at once: the transcript itself (`message_start`,
- * `message_update`, `message_end`) and the machinery around it
- * (`tool_execution_*`, `turn_end`, `auto_retry_start`). One assistant message
- * arrives as a start, a hundred deltas and an authoritative end, and a tool call
- * announces itself twice — once from the model, once from the runner. This folds
- * all of that into one ordered list of blocks, and it never touches the DOM, so
- * the whole thing is testable against the fixtures in `testdata/`.
- *
- * `message_end` wins: whatever the deltas produced is overwritten by the final
- * message, the way the docs ask a consumer to treat it.
- *
- * Blocks:
- *
  * - `{kind:"user", text, images}`
  * - `{kind:"thinking", text, done}`
  * - `{kind:"text", text, done, usage, stopReason}`
@@ -36,15 +23,10 @@ import { blocks, imagesOf } from "./protocol.js";
  * @typedef {import("./protocol.js").Usage} Usage
  * @typedef {import("./protocol.js").AssistantEvent} AssistantEvent
  * @typedef {{mimeType: string, data: string}} Image
- */
-
-/**
- * One rendered thing in the transcript. Which fields mean something depends on
- * `kind`; keeping it one shape is what lets the page diff blocks by identity
- * instead of knowing eight variants.
  *
  * @typedef {Object} Block
- * @property {"user" | "thinking" | "text" | "tool" | "bash" | "compaction" | "status" | "error"} kind
+ * @property {"user" | "thinking" | "text" | "tool" | "bash" | "compaction" | "status" | "error"}
+ * kind
  * @property {number} id
  * @property {string} [text]
  * @property {boolean} [done]
@@ -73,16 +55,6 @@ let nextId = 0;
 
 /**
  * How long a finished tool ran, in milliseconds, or 0 when nothing honest is known.
- *
- * Two sources describe the same finish and they are not the same clock. pi's
- * `durationMs` is the better number where it is sent, and the start of the run
- * often is not: a live `tool_execution_start` carries no timestamp, so the start
- * becomes the moment the browser saw it, while the toolResult message stamps
- * itself with the time pi wrote it. Whichever is missing the other has to carry
- * the row, and a difference that came out negative is dropped rather than shown:
- * that is what made a finished tool's time disappear until the page was
- * reloaded, because a replay from the session file stamps both ends the same way
- * and the difference is positive again.
  *
  * @param {Block} block
  */
@@ -146,11 +118,6 @@ export class Transcript {
 
   /**
    * A stored transcript, from the `get_messages` response.
-   *
-   * A chat that is still working replays with its unfinished tool left open:
-   * the run goes on behind this tab, and coming back must not turn a running
-   * bash into a finished one, nor lose the clock that counts it. Only a chat at
-   * rest gets everything closed.
    *
    * @param {Message[]} messages
    * @param {boolean} [running]

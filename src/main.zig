@@ -17,8 +17,6 @@ pub fn main(minimal: std.process.Init.Minimal) !void {
     const over = try parseArgs(minimal.args);
     if (over.help) return;
 
-    // A Threaded with the default options hands children an empty environment,
-    // and a `pi` without a PATH cannot find anything it shells out to.
     var threaded: std.Io.Threaded = .init(a, .{
         .argv0 = .init(minimal.args),
         .environ = minimal.environ,
@@ -27,8 +25,6 @@ pub fn main(minimal: std.process.Init.Minimal) !void {
     log.init(io);
 
     const home = std.process.Environ.getPosix(minimal.environ, "HOME") orelse ".";
-    // Pi puts its sessions under PI_CODING_AGENT_DIR when that is set, and a piui
-    // that kept looking under HOME would list nothing but its own scratch chats.
     const agent = std.process.Environ.getPosix(minimal.environ, "PI_CODING_AGENT_DIR") orelse
         (std.fs.path.join(a, &.{ home, ".pi", "agent" }) catch ".pi/agent");
     const config_path = over.config_path orelse try std.fs.path.join(a, &.{ home, ".piui", "config.json" });
@@ -71,9 +67,6 @@ pub fn main(minimal: std.process.Init.Minimal) !void {
     var group: Io.Group = .init;
     center.group = &group;
 
-    // Shells hang off the same group as the chats: one kind of work that outlives
-    // the request which started it. They inherit this process's own environment,
-    // so a shell has the PATH piui was started with.
     const shell_pool = try a.create(shells.Pool);
     shell_pool.* = .{
         .allocator = a,
@@ -97,11 +90,6 @@ pub fn main(minimal: std.process.Init.Minimal) !void {
     var stop: std.atomic.Value(bool) = .init(false);
     group.concurrent(io, reap, .{ center, &stop }) catch {};
 
-    // Two piui processes on one port each answer part of a page's requests, and
-    // the page has no way to notice: it is handed two different builds and
-    // reloads itself forever, throwing away what was being typed. The lock is
-    // held for as long as this process lives, so the second one says so out loud
-    // instead of quietly sharing the port.
     const lock_path = try std.fs.path.join(a, &.{ token_dir, "piui.lock" });
     var lock_file = try Io.Dir.cwd().createFile(io, lock_path, .{});
     const held = lock_file.tryLock(io, .exclusive) catch |err| {
@@ -137,8 +125,8 @@ fn reap(center: *hub.Hub, stop: *std.atomic.Value(bool)) void {
     center.reap(stop);
 }
 
-/// Command line, then config file, then the built-in default: a flag has to win
-/// over a file that was written weeks ago, and the file over a default.
+/// Command line, then config file, then the built-in default: a flag has to win over a file that
+/// was written weeks ago, and the file over a default.
 fn resolve(a: std.mem.Allocator, over: Overrides, file: settings.Server, home: []const u8, agent: []const u8) struct {
     host: []const u8,
     port: u16,

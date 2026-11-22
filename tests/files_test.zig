@@ -1,6 +1,3 @@
-//! Listing a project and reading one of its files, including every way a path
-//! can try to leave the project.
-
 const std = @import("std");
 const Io = std.Io;
 const testing = std.testing;
@@ -62,7 +59,6 @@ test "a read returns the file and says when it stopped short" {
     big[big.len - 1] = '\n';
     try root.dir.writeFile(io, .{ .sub_path = "big.txt", .data = &big });
 
-    // Cut so that the last thing left behind would be half of an "é".
     var cut: [files.max_read_bytes + 2]u8 = undefined;
     @memset(&cut, 'y');
     cut[cut.len - 2] = 0xC3;
@@ -79,8 +75,6 @@ test "a read returns the file and says when it stopped short" {
     try testing.expect(!read.binary);
     try testing.expect(std.mem.endsWith(u8, read.path, "/src/main.zig"));
 
-    // The folder itself is not a file, and naming it by its absolute path is
-    // the same request in disguise.
     try testing.expectError(error.Outside, files.read(a, io, base, base));
 
     const binary = try files.read(a, io, base, "blob.bin");
@@ -119,7 +113,6 @@ test "a path that leaves the project is refused" {
     try testing.expectError(error.Outside, files.read(a, io, base, "src/../../outside.txt"));
     try testing.expectError(error.Outside, files.read(a, io, base, "/etc/passwd"));
     try testing.expectError(error.NotFound, files.read(a, io, base, ""));
-    // A sibling folder whose name starts like ours is not ours.
     try testing.expectError(error.Outside, files.read(a, io, base, "../x-escape"));
 
     try testing.expectError(error.NotFound, files.read(a, io, base, "src/gone.zig"));

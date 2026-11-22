@@ -1,10 +1,3 @@
-//! The folders a project picker can offer.
-//!
-//! Choosing a project should cost a few keystrokes rather than a trip to a
-//! terminal, so the browser gets the directories under a path and filters them
-//! itself. This reads names and nothing else: no file contents, no symlink
-//! targets, no cache.
-
 const std = @import("std");
 const Io = std.Io;
 
@@ -52,9 +45,8 @@ pub fn clean(a: std.mem.Allocator, path: []const u8) ![]const u8 {
     return if (rooted) std.mem.concat(a, u8, &.{ "/", joined }) else a.dupe(u8, joined);
 }
 
-/// The directories directly under `requested`, alphabetically; `null` asks for
-/// the folder piui runs in. Folders starting with a dot stay out — the picker
-/// offers projects, not caches — and a symlink to a folder counts as one.
+/// The directories directly under `requested`, alphabetically; `null` asks for the folder piui runs
+/// in.
 pub fn list(a: std.mem.Allocator, io: Io, requested: ?[]const u8, cap: usize) !Listing {
     const path = if (requested) |want| try clean(a, want) else try current(a, io);
     if (path.len == 0 or path[0] != '/') return error.NotFound;

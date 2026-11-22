@@ -1,9 +1,7 @@
 /**
- * Text shaping for the parts of the UI that show numbers and paths. Pure, so
- * `node --test` can pin the wording without a browser.
- */
-
-/**
+ * Text shaping for the parts of the UI that show numbers and paths. Pure, so `node --test` can pin
+ * the wording without a browser.
+ *
  * @param {string} path
  * @returns {string}
  */
@@ -49,8 +47,8 @@ export function contextRing(used, size) {
 }
 
 /**
- * A tool hint cut into pieces the page can colour: the counts of added and
- * removed lines wear the diff colours, the rest stays neutral.
+ * A tool hint cut into pieces the page can colour: the counts of added and removed lines wear the
+ * diff colours, the rest stays neutral.
  *
  * @param {string} text
  * @returns {Array<{text: string, kind: "" | "add" | "del"}>}
@@ -83,8 +81,8 @@ export function firstLine(text) {
 }
 
 /**
- * The last line with anything on it. A thought still arriving is read from the
- * bottom, so the summary keeps moving.
+ * The last line with anything on it. A thought still arriving is read from the bottom, so the
+ * summary keeps moving.
  *
  * @param {string} text
  * @returns {string}

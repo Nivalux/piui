@@ -5,11 +5,8 @@ pub const max_record = 64 << 20;
 
 pub const Error = Io.Reader.Error || error{RecordTooLong} || std.mem.Allocator.Error;
 
-/// Splits a byte stream into JSONL records.
-///
-/// Records end at LF only: U+2028, U+2029 and friends are legal inside JSON
-/// strings. A CR directly before the LF is dropped. Records are returned owned,
-/// because they outlive the read that produced them on their way to subscribers.
+/// Splits a byte stream into JSONL records. Records end at LF only: U+2028, U+2029 and friends are
+/// legal inside JSON strings. A CR directly before the LF is dropped.
 pub const Records = struct {
     allocator: std.mem.Allocator,
     source: *Io.Reader,
@@ -35,9 +32,6 @@ pub const Records = struct {
                 continue;
             }
 
-            // A streaming read, deliberately: `readSliceShort` would sit on the
-            // pipe until the chunk is full, and a live session dribbles out one
-            // record at a time.
             var slot = [1][]u8{&self.chunk};
             const read = self.source.readVec(&slot) catch |err| switch (err) {
                 error.EndOfStream => return self.flush(),

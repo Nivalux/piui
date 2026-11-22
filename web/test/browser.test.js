@@ -1,16 +1,6 @@
 // @ts-check
 
-/**
- * Browser tests.
- *
- * These drive the real server and the real page in chromium, with a scripted
- * stand-in for pi (fake-pi.mjs) so they need no model, no key and no network
- * and behave the same on every run. They cover what only a browser can: that a
- * fold opens under the click while its row is being rewritten, that a closed
- * row says what it did, and that the page scrolls where it is supposed to.
- *
- * Outside the nix shell there is no chromium, so the whole file skips.
- */
+/** Browser tests. */
 
 import { after, before, test } from "node:test";
 import assert from "node:assert/strict";
@@ -205,9 +195,7 @@ async function openFreshChat() {
   return activeTab();
 }
 
-/**
- * @param {string} id
- */
+/** @param {string} id */
 async function switchTo(id) {
   await page.click(`#tab-list .tab[data-tab="${id}"]`);
   await page.waitForFunction(

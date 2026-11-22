@@ -1,13 +1,6 @@
 // @ts-check
 
-/**
- * Tool views.
- *
- * The tools Pi reaches for are known here, so their arguments and results get
- * shaped instead of dumped: a read says which range it covered, a write shows a
- * diff, a job shows status, exit code and log path as chips. Anything else keeps
- * the plain argument and result dump.
- */
+/** Tool views. */
 
 import { bytes, firstLine, truncate } from "./format.js";
 import { countRows, diffLines, linesOf, parseDiff, shrink } from "./diff.js";
@@ -25,9 +18,7 @@ import { countRows, diffLines, linesOf, parseDiff, shrink } from "./diff.js";
  *   adds: number,
  *   dels: number,
  * }} ToolView
- */
-
-/**
+ *
  * @param {string} name
  * @param {Record<string, unknown> | null | undefined} args
  * @param {string} text flattened result
@@ -71,8 +62,6 @@ export function isKnownTool(name) {
  * @param {number} images
  */
 function readTool(args, text, images = 0) {
-  // A picture is not measured in lines, and the picture itself is drawn under
-  // the line rather than described in it.
   if (images > 0) {
     return {
       hint: "picture",

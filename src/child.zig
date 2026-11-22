@@ -9,11 +9,8 @@ pub const Options = struct {
 
 pub const Error = error{ SpawnFailed, LostStdin } || Io.Writer.Error;
 
-/// One child process with its three pipes handed to the caller. How it is
-/// invoked is the caller's business; this only owns the pipes.
-///
-/// The child is not bound to the task that spawned it: the pump task reads
-/// stdout, another task drains stderr, any request task may call `send`.
+/// One child process with its three pipes handed to the caller. How it is invoked is the caller's
+/// business; this only owns the pipes.
 pub const Child = struct {
     allocator: std.mem.Allocator,
     io: Io,

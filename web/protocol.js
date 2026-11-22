@@ -222,8 +222,8 @@ export function textOf(content) {
 }
 
 /**
- * The blocks behind whatever a tool handed back: a bare string, a list of
- * blocks, or an object carrying them under `content`.
+ * The blocks behind whatever a tool handed back: a bare string, a list of blocks, or an object
+ * carrying them under `content`.
  *
  * @param {unknown} value
  * @returns {Content[]}

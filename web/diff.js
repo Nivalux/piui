@@ -3,13 +3,6 @@
 /**
  * Diffs.
  *
- * The server runs `git diff` and hands the patch over verbatim; the page splits
- * it per file so every file gets its own header, its own +/- counts and a copy
- * button that copies exactly that file and nothing else. Line numbers come out
- * of the hunk headers, which is what makes a row clickable later.
- */
-
-/**
  * @typedef {"add" | "del" | "ctx" | "hunk" | "meta"} RowKind
  * @typedef {{kind: RowKind, old: number | null, new: number | null, text: string}} Row
  * @typedef {{header: string, rows: Row[]}} Hunk
@@ -22,10 +15,6 @@
  *   binary: boolean,
  *   patch: string,
  * }} FileDiff
- */
-
-/**
- * Split a `git diff` into per-file diffs.
  *
  * @param {string} text
  * @returns {FileDiff[]}
@@ -71,8 +60,6 @@ export function parseDiff(text) {
       continue;
     }
 
-    // A patch straight from a tool result has no `diff --git` line; the `---`
-    // and `+++` pair is where the file starts there.
     if (!file && (line.startsWith("--- ") || line.startsWith("+++ "))) {
       file = { path: "", header: "", hunks: [], adds: 0, dels: 0, binary: false, patch: "" };
       hunk = null;
@@ -133,8 +120,8 @@ export function parseDiff(text) {
 }
 
 /**
- * The patch text of one file, for a copy button that hands over something you
- * can feed back to `git apply`.
+ * The patch text of one file, for a copy button that hands over something you can feed back to
+ * `git apply`.
  *
  * @param {string} text full diff
  * @param {string} path

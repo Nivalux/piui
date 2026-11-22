@@ -63,17 +63,17 @@ pub const Tab = struct {
     closed: bool = false,
     created_ms: i64,
     last_output_ms: i64,
-    /// The same two moments on the wall clock. `*_ms` is monotonic and only
-    /// means something inside this process; a browser cannot read those.
+    /// The same two moments on the wall clock. `*_ms` is monotonic and only means something inside
+    /// this process; a browser cannot read those.
     created_epoch: i64 = 0,
     last_output_epoch: i64 = 0,
-    /// When the current run began and when the last one ended. A tab that has
-    /// been open for an hour and started working a second ago must say "0s", not
-    /// "1h", and a run that finished while nobody was looking is worth marking.
+    /// When the current run began and when the last one ended. A tab that has been open for an hour
+    /// and started working a second ago must say "0s", not "1h", and a run that finished while
+    /// nobody was looking is worth marking.
     run_started_epoch: i64 = 0,
     finished_epoch: i64 = 0,
-    /// Set when this chat is a copy: the file it was copied from and the folder
-    /// that is gone. Both are read-only facts for the page.
+    /// Set when this chat is a copy: the file it was copied from and the folder that is gone. Both
+    /// are read-only facts for the page.
     copied_from: ?[]const u8 = null,
     gone_folder: ?[]const u8 = null,
     process: *child.Child,
@@ -84,8 +84,8 @@ pub const Tab = struct {
 
 pub const Error = error{ TabNotFound, SpawnFailed, NoWorkdir, OutOfMemory };
 
-/// How much of a chat is copied to read it. A longer chat is cut short there
-/// rather than held twice in memory.
+/// How much of a chat is copied to read it. A longer chat is cut short there rather than held twice
+/// in memory.
 const copy_limit = 64 << 20;
 
 pub fn infoOf(tab: *Tab, io: Io) TabInfo {
@@ -130,8 +130,8 @@ fn byAge(_: void, left: Aged, right: Aged) bool {
     return left.ms < right.ms;
 }
 
-/// A crash report has to stay readable in a line-based log: every line of the
-/// tail gets indented under the one that carries the timestamp.
+/// A crash report has to stay readable in a line-based log: every line of the tail gets indented
+/// under the one that carries the timestamp.
 fn indented(a: std.mem.Allocator, text: []const u8) []const u8 {
     var out: std.ArrayList(u8) = .empty;
     for (text) |byte| {
@@ -144,8 +144,8 @@ fn indented(a: std.mem.Allocator, text: []const u8) []const u8 {
     return out.items;
 }
 
-/// What was open the last time piui ran. Tab ids are minted per process and
-/// die with it; a working directory and a session file do not.
+/// What was open the last time piui ran. Tab ids are minted per process and die with it; a working
+/// directory and a session file do not.
 pub const Saved = struct {
     cwd: []const u8,
     session: ?[]const u8 = null,
@@ -221,8 +221,6 @@ pub const Hub = struct {
             };
         };
 
-        // The caller's copy lives in the request's arena and dies with it, so
-        // the tab has to hold its own.
         const kept_session = if (session) |path|
             self.allocator.dupe(u8, path) catch return error.OutOfMemory
         else
@@ -274,8 +272,8 @@ pub const Hub = struct {
         self.broadcast(tab, payload);
     }
 
-    /// Pulls the state a fresh transcript is built from. Responses arrive on the
-    /// same pipe as everything else, so the browser sees them like live events.
+    /// Pulls the state a fresh transcript is built from. Responses arrive on the same pipe as
+    /// everything else, so the browser sees them like live events.
     fn bootstrap(self: *Hub, tab: *Tab) void {
         const commands = [_][]const u8{
             "{\"type\":\"get_state\",\"id\":\"piui_state\"}",
@@ -368,8 +366,8 @@ pub const Hub = struct {
         hub.noteClosed(tab);
     }
 
-    /// When the chat last did something. The sidebar sorts settled chats by
-    /// this, so it moves only on real activity.
+    /// When the chat last did something. The sidebar sorts settled chats by this, so it moves only
+    /// on real activity.
     fn noteActivity(self: *Hub, tab: *Tab) void {
         tab.lock.lockUncancelable(self.io);
         tab.last_output_epoch = json.epochMs(self.io);
@@ -388,9 +386,6 @@ pub const Hub = struct {
         };
         defer parsed.deinit(self.allocator);
 
-        // A reply to something the browser asked for is not activity. Stamping
-        // it would let clicking back and forth between two settled chats keep
-        // trading their places in the list.
         if (parsed.kind != .response) self.noteActivity(tab);
 
         switch (parsed.kind) {
@@ -412,8 +407,6 @@ pub const Hub = struct {
                 parsed.response.session_file = null;
                 tab.lock.unlock(self.io);
 
-                // A chat only becomes resumable once it has a file on disk, so
-                // that is the moment worth writing down.
                 fresh = !known;
                 if (fresh) self.persist();
             },
@@ -438,8 +431,8 @@ pub const Hub = struct {
         self.broadcast(tab, payload);
     }
 
-    /// Writes the open tabs next to the config so a restart can put them back.
-    /// Oldest first, so the last entry is the one the reader was most recently in.
+    /// Writes the open tabs next to the config so a restart can put them back. Oldest first, so the
+    /// last entry is the one the reader was most recently in.
     fn persist(self: *Hub) void {
         if (self.state_path.len == 0) return;
 
@@ -478,8 +471,8 @@ pub const Hub = struct {
         atomic.replace(self.io) catch return;
     }
 
-    /// The remembered tabs of the previous run. A half-written or foreign file
-    /// means "nothing to restore", never a failed start.
+    /// The remembered tabs of the previous run. A half-written or foreign file means "nothing to
+    /// restore", never a failed start.
     pub fn loadSaved(a: std.mem.Allocator, io: Io, path: []const u8) []const Saved {
         const text = settings.readFile(a, io, path) catch return &.{};
         const parsed = std.json.parseFromSlice([]Saved, a, text, .{ .ignore_unknown_fields = true }) catch
@@ -545,9 +538,9 @@ pub const Hub = struct {
         }
     }
 
-    /// Say that a chat is being read from a copy of itself, and remember what
-    /// it was copied from and which folder is gone. The page needs both to
-    /// explain itself and to offer putting the folder back.
+    /// Say that a chat is being read from a copy of itself, and remember what it was copied from
+    /// and which folder is gone. The page needs both to explain itself and to offer putting the
+    /// folder back.
     pub fn markCopy(self: *Hub, tab: *Tab, from: []const u8, gone: []const u8) void {
         const original = self.allocator.dupe(u8, from) catch return;
         const missing = self.allocator.dupe(u8, gone) catch return;
@@ -565,11 +558,8 @@ pub const Hub = struct {
     /// A copy of a stored chat, pointed at a folder that exists.
     pub const Copy = struct { path: []const u8, dir: []const u8 };
 
-    /// Pi turns down a session whose folder is gone, and a folder that was
-    /// deleted is usually deleted for a reason. So the chat is copied into the
-    /// scratch root with only its remembered folder pointed somewhere new, and
-    /// Pi reads that. The original file is left exactly as it was and nothing
-    /// appears where the deleted folder used to be.
+    /// Pi turns down a session whose folder is gone, and a folder that was deleted is usually
+    /// deleted for a reason.
     pub fn copyForRead(self: *Hub, session: []const u8) Error!Copy {
         const stamp = json.nowMs(self.io);
         const number = blk: {
@@ -581,9 +571,6 @@ pub const Hub = struct {
 
         const name = std.fmt.allocPrint(self.allocator, "{d}-{d}", .{ stamp, number }) catch return error.OutOfMemory;
 
-        // Two places, because Pi wants two things: a folder that exists to work
-        // in, and a chat file inside its own store, which is the only place it
-        // will read a session from.
         const dir = std.fs.path.join(self.allocator, &.{ self.scratch_root, name }) catch return error.OutOfMemory;
         Io.Dir.cwd().createDirPath(self.io, dir) catch return error.NoWorkdir;
 
@@ -630,8 +617,8 @@ pub const Hub = struct {
         return .{ .path = path, .dir = dir };
     }
 
-    /// One line of a session file. Only the header remembers a folder, and only
-    /// that one field is touched; every other line goes over as it stands.
+    /// One line of a session file. Only the header remembers a folder, and only that one field is
+    /// touched; every other line goes over as it stands.
     fn copyLine(self: *Hub, body: *std.ArrayList(u8), line: []const u8, dir: []const u8) !void {
         var parsed = std.json.parseFromSlice(std.json.Value, self.allocator, line, .{}) catch
             return body.appendSlice(self.allocator, line);
