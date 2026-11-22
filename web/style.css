@@ -2272,11 +2272,6 @@ pre,
 }
 
 .new-item {
-  display: flex;
-  align-items: flex-end;
-}
-
-.new-item .button {
   padding: 5px 10px;
   border: 1px solid transparent;
   border-bottom: none;
@@ -2287,7 +2282,7 @@ pre,
   line-height: 1.3;
 }
 
-.new-item .button:hover {
+.new-item:hover {
   color: var(--fg);
   border-color: var(--line);
 }

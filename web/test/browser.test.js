@@ -1731,11 +1731,9 @@ test("the page threw nothing", { skip: blocked }, async () => {
 // ----------------------------------------------------------- terminal views
 
 /** Click the + tab until a menu item with this label is in the page. */
-async function pickNewItem(/** @type {string} */ label) {
+async function openTerminalTab() {
   await page.waitForSelector("#new-item", { state: "attached" });
   await page.click("#new-item");
-  await page.waitForSelector(".row-action", { timeout: 5000 });
-  await page.click(`.row-action:has-text("${label}")`);
 }
 
 test("a terminal opens in the project and answers what you type", { skip: blocked }, async () => {
@@ -1747,7 +1745,7 @@ test("a terminal opens in the project and answers what you type", { skip: blocke
   await page.click("#send");
   await page.waitForSelector("#stream .block", { timeout: 10000 });
 
-  await pickNewItem("Terminal in this project");
+  await openTerminalTab();
 
   await page.waitForFunction(() => document.getElementById("terminal")?.hidden === false, null, { timeout: 5000 });
 
@@ -1795,7 +1793,7 @@ test("the chat comes back whole when the terminal view is closed", { skip: block
 });
 
 test("closing a terminal view ends the shell on the server", { skip: blocked }, async () => {
-  await pickNewItem("Terminal in this project");
+  await openTerminalTab();
   await page.waitForFunction(() => document.getElementById("terminal")?.hidden === false, null, { timeout: 5000 });
 
   const mine = await chatId();

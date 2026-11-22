@@ -423,18 +423,7 @@ function askForToken() {
 function wire() {
   el.newChat.onclick = () => void createTab({});
   el.newProject.onclick = () => void createProject();
-  el.newItem.replaceChildren(
-    menuButton(
-      () => [
-        { label: "Terminal in this project", run: () => void openTerminalHere() },
-        { label: "Terminal in another folder", run: () => void openTerminalPicker() },
-        { label: "Chat", run: () => void createTab({}) },
-        { label: "Project", run: () => void createProject() },
-      ],
-      "+",
-      "button",
-    ),
-  );
+  el.newItem.onclick = () => void openTerminalTab(active());
   el.dirModal.onclick = /** @param {MouseEvent} event */ (event) => {
     if (event.target === el.dirModal) el.dirModal.hidden = true;
   };
@@ -673,8 +662,13 @@ function shellCwd(id) {
   return state.shells.find((shell) => shell.id === id)?.cwd ?? "";
 }
 
-function openTerminalHere() {
-  const tab = active();
+/**
+ * A terminal in the folder of the chat it was opened from, or in one asked for when
+ * that chat has no folder of its own.
+ *
+ * @param {TabInfo | null} tab
+ */
+function openTerminalTab(tab) {
   const cwd = tab && isProjectCwd(tab.cwd) ? tab.cwd : "";
   if (cwd) return void createShell(cwd);
   openTerminalPicker();
