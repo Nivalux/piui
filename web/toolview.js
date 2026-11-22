@@ -33,7 +33,7 @@ export function toolView(name, args, text, details, before = null, images = 0) {
     case "read":
       return readTool(given, text, images);
     case "write":
-      return writeTool(given, text, before);
+      return writeTool(given, before);
     case "edit":
       return editTool(given, text, details);
     case "bash":
@@ -94,8 +94,8 @@ function readTool(args, text, images = 0) {
   };
 }
 
-/** @param {Record<string, unknown>} args @param {string} text @param {string | null} before */
-function writeTool(args, text, before) {
+/** @param {Record<string, unknown>} args @param {string | null} before */
+function writeTool(args, before) {
   const content = String(args.content ?? "");
   const lines = linesOf(content);
   /** @type {Row[]} */

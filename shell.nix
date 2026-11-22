@@ -6,6 +6,7 @@ pkgs.mkShellNoCC {
     just
     nodejs_24
     typescript
+    biome
     git
     ripgrep
     fd

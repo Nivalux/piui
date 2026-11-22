@@ -59,8 +59,9 @@ let nextId = 0;
  * @param {Block} block
  */
 export function toolRun(block) {
-  const stamps = block.doneAt !== undefined && block.startedAt !== undefined ? block.doneAt - block.startedAt : 0;
-  return Math.max(block.durationMs ?? 0, stamps > 0 ? stamps : 0);
+  const stamps =
+    block.doneAt !== undefined && block.startedAt !== undefined ? Math.max(block.doneAt - block.startedAt, 0) : 0;
+  return Math.max(block.durationMs ?? 0, stamps);
 }
 
 export class Transcript {

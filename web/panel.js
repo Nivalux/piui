@@ -146,12 +146,11 @@ function byName(a, b) {
  * holding.
  *
  * @param {View[]} views
- * @param {number} active
  * @param {FileView | DiffView} view
  * @param {boolean} [preview]
  * @returns {{views: View[], active: number}}
  */
-export function openView(views, active, view, preview = false) {
+export function openView(views, view, preview = false) {
   const at = views.findIndex((other) => viewKey(other) === viewKey(view));
   if (at >= 0) return { views, active: at };
 
@@ -200,24 +199,23 @@ function viewKey(view) {
  * purpose, and the next file glanced at in the panel must not throw it away.
  *
  * @param {View[]} views
- * @param {number} active
  * @param {string} shell
  * @returns {{views: View[], active: number}}
  */
-export function openTerminal(views, active, shell) {
+export function openTerminal(views, shell) {
   const at = views.findIndex((other) => other.kind === "terminal" && other.shell === shell);
   if (at >= 0) return { views, active: at };
   return { views: [...views, { kind: "terminal", shell }], active: views.length };
 }
 
-/** @param {View[]} views @param {number} active @param {string} path @param {boolean} [preview] */
-export function openFile(views, active, path, preview = false) {
-  return openView(views, active, { kind: "file", path }, preview);
+/** @param {View[]} views @param {string} path @param {boolean} [preview] */
+export function openFile(views, path, preview = false) {
+  return openView(views, { kind: "file", path }, preview);
 }
 
-/** @param {View[]} views @param {number} active @param {string} path @param {boolean} [preview] */
-export function openDiff(views, active, path, preview = false) {
-  return openView(views, active, { kind: "diff", path }, preview);
+/** @param {View[]} views @param {string} path @param {boolean} [preview] */
+export function openDiff(views, path, preview = false) {
+  return openView(views, { kind: "diff", path }, preview);
 }
 
 /**

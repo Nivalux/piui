@@ -103,8 +103,8 @@ test("appending only adds", () => {
 });
 
 test("shrinking keeps a few lines around every change", () => {
-  const before = Array.from({ length: 40 }, (unused, index) => `line ${index}`).join("\n");
-  const after = Array.from({ length: 40 }, (unused, index) => (index === 20 ? "changed" : `line ${index}`)).join("\n");
+  const before = Array.from({ length: 40 }, (_, index) => `line ${index}`).join("\n");
+  const after = Array.from({ length: 40 }, (_, index) => (index === 20 ? "changed" : `line ${index}`)).join("\n");
 
   const rows = shrink(diffLines(before, after));
   const changed = rows.filter((row) => row.kind === "add" || row.kind === "del");
@@ -115,8 +115,8 @@ test("shrinking keeps a few lines around every change", () => {
 });
 
 test("a rewrite too large for exact matching still finishes", () => {
-  const before = Array.from({ length: 1200 }, (unused, index) => `a${index}`).join("\n");
-  const after = Array.from({ length: 1200 }, (unused, index) => `b${index}`).join("\n");
+  const before = Array.from({ length: 1200 }, (_, index) => `a${index}`).join("\n");
+  const after = Array.from({ length: 1200 }, (_, index) => `b${index}`).join("\n");
 
   assert.deepEqual(countRows(diffLines(before, after)), { adds: 1200, dels: 1200 });
 });

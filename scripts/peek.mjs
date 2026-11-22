@@ -221,7 +221,7 @@ try {
   }
 } catch (error) {
   console.error(
-    `peek: ${String(error && error.stack ? error.stack : error)
+    `peek: ${String(error?.stack ?? error)
       .split("\n")
       .slice(0, 6)
       .join("\n")}`,

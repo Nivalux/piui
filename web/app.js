@@ -647,7 +647,7 @@ async function createShell(cwd) {
 
 /** @param {string} shell */
 function openTerminalView(shell) {
-  const next = openTerminal(state.views, state.activeView, shell);
+  const next = openTerminal(state.views, shell);
   state.views = next.views;
   showView(next.active);
 }
@@ -1566,7 +1566,7 @@ function retirePending(frame) {
   }
 
   const message = /** @type {{role?: string, content?: unknown}} */ (frame.message ?? null);
-  if (!message || message.role !== "user") return;
+  if (message?.role !== "user") return;
 
   const text = flatten(message.content).trim();
   const items = pending.get(tabId);
@@ -2959,14 +2959,14 @@ function cycleBase() {
  * @param {boolean} [preview]
  */
 function openFileView(path, preview = true) {
-  const next = openFile(state.views, state.activeView, path, preview);
+  const next = openFile(state.views, path, preview);
   state.views = next.views;
   showView(next.active);
 }
 
 /** @param {string} path @param {boolean} [preview] */
 function openDiffView(path, preview = true) {
-  const next = openDiff(state.views, state.activeView, path, preview);
+  const next = openDiff(state.views, path, preview);
   state.views = next.views;
   showView(next.active);
 }

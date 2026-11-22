@@ -19,15 +19,15 @@ import {
 const one = [{ kind: "chat" }];
 
 test("a file opens beside the chat, once", () => {
-  const first = openFile(one, 0, "src/app.js");
+  const first = openFile(one, "src/app.js");
   assert.equal(first.active, 1);
   assert.equal(first.views.length, 2);
 
-  const again = openFile(first.views, first.active, "src/app.js");
+  const again = openFile(first.views, "src/app.js");
   assert.equal(again.views.length, 2, "the same path is focused rather than opened twice");
   assert.equal(again.active, 1);
 
-  const second = openFile(again.views, again.active, "web/app.js");
+  const second = openFile(again.views, "web/app.js");
   assert.equal(second.active, 2);
   assert.equal(second.views.length, 3);
 });
@@ -96,12 +96,12 @@ test("a path is split into name and folder", () => {
 });
 
 test("a file and its patch are two views of one path", () => {
-  const file = openFile(one, 0, "notes.md");
-  const patch = openDiff(file.views, file.active, "notes.md");
+  const file = openFile(one, "notes.md");
+  const patch = openDiff(file.views, "notes.md");
   assert.equal(patch.views.length, 3, "a patch is not the file, so it gets its own tab");
   assert.equal(patch.active, 2);
 
-  const again = openDiff(patch.views, patch.active, "notes.md");
+  const again = openDiff(patch.views, "notes.md");
   assert.equal(again.views.length, 3, "the same patch is focused rather than opened twice");
   assert.equal(again.active, 2);
 });
@@ -136,10 +136,10 @@ test("status splits the way git tells it", () => {
 });
 
 test("a glance takes the preview tab, a click on the tab keeps it", () => {
-  const first = openFile(one, 0, "a.js", true);
+  const first = openFile(one, "a.js", true);
   assert.equal(first.views.length, 2);
 
-  const second = openFile(first.views, first.active, "b.js", true);
+  const second = openFile(first.views, "b.js", true);
   assert.equal(second.views.length, 2, "the next glance replaces the one before it");
   assert.equal(second.active, 1);
 
@@ -147,10 +147,10 @@ test("a glance takes the preview tab, a click on the tab keeps it", () => {
   const pinned = /** @type {import("../panel.js").FileView} */ (kept.views[1]);
   assert.equal(pinned.preview, false);
 
-  const third = openFile(kept.views, 1, "c.js", true);
+  const third = openFile(kept.views, "c.js", true);
   assert.equal(third.views.length, 3, "with nothing on loan, a glance gets a tab of its own");
 
-  const patch = openDiff(third.views, 2, "c.js", false);
+  const patch = openDiff(third.views, "c.js", false);
   assert.equal(patch.views.length, 4, "a file and the patch of it are still two things");
 });
 

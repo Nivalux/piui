@@ -205,7 +205,10 @@ export class Terminal {
 
     if (final === "h" || final === "l") {
       const on = final === "h";
-      if (priv && first === 25) return void (this.cursorVisible = on);
+      if (priv && first === 25) {
+        this.cursorVisible = on;
+        return;
+      }
       if (priv && (first === 1049 || first === 1047 || first === 47)) return this.useAlternate(on, first === 1049);
       return;
     }
@@ -308,8 +311,8 @@ export class Terminal {
 
   /** @param {number} row @param {number} col */
   place(row, col) {
-    this.row = clamp(row < 0 ? 0 : row, 0, this.rows - 1);
-    this.col = clamp(col < 0 ? 0 : col, 0, this.cols - 1);
+    this.row = clamp(Math.max(0, row), 0, this.rows - 1);
+    this.col = clamp(Math.max(0, col), 0, this.cols - 1);
     this.wrapPending = false;
   }
 
@@ -604,7 +607,7 @@ function parseArgs(digits) {
 
 /** @param {number} value @param {number} low @param {number} high */
 function clamp(value, low, high) {
-  return value < low ? low : value > high ? high : value;
+  return Math.min(Math.max(value, low), high);
 }
 
 /** The 256 colours of an xterm terminal, as css. */

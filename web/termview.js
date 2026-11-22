@@ -243,7 +243,7 @@ function specialKey(key, shift) {
   const functionKey = ["F1", "F2", "F3", "F4"].indexOf(key);
   if (functionKey >= 0) return `\x1bO${String.fromCharCode(80 + functionKey)}`;
   const later = { F5: 15, F6: 17, F7: 18, F8: 19, F9: 20, F10: 21, F11: 23, F12: 24 };
-  // @ts-ignore indexing a lookup of known names
+  // @ts-expect-error indexing a lookup of known names
   const code = later[key];
   return code ? `\x1b[${code}~` : null;
 }

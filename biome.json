@@ -7,7 +7,7 @@
   },
   "files": {
     "ignoreUnknown": true,
-    "includes": ["**/*.js", "**/*.mjs", "**/*.cjs", "**/*.ts", "**/*.css", "!testdata/**"]
+    "includes": ["**/*.js", "**/*.mjs", "**/*.cjs", "**/*.ts", "**/*.css", "!testdata"]
   },
   "formatter": {
     "enabled": true,
@@ -19,7 +19,21 @@
     "enabled": false
   },
   "linter": {
-    "enabled": false
+    "enabled": true,
+    "rules": {
+      "preset": "none",
+      "correctness": {
+        "recommended": true
+      },
+      "suspicious": {
+        "recommended": true
+      },
+      "complexity": {
+        "recommended": true,
+        "noImportantStyles": "off",
+        "noAdjacentSpacesInRegex": "off"
+      }
+    }
   },
   "javascript": {
     "formatter": {
@@ -40,5 +54,17 @@
     "formatter": {
       "enabled": true
     }
-  }
+  },
+  "overrides": [
+    {
+      "includes": ["web/test/node.d.ts"],
+      "linter": {
+        "rules": {
+          "suspicious": {
+            "noExplicitAny": "off"
+          }
+        }
+      }
+    }
+  ]
 }

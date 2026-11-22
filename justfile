@@ -2,7 +2,7 @@
 addr := "127.0.0.1:7788"
 
 # what a reviewer runs before pushing: format, every test, and the binary
-check: fmt-check test build
+check: fmt-check lint test build
 
 # build the server into zig-out/bin/piui
 build:
@@ -57,9 +57,17 @@ test-fuzz STEPS="200000":
 
 fmt:
     zig fmt .
+    biome format --write .
 
 fmt-check:
     @zig fmt --check .
+    @biome format .
+
+# correctness, suspicious, complexity: the groups that find mistakes rather
+# than taste. Off where this codebase is deliberate: !important on [hidden],
+# and literal spaces in a regex matching a patch line.
+lint:
+    @biome lint .
 
 clean:
     rm -rf .zig-cache zig-out
