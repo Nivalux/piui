@@ -1,30 +1,16 @@
+//! The page, baked into the binary.
+//!
+//! `build.zig` walks `web/` and writes the list this file reads, so a file that
+//! lands in that folder is served from the next build and a renamed one leaves
+//! nothing stale behind. `--web <dir>` serves the same files off disk instead.
+
 const std = @import("std");
+const generated = @import("web_assets");
 
 pub const Asset = struct {
     name: []const u8,
     mime: []const u8,
     body: []const u8,
-};
-
-pub const files = [_]Asset{
-    .{ .name = "/", .mime = "text/html; charset=utf-8", .body = @embedFile("../web/index.html") },
-    .{ .name = "/index.html", .mime = "text/html; charset=utf-8", .body = @embedFile("../web/index.html") },
-    .{ .name = "/style.css", .mime = "text/css; charset=utf-8", .body = @embedFile("../web/style.css") },
-    .{ .name = "/app.js", .mime = "text/javascript; charset=utf-8", .body = @embedFile("../web/app.js") },
-    .{ .name = "/transcript.js", .mime = "text/javascript; charset=utf-8", .body = @embedFile("../web/transcript.js") },
-    .{ .name = "/rate.js", .mime = "text/javascript; charset=utf-8", .body = @embedFile("../web/rate.js") },
-    .{ .name = "/format.js", .mime = "text/javascript; charset=utf-8", .body = @embedFile("../web/format.js") },
-    .{ .name = "/diff.js", .mime = "text/javascript; charset=utf-8", .body = @embedFile("../web/diff.js") },
-    .{ .name = "/protocol.js", .mime = "text/javascript; charset=utf-8", .body = @embedFile("../web/protocol.js") },
-    .{ .name = "/commands.js", .mime = "text/javascript; charset=utf-8", .body = @embedFile("../web/commands.js") },
-    .{ .name = "/toolview.js", .mime = "text/javascript; charset=utf-8", .body = @embedFile("../web/toolview.js") },
-    .{ .name = "/markdown.js", .mime = "text/javascript; charset=utf-8", .body = @embedFile("../web/markdown.js") },
-    .{ .name = "/tabs.js", .mime = "text/javascript; charset=utf-8", .body = @embedFile("../web/tabs.js") },
-    .{ .name = "/filter.js", .mime = "text/javascript; charset=utf-8", .body = @embedFile("../web/filter.js") },
-    .{ .name = "/dirview.js", .mime = "text/javascript; charset=utf-8", .body = @embedFile("../web/dirview.js") },
-    .{ .name = "/panel.js", .mime = "text/javascript; charset=utf-8", .body = @embedFile("../web/panel.js") },
-    .{ .name = "/term.js", .mime = "text/javascript; charset=utf-8", .body = @embedFile("../web/term.js") },
-    .{ .name = "/termview.js", .mime = "text/javascript; charset=utf-8", .body = @embedFile("../web/termview.js") },
 };
 
 /// One fingerprint over every baked file. A page that arrived with a different
@@ -33,16 +19,61 @@ pub const files = [_]Asset{
 pub const build: []const u8 = blk: {
     @setEvalBranchQuota(200_000_000);
     var sum: u64 = 0xcbf29ce484222325;
-    for (files) |asset| {
-        for (asset.name) |byte| sum = (sum ^ byte) *% 0x100000001b3;
-        for (asset.body) |byte| sum = (sum ^ byte) *% 0x100000001b3;
+    for (generated.entries) |entry| {
+        for (entry.name) |byte| sum = (sum ^ byte) *% 0x100000001b3;
+        for (entry.body) |byte| sum = (sum ^ byte) *% 0x100000001b3;
     }
     break :blk std.fmt.comptimePrint("{x:0>16}", .{sum});
 };
 
 pub fn lookup(name: []const u8) ?Asset {
-    for (files) |asset| {
-        if (std.mem.eql(u8, asset.name, name)) return asset;
+    const wanted = if (std.mem.eql(u8, name, "/") or name.len == 0) "/index.html" else name;
+    for (generated.entries) |entry| {
+        if (std.mem.eql(u8, entry.name, wanted)) return assetOf(entry);
     }
     return null;
+}
+
+pub fn mime(name: []const u8) []const u8 {
+    if (std.mem.endsWith(u8, name, ".html")) return "text/html; charset=utf-8";
+    if (std.mem.endsWith(u8, name, ".css")) return "text/css; charset=utf-8";
+    if (std.mem.endsWith(u8, name, ".js")) return "text/javascript; charset=utf-8";
+    if (std.mem.endsWith(u8, name, ".json")) return "application/json";
+    if (std.mem.endsWith(u8, name, ".svg")) return "image/svg+xml";
+    if (std.mem.endsWith(u8, name, ".png")) return "image/png";
+    if (std.mem.endsWith(u8, name, ".ico")) return "image/x-icon";
+    return "application/octet-stream";
+}
+
+fn assetOf(entry: generated.Entry) Asset {
+    return .{ .name = entry.name, .mime = mime(entry.name), .body = entry.body };
+}
+
+// The page names its scripts and its stylesheet, and a name the binary does not
+// carry is a blank page with a 404 in the console. The walk in build.zig is the
+// list, so this is the place that can tell a missing file from a renamed one.
+test "the page is served every file it names" {
+    const page = (lookup("/") orelse return error.TestMissingIndex).body;
+
+    var rest = page;
+    var named: usize = 0;
+    while (std.mem.indexOf(u8, rest, "=\"")) |at| {
+        const after = rest[at + 2 ..];
+        const end = std.mem.indexOfAny(u8, after, "\" >") orelse break;
+        const value = after[0..end];
+        rest = after[end..];
+
+        if (!std.mem.startsWith(u8, value, "/") or std.mem.indexOf(u8, value, ".") == null) continue;
+        named += 1;
+        try std.testing.expect(lookup(value) != null);
+    }
+
+    try std.testing.expect(named > 0);
+}
+
+test "a file the page does not name is still served" {
+    try std.testing.expect(lookup("/app.js") != null);
+    try std.testing.expect(lookup("/style.css") != null);
+    try std.testing.expectEqualStrings("text/javascript; charset=utf-8", (lookup("/rate.js") orelse return error.TestMissing).mime);
+    try std.testing.expect(lookup("/nope.js") == null);
 }

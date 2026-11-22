@@ -338,6 +338,9 @@ test("a tool does not finish before it started when the result lands late", () =
   });
 
   const tool = transcript.blocks[0];
+  if (typeof tool.doneAt !== "number" || typeof tool.startedAt !== "number") {
+    throw new Error("a finished tool carries both ends of its run");
+  }
   assert.ok(tool.doneAt >= tool.startedAt, "the finish never walks back");
   assert.equal(toolRun(tool), 4046);
 });

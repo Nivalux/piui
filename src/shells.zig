@@ -19,6 +19,10 @@ const Subscriber = hub.Subscriber;
 pub const Shell = struct {
     id: []const u8,
     cwd: []const u8,
+    /// The chat this terminal was opened from. A terminal belongs to a session
+    /// the way a diff view does: it lives in that session's tab strip and goes
+    /// away with it.
+    tab: []const u8,
     process: *pty.Pty,
     /// Set once the shell has stopped; the code it left is kept for the notice.
     closed: bool = false,
@@ -43,6 +47,7 @@ pub const screen_keep_bytes = 32 * 1024;
 pub const ShellInfo = struct {
     id: []const u8,
     cwd: []const u8,
+    tab: []const u8,
     closed: bool,
     exitCode: i32,
     createdMs: i64,
@@ -93,8 +98,8 @@ pub const Pool = struct {
     lock: Io.Mutex = .init,
     counter: u32 = 0,
 
-    /// Opens a shell in `cwd` and starts reading it.
-    pub fn open(self: *Pool, cwd: []const u8, rows: u16, cols: u16) Error!*Shell {
+    /// Opens a shell in `cwd`, filed under the chat `tab`, and starts reading it.
+    pub fn open(self: *Pool, cwd: []const u8, tab: []const u8, rows: u16, cols: u16) Error!*Shell {
         if (cwd.len == 0) return error.NoWorkdir;
 
         const number = blk: {
@@ -116,10 +121,12 @@ pub const Pool = struct {
         };
 
         const kept_cwd = self.allocator.dupe(u8, cwd) catch return error.OutOfMemory;
+        const kept_tab = self.allocator.dupe(u8, tab) catch return error.OutOfMemory;
         const shell = self.allocator.create(Shell) catch return error.OutOfMemory;
         shell.* = .{
             .id = id,
             .cwd = kept_cwd,
+            .tab = kept_tab,
             .process = process,
             .created_epoch = json.epochMs(self.io),
             .last_output_epoch = json.epochMs(self.io),
@@ -205,6 +212,7 @@ pub const Pool = struct {
         return .{
             .id = shell.id,
             .cwd = shell.cwd,
+            .tab = shell.tab,
             .closed = shell.closed,
             .exitCode = shell.exit_code,
             .createdMs = shell.created_epoch,
@@ -258,13 +266,28 @@ pub const Pool = struct {
         stop(shell);
     }
 
+    /// Stops every terminal that was opened from one chat. The chat was the
+    /// only way back to them, so a terminal left behind has no tab to live in.
+    pub fn closeTab(self: *Pool, tab: []const u8) void {
+        if (tab.len == 0) return;
+
+        self.lock.lockUncancelable(self.io);
+        var mine: std.ArrayList(*Shell) = .empty;
+        var iterator = self.shells.iterator();
+        while (iterator.next()) |item| {
+            if (std.mem.eql(u8, item.value_ptr.*.tab, tab)) mine.append(self.allocator, item.value_ptr.*) catch {};
+        }
+        self.lock.unlock(self.io);
+
+        for (mine.items) |shell| self.close(shell, "the chat it belonged to closed");
+    }
+
     /// Turns the listeners off and stops the shell. The reader task is the one
     /// that lets go of the descriptors, because it is the one that may be
     /// waiting on them.
     fn stop(shell: *Shell) void {
         shell.lock.lockUncancelable(shell.process.io);
-        const subscribers = shell.subscribers.clone(shell.process.allocator)
-            catch std.ArrayList(*Subscriber).empty;
+        const subscribers = shell.subscribers.clone(shell.process.allocator) catch std.ArrayList(*Subscriber).empty;
         shell.subscribers.clearRetainingCapacity();
         shell.lock.unlock(shell.process.io);
 

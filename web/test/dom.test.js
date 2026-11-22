@@ -1,7 +1,7 @@
 // @ts-check
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 
 /**
  * The page wires itself up by looking ids up in one map, so two things can go
@@ -12,7 +12,7 @@ import { readFileSync } from "node:fs";
 
 const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
 const app = readFileSync(new URL("../app.js", import.meta.url), "utf8");
-const assets = readFileSync(new URL("../../src/assets.zig", import.meta.url), "utf8");
+const build = readFileSync(new URL("../../build.zig", import.meta.url), "utf8");
 const css = readFileSync(new URL("../style.css", import.meta.url), "utf8");
 
 const block = app.split("const ids = {")[1]?.split("};")[0] ?? "";
@@ -39,12 +39,20 @@ test("every id in the map has a node in index.html", () => {
   assert.deepEqual(missing, [], `index.html has no node for ${missing.join(", ")}`);
 });
 
-test("every module app.js imports is embedded in the server", () => {
-  const embedded = new Set([...assets.matchAll(/name = "([^"]+)"/g)].map((m) => m[1]));
-  const imports = [...app.matchAll(/from "\.\/([\w.]+)"/g)].map((m) => `/${m[1]}`);
-  const missing = imports.filter((path) => !embedded.has(path)).sort();
+// The binary embeds whatever sits in web/, so an import that points at a file
+// that is not there is the only way the page can ship a 404.
+test("every module app.js imports is a file in web/", () => {
+  const imports = [...app.matchAll(/from "\.\/([\w.]+)"/g)].map((m) => m[1]);
   assert.ok(imports.length > 3, "found no imports");
-  assert.deepEqual(missing, [], `assets.zig does not embed ${missing.join(", ")}`);
+  for (const name of imports) {
+    assert.ok(existsSync(new URL(`../${name}`, import.meta.url)), `app.js imports ./${name}, which web/ does not contain`);
+  }
+});
+
+test("the build lists the assets instead of naming them", () => {
+  assert.match(build, /fn webAssets/);
+  assert.match(build, /addCopyFile/);
+  assert.doesNotMatch(build, /@embedFile\("\.\/app\.js"\)/, "build.zig spells out a file the folder already names");
 });
 
 test("hidden really hides, whatever a class wants", () => {

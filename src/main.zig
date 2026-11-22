@@ -97,6 +97,22 @@ pub fn main(minimal: std.process.Init.Minimal) !void {
     var stop: std.atomic.Value(bool) = .init(false);
     group.concurrent(io, reap, .{ center, &stop }) catch {};
 
+    // Two piui processes on one port each answer part of a page's requests, and
+    // the page has no way to notice: it is handed two different builds and
+    // reloads itself forever, throwing away what was being typed. The lock is
+    // held for as long as this process lives, so the second one says so out loud
+    // instead of quietly sharing the port.
+    const lock_path = try std.fs.path.join(a, &.{ token_dir, "piui.lock" });
+    var lock_file = try Io.Dir.cwd().createFile(io, lock_path, .{});
+    const held = lock_file.tryLock(io, .exclusive) catch |err| {
+        std.debug.print("cannot lock {s}: {t}\n", .{ lock_path, err });
+        return err;
+    };
+    if (!held) {
+        std.debug.print("another piui is already running: {s} is locked\n", .{lock_path});
+        return error.AlreadyRunning;
+    }
+
     const address = try std.Io.net.IpAddress.parseIp4(resolved.host, resolved.port);
     var listener = try address.listen(io, .{ .reuse_address = true });
     defer listener.deinit(io);

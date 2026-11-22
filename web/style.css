@@ -148,13 +148,16 @@ pre,
   min-height: 0;
 }
 
-.side-head {
+/* The slot after the last open chat, and the only way to start one. */
+.tab-add {
   display: flex;
   gap: 6px;
+  padding-top: 7px;
+  border-top: 1px dashed var(--line);
 }
 
-.side-head .button {
-  flex: 1;
+.tab-add .button {
+  flex: 0 0 auto;
 }
 
 .filter {
@@ -168,7 +171,7 @@ pre,
 .tab-list {
   overflow: auto;
   min-height: 0;
-  flex: 1;
+  flex: 0 1 auto;
 }
 
 .group-label {
@@ -366,6 +369,7 @@ pre,
 }
 
 .side-foot {
+  margin-top: auto;
   border-top: 1px solid var(--line);
   padding-top: 8px;
 }
@@ -2283,7 +2287,7 @@ pre,
    input method, which nothing else in a terminal can do. */
 .term-input {
   position: absolute;
-  left: -20px;
+  left: 0;
   top: 0;
   width: 1px;
   height: 1px;
@@ -2311,8 +2315,29 @@ pre,
   font: italic 12px var(--sans);
 }
 
-.tab.shell .badge {
-  color: var(--warn);
+/* A chat whose process ended leaves a note where the answers were, instead of
+   an empty pane that looks like a page that failed to load. */
+.chat-ended {
+  margin: 10px 0 14px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--warn);
+  border-radius: 8px;
+  background: var(--bg-soft);
+}
+
+.chat-ended .ended-title {
+  margin: 0;
+  color: var(--fg);
+  font: 600 13px var(--sans);
+}
+
+.chat-ended .ended-why {
+  margin: 6px 0 9px;
+  color: var(--fg-soft);
+  font: 12px/1.5 var(--mono);
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 .t-b {

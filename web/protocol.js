@@ -73,7 +73,7 @@
  *
  * A terminal window the server keeps open: one shell, one folder.
  *
- * @typedef {{id: string, cwd: string, closed: boolean, exitCode: number, createdMs: number, lastOutputMs: number}} ShellInfo
+ * @typedef {{id: string, cwd: string, tab: string, closed: boolean, exitCode: number, createdMs: number, lastOutputMs: number}} ShellInfo
  */
 
 /**
@@ -88,6 +88,8 @@
  * @property {number} createdMs
  * @property {number} lastOutputMs
  * @property {number} [runStartedMs]
+ * @property {string | null} [copiedFrom]
+ * @property {string | null} [goneFolder]
  * @property {number} [finishedMs]
  */
 
@@ -150,6 +152,7 @@
  * @property {Message[]} [toolResults]
  * @property {Message[]} [steering]
  * @property {Message[]} [followUp]
+ * @property {number} [code] exit code of a shell that closed
  */
 
 /** @typedef {{name: string, description?: string, argumentHint?: string, source?: string}} Command */

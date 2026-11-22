@@ -49,12 +49,35 @@ const file = {
 };
 
 /**
- * What this session would hand back to `get_messages`. A reopened chat is
- * empty without it, and the client then has nothing to scroll to.
+ * What this session would hand back to `get_messages`. Pi replays the file it
+ * was started with, so the stand-in does the same: a resumed chat would
+ * otherwise open empty, and the client would have nothing to scroll to.
  *
  * @type {any[]}
  */
-const history = [];
+const history = replay(process.argv);
+
+/**
+ * @param {string[]} argv
+ * @returns {any[]}
+ */
+function replay(argv) {
+  const at = argv.indexOf("--session");
+  const file = at >= 0 ? argv[at + 1] : "";
+  if (!file || !fs.existsSync(file)) return [];
+
+  /** @type {any[]} */
+  const messages = [];
+  for (const line of fs.readFileSync(file, "utf8").split("\n")) {
+    try {
+      const entry = JSON.parse(line);
+      if (entry.type === "message" && entry.message) messages.push(entry.message);
+    } catch {
+      // A line the stand-in cannot read is not a message worth replaying.
+    }
+  }
+  return messages;
+}
 
 /**
  * What Pi holds between turns. `steer` lands after the current turn's tool
@@ -74,6 +97,13 @@ let isStreaming = false;
 const commandLog = process.env.PIUI_FAKE_COMMANDS;
 
 /**
+ * Say out loud what is waiting, the way Pi does on every change to the queue.
+ */
+function announceQueue() {
+  send({ type: "queue_update", steering: [...queue.steering], followUp: [...queue.followUp] });
+}
+
+/**
  * Hand the queued messages to the model: into the history and onto the stream,
  * so a client sees them leave the queue the way it sees a real Pi deliver them.
  *
@@ -82,6 +112,7 @@ const commandLog = process.env.PIUI_FAKE_COMMANDS;
 function deliver(kind) {
   const texts = queue[kind];
   queue[kind] = [];
+  announceQueue();
   for (const text of texts) {
     const message = { role: "user", content: [{ type: "text", text }] };
     history.push(message);
@@ -162,16 +193,19 @@ async function answer(line) {
 
     case "steer":
       queue.steering.push(String(command.message ?? ""));
-      return reply("steer", {});
+      announceQueue();
+      return reply("steer", { disposition: "queued" });
 
     case "follow_up":
       queue.followUp.push(String(command.message ?? ""));
-      return reply("follow_up", {});
+      announceQueue();
+      return reply("follow_up", { disposition: "queued" });
 
     case "clear_queue": {
       const held = { steering: queue.steering, followUp: queue.followUp };
       queue.steering = [];
       queue.followUp = [];
+      announceQueue();
       return reply("clear_queue", held);
     }
 

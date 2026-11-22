@@ -4,10 +4,15 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
+    // The page is baked in, and the folder itself decides what that means: see
+    // `webAssets`.
+    const assets = b.createModule(.{ .root_source_file = webAssets(b), .target = target });
+
     const mod = b.addModule("piui", .{
         .root_source_file = b.path("piui.zig"),
         .target = target,
     });
+    mod.addImport("web_assets", assets);
 
     const exe = b.addExecutable(.{
         .name = "piui",
@@ -15,7 +20,10 @@ pub fn build(b: *std.Build) void {
             .root_source_file = b.path("src/main.zig"),
             .target = target,
             .optimize = optimize,
-            .imports = &.{.{ .name = "piui", .module = mod }},
+            .imports = &.{
+                .{ .name = "piui", .module = mod },
+                .{ .name = "web_assets", .module = assets },
+            },
         }),
     });
     b.installArtifact(exe);
@@ -37,6 +45,7 @@ pub fn build(b: *std.Build) void {
             .imports = &.{
                 .{ .name = "piui", .module = mod },
                 .{ .name = "options", .module = options.createModule() },
+                .{ .name = "web_assets", .module = assets },
             },
         }),
     });
@@ -54,4 +63,72 @@ pub fn build(b: *std.Build) void {
 
     const types = b.addSystemCommand(&.{ "tsc", "--project", "web" });
     test_step.dependOn(&types.step);
+}
+
+/// The client files, as a Zig module of `{name, body}` pairs. The folder is the
+/// list: a file added to web/ is served from the next build, and a rename
+/// cannot leave a stale name behind, because nothing here spells out a name.
+///
+/// `web/test` stays out of the binary; it is the harness, not the page.
+fn webAssets(b: *std.Build) std.Build.LazyPath {
+    const alloc = b.allocator;
+
+    var names: std.ArrayList([]const u8) = .empty;
+    collect(b, "web", "", &names) catch @panic("web/ cannot be read");
+    std.mem.sort([]const u8, names.items, {}, lessByName);
+
+    // The files are copied next to the list they are named in, so each embed is
+    // a plain relative path and the build system sees a change to any of them.
+    const staged = b.addWriteFiles();
+    for (names.items) |name| {
+        const source = std.fs.path.join(alloc, &.{ "web", name }) catch @panic("OOM");
+        _ = staged.addCopyFile(b.path(source), name);
+    }
+
+    var text: std.ArrayList(u8) = .empty;
+    append(&text, "// Generated from the web/ folder by build.zig. Do not edit.\n");
+    append(&text, "pub const Entry = struct { name: []const u8, body: []const u8 };\n");
+    append(&text, "pub const entries = [_]Entry{\n");
+
+    for (names.items) |name| {
+        append(&text, "    .{ .name = \"/");
+        append(&text, name);
+        append(&text, "\", .body = @embedFile(\"./");
+        append(&text, name);
+        append(&text, "\") },\n");
+    }
+    append(&text, "};\n");
+
+    return staged.add("web_assets.zig", text.items);
+}
+
+fn lessByName(_: void, left: []const u8, right: []const u8) bool {
+    return std.mem.order(u8, left, right) == .lt;
+}
+
+fn append(list: *std.ArrayList(u8), text: []const u8) void {
+    list.appendSlice(std.heap.page_allocator, text) catch @panic("OOM");
+}
+
+fn collect(b: *std.Build, path: []const u8, prefix: []const u8, out: *std.ArrayList([]const u8)) !void {
+    const io = b.graph.io;
+    const alloc = b.allocator;
+
+    var dir = try std.Io.Dir.cwd().openDir(io, path, .{ .iterate = true });
+    defer dir.close(io);
+
+    var seen = dir.iterate();
+    while (try seen.next(io)) |entry| {
+        if (std.mem.eql(u8, entry.name, "test")) continue;
+        const name = if (prefix.len == 0)
+            try alloc.dupe(u8, entry.name)
+        else
+            try std.fs.path.join(alloc, &.{ prefix, entry.name });
+
+        switch (entry.kind) {
+            .directory => try collect(b, try std.fs.path.join(alloc, &.{ path, entry.name }), name, out),
+            .file => try out.append(alloc, name),
+            else => {},
+        }
+    }
 }

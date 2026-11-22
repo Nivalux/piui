@@ -43,6 +43,8 @@ let longTab = "";
 
 /** A folder that really exists, so a session can claim it as its project. */
 let wiredProject = "";
+/** A project folder that was deleted after its chat was written. */
+let goneProject = "";
 
 /** A repository with one edit and one new file, for the diff panel. */
 let gitProject = "";
@@ -74,6 +76,18 @@ function readCommands() {
   } catch {
     return [];
   }
+}
+
+/**
+ * Close the terminal through the ✕ of its tab in the view strip.
+ */
+async function closeTerminalView() {
+  await page.click('#view-tabs .view:has(.view-tab:has-text("tty")) .view-close');
+}
+
+/** The id of the chat in view. */
+function chatId() {
+  return page.evaluate(() => localStorage.getItem("piui:tab") ?? "");
 }
 
 /**
@@ -283,6 +297,18 @@ before(async () => {
     last: "2026-11-05T09:00:00.000Z",
   });
 
+  // A chat whose project was deleted afterwards. Written first, then removed,
+  // so the folder really is gone by the time the server reads the file.
+  goneProject = path.join(dir, "gone-project");
+  fs.mkdirSync(goneProject, { recursive: true });
+  writeSession(path.join(sessions, "2026-11-03T00-00-00-000Z_gone.jsonl"), {
+    cwd: goneProject,
+    first: "a chat whose home is gone",
+    header: "2026-11-03T00:00:00.000Z",
+    last: "2026-11-06T09:00:00.000Z",
+  });
+  fs.rmSync(goneProject, { recursive: true, force: true });
+
   gitProject = path.join(dir, "git-project");
   if (!noGit) {
     fs.mkdirSync(gitProject, { recursive: true });
@@ -318,11 +344,19 @@ before(async () => {
 
   commandsFile = path.join(dir, "commands.jsonl");
   base = `http://127.0.0.1:${port}`;
-  server = spawn(binary, ["--config", path.join(dir, "config.json"), "--addr", `127.0.0.1:${port}`], {
-    cwd: root,
-    env: { ...process.env, PIUI_FAKE_COMMANDS: commandsFile },
-    stdio: ["ignore", "pipe", "pipe"],
-  });
+  // `PIUI_WEB=web` serves the client off disk instead of out of the binary, so
+  // page work can be checked without rebuilding Zig for every edit. The suite
+  // runs the embedded bytes, which is what ships.
+  const live = process.env.PIUI_WEB;
+  server = spawn(
+    binary,
+    ["--config", path.join(dir, "config.json"), "--addr", `127.0.0.1:${port}`, ...(live ? ["--web", live] : [])],
+    {
+      cwd: root,
+      env: { ...process.env, PIUI_FAKE_COMMANDS: commandsFile },
+      stdio: ["ignore", "pipe", "pipe"],
+    },
+  );
   server.stdout?.resume();
   server.stderr?.resume();
   await waitForServer();
@@ -357,7 +391,7 @@ test("the session list is ordered by its newest line", { skip: blocked }, async 
   await page.waitForSelector("#session-list .session");
   const titles = await page.locator("#session-list .session .session-title").allInnerTexts();
   assert.equal(titles[0], "explain the pi wiring", "the session with the newest last line comes first");
-  assert.equal(titles.length, 2);
+  assert.equal(titles.length, 3);
 });
 
 test("typing in the sidebar filters it the way fzf does", { skip: blocked }, async () => {
@@ -375,7 +409,7 @@ test("typing in the sidebar filters it the way fzf does", { skip: blocked }, asy
 
   await page.keyboard.press("Escape");
   assert.equal(await page.inputValue("#filter"), "");
-  assert.equal(await page.locator("#session-list .session").count(), 2);
+  assert.equal(await page.locator("#session-list .session").count(), 3);
 });
 
 test("signing in lands in a chat with the composer in view", { skip: blocked }, async () => {
@@ -552,15 +586,21 @@ test("every queued message is asked for at once", { skip: blocked }, async () =>
   let seen = [];
   for (let attempt = 0; attempt < 40; attempt += 1) {
     seen = readCommands();
-    if (seen.some((entry) => entry.type === "set_follow_up_mode")) break;
+    if (seen.some((entry) => entry.type === "set_steering_mode")) break;
     await page.waitForTimeout(150);
   }
 
-  for (const command of ["set_steering_mode", "set_follow_up_mode"]) {
-    const asked = seen.find((entry) => entry.type === command);
-    assert.ok(asked, `${command} was never sent, so pi decides how many messages arrive at a time`);
-    assert.equal(asked.mode, "all", "two thoughts typed in a row are one instruction");
-  }
+  const asked = seen.find((entry) => entry.type === "set_steering_mode");
+  assert.ok(asked, "set_steering_mode was never sent, so pi decides how many messages arrive at a time");
+  assert.equal(asked.mode, "all", "two thoughts typed in a row are one instruction");
+
+  // One mode at a time. Setting both would let a message the reader meant as a
+  // steering word sit in a second queue with different rules on it.
+  assert.equal(
+    seen.some((entry) => entry.type === "set_follow_up_mode"),
+    false,
+    "the queue mode is not asked for while the setting says steer",
+  );
 });
 
 test("thoughts typed into a running chat wait, and come back to the box", { skip: blocked }, async () => {
@@ -579,6 +619,9 @@ test("thoughts typed into a running chat wait, and come back to the box", { skip
 
   await page.waitForSelector('#queue .queued:has-text("also check the tests")');
   await page.waitForSelector('#queue .queued:has-text("and the readme")');
+
+  const tags = await page.locator("#queue .queued .tag").allInnerTexts();
+  assert.deepEqual([...new Set(tags)], ["steering"], "one mode, said the same way on every row");
 
   await page.click("#queue button");
   await page.waitForFunction(
@@ -1625,26 +1668,48 @@ test("the page threw nothing", { skip: blocked }, async () => {
   assert.deepEqual(crashes, []);
 });
 
-// ------------------------------------------------------------ terminal tabs
+// ----------------------------------------------------------- terminal views
 
 /** Click the + tab until a menu item with this label is in the page. */
 async function pickNewItem(/** @type {string} */ label) {
   await page.waitForSelector("#new-item", { state: "attached" });
   await page.click("#new-item");
-  await page.waitForSelector(".menu-item", { timeout: 5000 });
-  await page.click(`.menu-item:has-text("${label}")`);
+  await page.waitForSelector(".row-action", { timeout: 5000 });
+  await page.click(`.row-action:has-text("${label}")`);
 }
 
 test("a terminal opens in the project and answers what you type", { skip: blocked }, async () => {
-  await pickNewItem("Terminal");
+  await openProjectChat(gitProject);
+  const rows = await page.evaluate(() => document.querySelectorAll("#tab-list .tab").length);
 
-  await page.waitForSelector("#tabs .tab.shell", { timeout: 5000 });
+  // Something in the chat to come back to afterwards.
+  await page.fill("#input", "what folder is this");
+  await page.click("#send");
+  await page.waitForSelector("#stream .block", { timeout: 10000 });
+
+  await pickNewItem("Terminal in this project");
+
   await page.waitForFunction(() => document.getElementById("terminal")?.hidden === false, null, { timeout: 5000 });
 
-  // The shell is asked for something only a shell can answer, typed through the
-  // hidden input the way a person types.
-  await page.locator(".term-input").first().click();
-  await page.keyboard.type("printf pi%sui\\n 7\n");
+  // A terminal is a tab of the chat it was opened from, so it turns up in the
+  // strip above it and never as a row of its own in the sidebar.
+  assert.equal(await page.evaluate(() => document.querySelectorAll("#view-tabs .view").length), 2);
+  assert.equal(await page.evaluate(() => document.querySelectorAll("#tab-list .tab").length), rows);
+
+  // The server opened the shell in the folder of the chat in view, and filed it
+  // under that chat. Where the shell goes after that is its own startup files'
+  // doing, and an interactive bash is allowed to move on its own here exactly
+  // as it does in any other terminal on the machine.
+  const mine = await chatId();
+  const opened = await page.evaluate(async () => (await (await fetch("/api/pty")).json()).shells);
+  assert.ok(
+    opened.some((/** @type {{cwd: string, tab: string}} */ shell) => shell.cwd === gitProject && shell.tab === mine),
+    "the terminal belongs to the chat it was opened from",
+  );
+
+  // Something only a shell can answer, typed the way a person types.
+  await page.locator(".term-screen").first().click();
+  await page.keyboard.type("printf pi%sui7\n");
 
   await page.waitForFunction(
     /** @param {string} want */
@@ -1653,47 +1718,86 @@ test("a terminal opens in the project and answers what you type", { skip: blocke
     { timeout: 15000 },
   );
 
-  // It really is the project folder, and the counters left the screen with it.
-  await page.locator(".term-input").first().click();
-  await page.keyboard.type("pwd\n");
-  await page.waitForFunction(
-    /** @param {string} where */
-    (where) => [...document.querySelectorAll(".term-screen")].map((n) => n.textContent).join("\n").includes(where),
-    root,
-    { timeout: 15000 },
-  );
   assert.equal(await page.evaluate(() => document.getElementById("meter-bar")?.hidden), true);
 });
 
-test("the chat comes back whole when the terminal is closed", { skip: blocked }, async () => {
-  const before = await page.evaluate(() => document.getElementById("tabs")?.children.length ?? 0);
-
-  await page.click("#tabs .tab.shell .tab-close");
-  await page.waitForFunction(
-    /** @param {number} count */
-    (count) => (document.getElementById("tabs")?.children.length ?? 0) === count - 1,
-    before,
-    { timeout: 5000 },
-  );
-
+test("the chat comes back whole when the terminal view is closed", { skip: blocked }, async () => {
+  await closeTerminalView();
   await page.waitForFunction(() => document.getElementById("terminal")?.hidden === true, null, { timeout: 5000 });
+
+  assert.equal(await page.evaluate(() => document.querySelectorAll("#view-tabs .view").length), 1);
   assert.equal(await page.evaluate(() => document.getElementById("composer")?.hidden), false);
   assert.equal((await page.evaluate(() => document.getElementById("stream")?.innerText ?? "")).length > 0, true);
 });
 
-test("a terminal that is closed with the X is gone from the server", { skip: blocked }, async () => {
-  await pickNewItem("Terminal");
-  await page.waitForSelector("#tabs .tab.shell", { timeout: 5000 });
-  const id = await page.evaluate(() => document.querySelector(".tab.shell")?.getAttribute("data-id") ?? "");
-  assert.ok(id.startsWith("s"), "the tab is a terminal");
+test("closing a terminal view ends the shell on the server", { skip: blocked }, async () => {
+  await pickNewItem("Terminal in this project");
+  await page.waitForFunction(() => document.getElementById("terminal")?.hidden === false, null, { timeout: 5000 });
 
-  await page.click("#tabs .tab.shell .tab-close");
-  await page.waitForFunction(() => !document.querySelector(".tab.shell"), null, { timeout: 5000 });
-
-  const left = await page.evaluate(async () => (await fetch("/api/pty")).json());
-  assert.equal(
-    left.shells.filter((/** @type {{id: string}} */ s) => s.id === id).length,
-    0,
-    "the window was closed, not only hidden",
+  const mine = await chatId();
+  const id = await page.evaluate(
+    /** @param {string} chat */
+    async (chat) => {
+      /** @type {{shells: {id: string, tab: string}[]}} */
+      const list = await (await fetch("/api/pty")).json();
+      return list.shells.find((shell) => shell.tab === chat)?.id ?? "";
+    },
+    mine,
   );
+  assert.ok(id.startsWith("s"), "the shell is numbered like a shell");
+
+  await closeTerminalView();
+
+  await page.waitForFunction(
+    /** @param {string} want */
+    async (want) => {
+      /** @type {{shells: {id: string}[]}} */
+      const list = await (await fetch("/api/pty")).json();
+      return !list.shells.some((shell) => shell.id === want);
+    },
+    id,
+    { timeout: 5000 },
+  );
+});
+
+test("a chat whose folder is gone is read from a copy, not by putting the folder back", { skip: blocked }, async () => {
+  assert.ok(!fs.existsSync(goneProject), "its folder went away before the server started");
+
+  await page.waitForFunction(
+    () =>
+      [...document.querySelectorAll("#session-list .session-title")].some(
+        (node) => node.textContent === "a chat whose home is gone",
+      ),
+    undefined,
+    { timeout: 30000 },
+  );
+  await page.locator("#session-list .session", { hasText: "a chat whose home is gone" }).first().click();
+
+  await page.waitForSelector(".chat-ended .ended-title", { timeout: 30000 });
+  const note = await page.locator(".chat-ended").innerText();
+  assert.match(note, /folder this chat was written in is gone/);
+  assert.match(note, /gone-project/, "the notice names the folder that is missing");
+
+  await page.waitForFunction(
+    () =>
+      [...document.querySelectorAll("#transcript .block.user")].some((node) =>
+        String(node.textContent).includes("a chat whose home is gone"),
+      ),
+    undefined,
+    { timeout: 30000 },
+  );
+
+  const where = String(await page.locator("#tab-cwd").textContent());
+  assert.ok(!where.includes(goneProject), "nothing runs in the folder that is gone");
+  assert.ok(!fs.existsSync(goneProject), "reading a chat never makes its folder again");
+
+  await page.locator(".chat-ended button", { hasText: "create the folder" }).click();
+  await page.waitForFunction(
+    () => String(document.getElementById("tab-cwd")?.textContent ?? "").includes("gone-project"),
+    undefined,
+    { timeout: 30000 },
+  );
+
+  assert.ok(fs.existsSync(goneProject), "the folder came back because a person asked for it");
+  assert.ok(!(await page.locator(".chat-ended").isVisible()), "and the notice has nothing left to say");
 });

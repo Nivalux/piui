@@ -38,13 +38,13 @@
 
     <div id="shell" class="shell" hidden>
       <aside class="sidebar">
-        <div class="side-head">
-          <button id="new-chat" class="button primary" title="Chat without a project">+ Chat</button>
-          <button id="new-project" class="button" title="Chat inside a directory">+ Project</button>
-          <span id="new-item" class="new-item"></span>
-        </div>
         <input id="filter" class="filter" type="search" placeholder="filter · /" spellcheck="false" />
         <nav id="tab-list" class="tab-list"></nav>
+        <div class="tab-add">
+          <button id="new-chat" class="button primary" title="Chat without a project">+ chat</button>
+          <button id="new-project" class="button" title="Chat inside a directory">+ project</button>
+          <span id="new-item" class="new-item"></span>
+        </div>
         <div class="side-sub">
           <span>Sessions</span>
           <select id="session-project" class="project-filter" hidden></select>

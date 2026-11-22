@@ -21,7 +21,13 @@ import { rank } from "./filter.js";
 /** @typedef {{kind: "chat"}} ChatView */
 /** @typedef {{kind: "file", path: string, preview?: boolean}} FileView */
 /** @typedef {{kind: "diff", path: string, preview?: boolean}} DiffView */
-/** @typedef {ChatView | FileView | DiffView} View */
+/**
+ * A terminal window belonging to this chat. `shell` is the number the server
+ * gave the process; the view is only a way of looking at it, and closing the
+ * view closes the shell, because nothing else would ever come back to it.
+ */
+/** @typedef {{kind: "terminal", shell: string}} TerminalView */
+/** @typedef {ChatView | FileView | DiffView | TerminalView} View */
 
 /** @typedef {{path: string, dir: string, name: string, ranges: [number, number][]}} FileRow */
 /** @typedef {{name: string, path: string, count: number}} DirRow */
@@ -158,7 +164,7 @@ function byName(a, b) {
  * @returns {{views: View[], active: number}}
  */
 export function openView(views, active, view, preview = false) {
-  const at = views.findIndex((other) => other.kind !== "chat" && other.kind === view.kind && other.path === view.path);
+  const at = views.findIndex((other) => viewKey(other) === viewKey(view));
   if (at >= 0) return { views, active: at };
 
   const slot = preview ? views.findIndex(isPreview) : -1;
@@ -181,7 +187,9 @@ export function openView(views, active, view, preview = false) {
  */
 export function pinView(views, at) {
   const view = views[at];
-  if (view === undefined || view.kind === "chat" || view.preview !== true) return { views, active: at };
+  if (view === undefined || view.kind === "chat" || view.kind === "terminal" || view.preview !== true) {
+    return { views, active: at };
+  }
   const next = views.slice();
   next[at] = { ...view, preview: false };
   return { views: next, active: at };
@@ -189,7 +197,29 @@ export function pinView(views, at) {
 
 /** @param {View | undefined} view */
 function isPreview(view) {
-  return view !== undefined && view.kind !== "chat" && view.preview === true;
+  return view !== undefined && view.kind !== "chat" && view.kind !== "terminal" && view.preview === true;
+}
+
+/** What makes two views the same thing looked at twice. @param {View} view */
+function viewKey(view) {
+  if (view.kind === "chat") return "chat";
+  if (view.kind === "terminal") return `terminal:${view.shell}`;
+  return `${view.kind}:${view.path}`;
+}
+
+/**
+ * Open a terminal beside the chat. Never a preview: a shell is opened on
+ * purpose, and the next file glanced at in the panel must not throw it away.
+ *
+ * @param {View[]} views
+ * @param {number} active
+ * @param {string} shell
+ * @returns {{views: View[], active: number}}
+ */
+export function openTerminal(views, active, shell) {
+  const at = views.findIndex((other) => other.kind === "terminal" && other.shell === shell);
+  if (at >= 0) return { views, active: at };
+  return { views: [...views, { kind: "terminal", shell }], active: views.length };
 }
 
 /** @param {View[]} views @param {number} active @param {string} path @param {boolean} [preview] */

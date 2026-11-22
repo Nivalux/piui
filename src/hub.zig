@@ -72,6 +72,10 @@ pub const Tab = struct {
     /// "1h", and a run that finished while nobody was looking is worth marking.
     run_started_epoch: i64 = 0,
     finished_epoch: i64 = 0,
+    /// Set when this chat is a copy: the file it was copied from and the folder
+    /// that is gone. Both are read-only facts for the page.
+    copied_from: ?[]const u8 = null,
+    gone_folder: ?[]const u8 = null,
     process: *child.Child,
     stderr: child.Tail = .{ .limit = 16 * 1024 },
     subscribers: std.ArrayList(*Subscriber) = .empty,
@@ -79,6 +83,10 @@ pub const Tab = struct {
 };
 
 pub const Error = error{ TabNotFound, SpawnFailed, NoWorkdir, OutOfMemory };
+
+/// How much of a chat is copied to read it. A longer chat is cut short there
+/// rather than held twice in memory.
+const copy_limit = 64 << 20;
 
 pub fn infoOf(tab: *Tab, io: Io) TabInfo {
     tab.lock.lockUncancelable(io);
@@ -95,6 +103,8 @@ pub fn infoOf(tab: *Tab, io: Io) TabInfo {
         .lastOutputMs = tab.last_output_epoch,
         .runStartedMs = tab.run_started_epoch,
         .finishedMs = tab.finished_epoch,
+        .copiedFrom = tab.copied_from,
+        .goneFolder = tab.gone_folder,
     };
 }
 
@@ -110,6 +120,8 @@ pub const TabInfo = struct {
     lastOutputMs: i64,
     runStartedMs: i64 = 0,
     finishedMs: i64 = 0,
+    copiedFrom: ?[]const u8 = null,
+    goneFolder: ?[]const u8 = null,
 };
 
 const Aged = struct { ms: i64, saved: Saved };
@@ -241,10 +253,11 @@ pub const Hub = struct {
             return error.SpawnFailed;
         };
 
-        log.info(
-            "pi started {s} pid={?d} cwd={s}{s}",
-            .{ id, process.proc.id, resolved, if (session) |path| path else "" },
-        );
+        if (session) |path| {
+            log.info("pi started {s} pid={?d} cwd={s} session={s}", .{ id, process.proc.id, resolved, path });
+        } else {
+            log.info("pi started {s} pid={?d} cwd={s}", .{ id, process.proc.id, resolved });
+        }
         self.persist();
 
         self.announce(tab);
@@ -530,6 +543,112 @@ pub const Hub = struct {
 
             for (victims.items) |tab| self.close(tab, "idle timeout");
         }
+    }
+
+    /// Say that a chat is being read from a copy of itself, and remember what
+    /// it was copied from and which folder is gone. The page needs both to
+    /// explain itself and to offer putting the folder back.
+    pub fn markCopy(self: *Hub, tab: *Tab, from: []const u8, gone: []const u8) void {
+        const original = self.allocator.dupe(u8, from) catch return;
+        const missing = self.allocator.dupe(u8, gone) catch return;
+
+        self.lock.lockUncancelable(self.io);
+        tab.lock.lockUncancelable(self.io);
+        tab.copied_from = original;
+        tab.gone_folder = missing;
+        tab.lock.unlock(self.io);
+        self.lock.unlock(self.io);
+
+        self.announce(tab);
+    }
+
+    /// A copy of a stored chat, pointed at a folder that exists.
+    pub const Copy = struct { path: []const u8, dir: []const u8 };
+
+    /// Pi turns down a session whose folder is gone, and a folder that was
+    /// deleted is usually deleted for a reason. So the chat is copied into the
+    /// scratch root with only its remembered folder pointed somewhere new, and
+    /// Pi reads that. The original file is left exactly as it was and nothing
+    /// appears where the deleted folder used to be.
+    pub fn copyForRead(self: *Hub, session: []const u8) Error!Copy {
+        const stamp = json.nowMs(self.io);
+        const number = blk: {
+            self.lock.lockUncancelable(self.io);
+            defer self.lock.unlock(self.io);
+            self.counter += 1;
+            break :blk self.counter;
+        };
+
+        const name = std.fmt.allocPrint(self.allocator, "{d}-{d}", .{ stamp, number }) catch return error.OutOfMemory;
+
+        // Two places, because Pi wants two things: a folder that exists to work
+        // in, and a chat file inside its own store, which is the only place it
+        // will read a session from.
+        const dir = std.fs.path.join(self.allocator, &.{ self.scratch_root, name }) catch return error.OutOfMemory;
+        Io.Dir.cwd().createDirPath(self.io, dir) catch return error.NoWorkdir;
+
+        const store = if (self.sessions_root.len > 0) self.sessions_root else self.scratch_root;
+        const copies = std.fs.path.join(self.allocator, &.{ store, "piui-read" }) catch return error.OutOfMemory;
+        Io.Dir.cwd().createDirPath(self.io, copies) catch return error.NoWorkdir;
+
+        const copy_name = std.fmt.allocPrint(self.allocator, "{s}.jsonl", .{name}) catch return error.OutOfMemory;
+        const path = std.fs.path.join(self.allocator, &.{ copies, copy_name }) catch return error.OutOfMemory;
+
+        var body: std.ArrayList(u8) = .empty;
+        errdefer body.deinit(self.allocator);
+
+        var buffer: [16 * 1024]u8 = undefined;
+        var file = Io.Dir.cwd().openFile(self.io, session, .{ .allow_directory = false }) catch return error.NoWorkdir;
+        defer file.close(self.io);
+
+        var reader = file.readerStreaming(self.io, &buffer);
+        var line: std.ArrayList(u8) = .empty;
+        var chunk: [8 * 1024]u8 = undefined;
+        var read: usize = 0;
+
+        while (read < copy_limit) {
+            const got = reader.interface.readSliceShort(&chunk) catch break;
+            if (got == 0) break;
+            read += got;
+
+            for (chunk[0..got]) |byte| {
+                if (byte != '\n') {
+                    line.append(self.allocator, byte) catch return error.OutOfMemory;
+                    continue;
+                }
+                self.copyLine(&body, line.items, dir) catch return error.OutOfMemory;
+                line.clearRetainingCapacity();
+            }
+        }
+        if (line.items.len > 0) self.copyLine(&body, line.items, dir) catch return error.OutOfMemory;
+
+        Io.Dir.cwd().writeFile(self.io, .{ .sub_path = path, .data = body.items }) catch |err| {
+            log.warn("could not copy {s}: {t}", .{ session, err });
+            return error.NoWorkdir;
+        };
+        log.info("chat copied to read, its folder is gone: {s} → {s}", .{ session, path });
+        return .{ .path = path, .dir = dir };
+    }
+
+    /// One line of a session file. Only the header remembers a folder, and only
+    /// that one field is touched; every other line goes over as it stands.
+    fn copyLine(self: *Hub, body: *std.ArrayList(u8), line: []const u8, dir: []const u8) !void {
+        var parsed = std.json.parseFromSlice(std.json.Value, self.allocator, line, .{}) catch
+            return body.appendSlice(self.allocator, line);
+        defer parsed.deinit();
+
+        if (parsed.value != .object or
+            !std.mem.eql(u8, protocol.string(parsed.value.object, "type") orelse "", "session"))
+        {
+            body.appendSlice(self.allocator, line) catch return error.OutOfMemory;
+            try body.append(self.allocator, '\n');
+            return;
+        }
+
+        parsed.value.object.put(self.allocator, "cwd", .{ .string = dir }) catch return error.OutOfMemory;
+        const text = std.json.Stringify.valueAlloc(self.allocator, parsed.value, .{}) catch return error.OutOfMemory;
+        body.appendSlice(self.allocator, text) catch return error.OutOfMemory;
+        try body.append(self.allocator, '\n');
     }
 
     /// True for the throw-away directories a chat with no project runs in.

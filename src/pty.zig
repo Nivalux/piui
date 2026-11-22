@@ -53,7 +53,7 @@ pub const Window = struct { row: u16, col: u16, xpixel: u16 = 0, ypixel: u16 = 0
 
 fn failed(rc: usize) bool {
     // A syscall in this range is a negated errno, nothing else can be.
-    return rc > (@as(usize, 1) << (@typeInfo(usize).@"int".bits - 13));
+    return rc > (@as(usize, 1) << (@typeInfo(usize).int.bits - 13));
 }
 
 fn openPair(rows: u16, cols: u16) !Pair {
@@ -273,7 +273,7 @@ fn childSide(
     // The first thing, so there is no window in which piui could die and leave
     // a shell behind: the kernel owes this process a kill when the thread that
     // made it goes away, by crash or by signal, and nobody is left to clean up.
-    _ = linux.prctl(@intFromEnum(linux.PR.SET_PDEATHSIG), @intFromEnum(linux.SIG.KILL), 0, 0, 0);
+    _ = linux.prctl(@backingInt(linux.PR.SET_PDEATHSIG), @backingInt(linux.SIG.KILL), 0, 0, 0);
     if (linux.getppid() != parent) linux.exit(0);
 
     // Its own session, so that the terminal becomes a controlling one and Ctrl-C

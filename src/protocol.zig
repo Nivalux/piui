@@ -113,6 +113,16 @@ pub fn string(object: std.json.ObjectMap, key: []const u8) ?[]const u8 {
     };
 }
 
+/// A switch a request body turned on. Absent, null, or any other type reads as
+/// off, so a client that sends nothing gets the careful behaviour.
+pub fn flag(object: std.json.ObjectMap, key: []const u8) bool {
+    const value = object.get(key) orelse return false;
+    return switch (value) {
+        .bool => |on| on,
+        else => false,
+    };
+}
+
 pub fn integer(object: std.json.ObjectMap, key: []const u8) ?i64 {
     const value = object.get(key) orelse return null;
     return switch (value) {

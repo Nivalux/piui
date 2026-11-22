@@ -24,15 +24,17 @@ declare module "node:assert/strict" {
   export function ok(value: unknown, message?: string): asserts value;
   export function deepEqual(actual: unknown, expected: unknown, message?: string): void;
   export function match(value: string, pattern: RegExp, message?: string): void;
+  export function doesNotMatch(value: string, pattern: RegExp, message?: string): void;
 }
 
 declare module "node:fs" {
   export function readFileSync(path: string | URL, encoding: "utf8"): string;
-  export function existsSync(path: string): boolean;
+  export function existsSync(path: string | URL): boolean;
   export function chmodSync(path: string, mode: number): void;
   export function writeFileSync(path: string | URL, data: string, encoding?: "utf8" | "base64"): void;
   export function mkdtempSync(prefix: string): string;
   export function mkdirSync(path: string, options?: { recursive?: boolean }): void;
+  export function rmSync(path: string, options?: { recursive?: boolean; force?: boolean }): void;
 }
 
 declare module "node:child_process" {

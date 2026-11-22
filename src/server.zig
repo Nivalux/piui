@@ -96,6 +96,7 @@ pub const Server = struct {
         if (std.mem.eql(u8, path, "/api/tab")) {
             if (request.head.method == .DELETE) {
                 const tab = self.tabFor(request, a) orelse return self.text(request, .not_found, "no such tab");
+                self.options.shells.closeTab(tab.id);
                 self.options.hub.close(tab, "closed by user");
                 return self.sendJson(request, .ok, "{\"ok\":true}");
             }
@@ -273,7 +274,12 @@ pub const Server = struct {
     /// chat taken from that list belongs there: leaving it in a fresh scratch
     /// folder would make a project chat look like it has no project. A project
     /// that has since been deleted still gets its chat, in the scratch root.
-    fn start(self: *Server, cwd: ?[]const u8, session: ?[]const u8) hub.Error!*hub.Tab {
+    /// Open a chat, and say what it took. A chat whose folder is gone comes back
+    /// as a copy rather than a failure, so the page is told which of the two it
+    /// is looking at.
+    const Opened = struct { tab: *hub.Tab, copiedFrom: ?[]const u8 = null, goneFolder: ?[]const u8 = null };
+
+    fn start(self: *Server, cwd: ?[]const u8, session: ?[]const u8, recreate: bool) hub.Error!Opened {
         // A scratch folder is not a project, so it does not outrank the one the
         // session remembers. That is also how a chat put back after a restart
         // finds its project again: what was saved next to the session was
@@ -286,19 +292,47 @@ pub const Server = struct {
             if (session) |path| remembered = self.options.index.cwdOf(path);
         }
 
-        const where = given orelse remembered;
+        var where = given orelse remembered;
+        var read = session;
+        var copied: ?[]const u8 = null;
 
-        return self.options.hub.create(where, session) catch |err| {
-            if (err == error.NoWorkdir and given == null and where != null) {
-                return self.options.hub.create(null, session);
+        // A folder is only ever created because a person asked for it. The one a
+        // chat remembers is usually gone for a reason, so the chat is copied to
+        // the scratch root and read from there until someone asks for the folder
+        // back.
+        if (where) |path| {
+            if (!self.exists(path)) {
+                if (session == null) return error.NoWorkdir;
+                if (recreate) {
+                    Io.Dir.cwd().createDirPath(self.options.io, path) catch return error.NoWorkdir;
+                    log.info("folder made again by hand: {s}", .{path});
+                } else {
+                    const copy = self.options.hub.copyForRead(session.?) catch return error.NoWorkdir;
+                    where = copy.dir;
+                    read = copy.path;
+                    copied = path;
+                }
             }
+        }
+
+        const tab = self.options.hub.create(where, read) catch |err| {
+            // The copy was made in a folder of its own, so a chat that still
+            // cannot start has no excuse left for failing.
+            if (err == error.NoWorkdir and copied != null) return error.NoWorkdir;
             return err;
         };
+        return .{ .tab = tab, .copiedFrom = if (copied != null) session else null, .goneFolder = copied };
+    }
+
+    fn exists(self: *Server, path: []const u8) bool {
+        Io.Dir.access(.cwd(), self.options.io, path, .{}) catch return false;
+        return true;
     }
 
     fn openTab(self: *Server, request: *std.http.Server.Request, a: std.mem.Allocator) !void {
         var cwd: ?[]const u8 = null;
         var session: ?[]const u8 = null;
+        var recreate = false;
 
         if (self.readBody(request, a)) |body| {
             if (body.len > 0) {
@@ -306,8 +340,15 @@ pub const Server = struct {
                     return self.text(request, .bad_request, "not json");
                 defer parsed.deinit();
                 if (parsed.value == .object) {
-                    cwd = protocol.string(parsed.value.object, "cwd");
-                    session = protocol.string(parsed.value.object, "session");
+                    // The parse dies with this block, so whatever is used after
+                    // it is copied out first.
+                    if (protocol.string(parsed.value.object, "cwd")) |given| {
+                        cwd = a.dupe(u8, given) catch return self.text(request, .internal_server_error, "out of memory");
+                    }
+                    if (protocol.string(parsed.value.object, "session")) |name| {
+                        session = a.dupe(u8, name) catch return self.text(request, .internal_server_error, "out of memory");
+                    }
+                    recreate = protocol.flag(parsed.value.object, "recreate");
                 }
             }
         } else |_| {}
@@ -320,12 +361,14 @@ pub const Server = struct {
                     return self.text(request, .bad_request, "unknown session");
         }
 
-        const tab = self.start(cwd, session) catch |err| switch (err) {
-            error.NoWorkdir => return self.text(request, .bad_request, "workdir missing"),
+        const opened = self.start(cwd, session, recreate) catch |err| switch (err) {
+            error.NoWorkdir => return self.text(request, .bad_request, "that folder is gone"),
             else => return self.text(request, .internal_server_error, "cannot start pi"),
         };
 
-        const payload = json.encode(a, hub.infoOf(tab, self.options.io)) catch
+        if (opened.copiedFrom) |from| self.options.hub.markCopy(opened.tab, from, opened.goneFolder orelse "");
+
+        const payload = json.encode(a, hub.infoOf(opened.tab, self.options.io)) catch
             return self.text(request, .internal_server_error, "encode");
         return self.respond(request, .created, "application/json", payload);
     }
@@ -461,6 +504,7 @@ pub const Server = struct {
 
     fn openShell(self: *Server, request: *std.http.Server.Request, a: std.mem.Allocator) !void {
         var cwd: []const u8 = "";
+        var tab: []const u8 = "";
         var rows: u16 = 24;
         var cols: u16 = 80;
 
@@ -470,7 +514,12 @@ pub const Server = struct {
                     return self.text(request, .bad_request, "not json");
                 defer parsed.deinit();
                 if (parsed.value == .object) {
-                    cwd = protocol.string(parsed.value.object, "cwd") orelse "";
+                    // The strings live in the parse, and the parse is over with
+                    // this block, so anything wanted later is copied out first.
+                    cwd = a.dupe(u8, protocol.string(parsed.value.object, "cwd") orelse "") catch
+                        return self.text(request, .internal_server_error, "out of memory");
+                    tab = a.dupe(u8, protocol.string(parsed.value.object, "tab") orelse "") catch
+                        return self.text(request, .internal_server_error, "out of memory");
                     rows = number(parsed.value.object, "rows", 24);
                     cols = number(parsed.value.object, "cols", 80);
                 }
@@ -481,7 +530,7 @@ pub const Server = struct {
         Io.Dir.access(.cwd(), self.options.io, cwd, .{}) catch
             return self.text(request, .not_found, "no such folder");
 
-        const shell = self.options.shells.open(cwd, rows, cols) catch |err| switch (err) {
+        const shell = self.options.shells.open(cwd, tab, rows, cols) catch |err| switch (err) {
             error.NoWorkdir => return self.text(request, .bad_request, "folder missing"),
             else => return self.text(request, .internal_server_error, "cannot start a shell"),
         };
