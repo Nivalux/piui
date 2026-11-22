@@ -47,6 +47,9 @@ let wiredProject = "";
 /** A repository with one edit and one new file, for the diff panel. */
 let gitProject = "";
 
+/** Every command the stand-in for pi was sent, so a test can read what asked. */
+let commandsFile = "";
+
 /**
  * @param {string} cwd
  * @param {string[]} args
@@ -54,6 +57,23 @@ let gitProject = "";
 function git(cwd, args) {
   const ran = spawnSync("git", args, { cwd, env: { ...process.env, GIT_TERMINAL_PROMPT: "0" } });
   if (ran.status !== 0) throw new Error(`git ${args.join(" ")}: ${ran.stderr}`);
+}
+
+/**
+ * Every command the stand-in for pi has been given so far, oldest first.
+ *
+ * @returns {any[]}
+ */
+function readCommands() {
+  try {
+    return fs
+      .readFileSync(commandsFile, "utf8")
+      .split("\n")
+      .filter((line) => line.trim().length > 0)
+      .map((line) => JSON.parse(line));
+  } catch {
+    return [];
+  }
 }
 
 /**
@@ -296,9 +316,11 @@ before(async () => {
     }),
   );
 
+  commandsFile = path.join(dir, "commands.jsonl");
   base = `http://127.0.0.1:${port}`;
   server = spawn(binary, ["--config", path.join(dir, "config.json"), "--addr", `127.0.0.1:${port}`], {
     cwd: root,
+    env: { ...process.env, PIUI_FAKE_COMMANDS: commandsFile },
     stdio: ["ignore", "pipe", "pipe"],
   });
   server.stdout?.resume();
@@ -516,6 +538,68 @@ test("clicking a running tool opens it and keeps it open", { skip: blocked }, as
   await row.locator(".spinner").waitFor({ state: "detached", timeout: 20000 });
   assert.equal(await row.locator("details").evaluate((/** @type {any} */ fold) => fold.open), true, "finishing must not close it");
   assert.match(await summary.innerText(), /6\.\ds/, "a finished row says how long it ran");
+});
+
+test("every queued message is asked for at once", { skip: blocked }, async () => {
+  await openFreshChat();
+
+  await page.fill("#input", "what is in this folder");
+  await page.click("#send");
+
+  // The stand-in for pi only exists once a chat asked for it, and it writes
+  // every command it is given as it goes.
+  /** @type {any[]} */
+  let seen = [];
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    seen = readCommands();
+    if (seen.some((entry) => entry.type === "set_follow_up_mode")) break;
+    await page.waitForTimeout(150);
+  }
+
+  for (const command of ["set_steering_mode", "set_follow_up_mode"]) {
+    const asked = seen.find((entry) => entry.type === command);
+    assert.ok(asked, `${command} was never sent, so pi decides how many messages arrive at a time`);
+    assert.equal(asked.mode, "all", "two thoughts typed in a row are one instruction");
+  }
+});
+
+test("thoughts typed into a running chat wait, and come back to the box", { skip: blocked }, async () => {
+  // A chat of one's own: a tab another test left open, or already closed, is a
+  // prompt that goes nowhere and a run that never starts.
+  await openFreshChat();
+
+  await page.fill("#input", "the long one");
+  await page.click("#send");
+  await page.locator("#transcript .block.tool .spinner").waitFor({ state: "visible", timeout: 20000 });
+
+  await page.fill("#input", "also check the tests");
+  await page.click("#send");
+  await page.fill("#input", "and the readme");
+  await page.click("#send");
+
+  await page.waitForSelector('#queue .queued:has-text("also check the tests")');
+  await page.waitForSelector('#queue .queued:has-text("and the readme")');
+
+  await page.click("#queue button");
+  await page.waitForFunction(
+    () => {
+      const value = /** @type {HTMLTextAreaElement} */ (document.getElementById("input")).value;
+      return value.includes("also check the tests") && value.includes("and the readme");
+    },
+    null,
+    { timeout: 5000 },
+  );
+
+  assert.equal(await page.locator("#queue .queued").count(), 0, "the strip empties once they are back");
+  await page.fill("#input", "");
+
+  // Nothing is queued any more, so the model never sees them and the strip has
+  // nothing left to say about this run.
+  await page.waitForFunction(
+    () => /** @type {HTMLElement} */ (document.getElementById("queue")).hidden,
+    null,
+    { timeout: 5000 },
+  );
 });
 
 test("the thinking line that is still streaming opens under the pointer", { skip: blocked }, async () => {
@@ -1440,20 +1524,18 @@ test("a server that goes away is said out loud, and the page comes back by itsel
   }
 });
 
-test("a narrow window keeps every button and drops the counters below", { skip: blocked }, async () => {
+test("the counters sit in their own band above the editor, even when narrow", { skip: blocked }, async () => {
   await openFreshChat();
   await runTurn("run the scripted tools");
 
   await page.setViewportSize({ width: 420, height: 900 });
   try {
-    // Counters with nothing in them have no line to take.
-    await page.waitForFunction(
-      () => (document.querySelector(".foot-counters")?.getBoundingClientRect().width ?? 0) > 10,
-      null,
-      { timeout: 10000 },
-    );
+    // The band only takes a line when it has something to say.
+    await page.waitForFunction(() => document.getElementById("meter-bar")?.hidden === false, null, {
+      timeout: 10000,
+    });
 
-    /** Where the three groups of the composer foot ended up. */
+    /** Where the counters, the editor and its buttons ended up. */
     const edges = await page.evaluate(() => {
       /** @param {string} sel */
       const box = (sel) => {
@@ -1463,9 +1545,11 @@ test("a narrow window keeps every button and drops the counters below", { skip: 
       };
       return {
         view: window.innerWidth,
+        meterTop: box("#meter-bar").top,
+        meterBottom: box("#meter-bar").bottom,
+        meterLeft: box("#meter-bar").left,
+        composerTop: box("#composer").top,
         modelBottom: box("#model").bottom,
-        countersTop: box(".foot-counters").top,
-        countersLeft: box(".foot-counters").left,
         sendLeft: box("#send").left,
         sendRight: box("#send").right,
         attachLeft: box("#attach").left,
@@ -1475,8 +1559,9 @@ test("a narrow window keeps every button and drops the counters below", { skip: 
 
     assert.ok(edges.attachLeft >= 0 && edges.attachRight <= edges.view, "attach is inside the window");
     assert.ok(edges.sendLeft >= 0 && edges.sendRight <= edges.view, "send is inside the window");
-    assert.ok(edges.countersTop >= edges.modelBottom, "the counters took a line under the pickers");
-    assert.ok(edges.countersLeft >= 0, "and start under the model, not off its left edge");
+    assert.ok(edges.meterBottom <= edges.composerTop + 1, "the counters are above the editor");
+    assert.ok(edges.meterLeft >= 0, "and none of them hangs off the left edge");
+    assert.ok(edges.modelBottom > edges.meterBottom, "the pickers stayed in the editor, below them");
   } finally {
     await page.setViewportSize({ width: 1280, height: 800 });
     await page
@@ -1538,4 +1623,77 @@ test("a window too narrow for both gives the chat the pixels", { skip: blocked }
 
 test("the page threw nothing", { skip: blocked }, async () => {
   assert.deepEqual(crashes, []);
+});
+
+// ------------------------------------------------------------ terminal tabs
+
+/** Click the + tab until a menu item with this label is in the page. */
+async function pickNewItem(/** @type {string} */ label) {
+  await page.waitForSelector("#new-item", { state: "attached" });
+  await page.click("#new-item");
+  await page.waitForSelector(".menu-item", { timeout: 5000 });
+  await page.click(`.menu-item:has-text("${label}")`);
+}
+
+test("a terminal opens in the project and answers what you type", { skip: blocked }, async () => {
+  await pickNewItem("Terminal");
+
+  await page.waitForSelector("#tabs .tab.shell", { timeout: 5000 });
+  await page.waitForFunction(() => document.getElementById("terminal")?.hidden === false, null, { timeout: 5000 });
+
+  // The shell is asked for something only a shell can answer, typed through the
+  // hidden input the way a person types.
+  await page.locator(".term-input").first().click();
+  await page.keyboard.type("printf pi%sui\\n 7\n");
+
+  await page.waitForFunction(
+    /** @param {string} want */
+    (want) => [...document.querySelectorAll(".term-screen")].map((n) => n.textContent).join("\n").includes(want),
+    "piui7",
+    { timeout: 15000 },
+  );
+
+  // It really is the project folder, and the counters left the screen with it.
+  await page.locator(".term-input").first().click();
+  await page.keyboard.type("pwd\n");
+  await page.waitForFunction(
+    /** @param {string} where */
+    (where) => [...document.querySelectorAll(".term-screen")].map((n) => n.textContent).join("\n").includes(where),
+    root,
+    { timeout: 15000 },
+  );
+  assert.equal(await page.evaluate(() => document.getElementById("meter-bar")?.hidden), true);
+});
+
+test("the chat comes back whole when the terminal is closed", { skip: blocked }, async () => {
+  const before = await page.evaluate(() => document.getElementById("tabs")?.children.length ?? 0);
+
+  await page.click("#tabs .tab.shell .tab-close");
+  await page.waitForFunction(
+    /** @param {number} count */
+    (count) => (document.getElementById("tabs")?.children.length ?? 0) === count - 1,
+    before,
+    { timeout: 5000 },
+  );
+
+  await page.waitForFunction(() => document.getElementById("terminal")?.hidden === true, null, { timeout: 5000 });
+  assert.equal(await page.evaluate(() => document.getElementById("composer")?.hidden), false);
+  assert.equal((await page.evaluate(() => document.getElementById("stream")?.innerText ?? "")).length > 0, true);
+});
+
+test("a terminal that is closed with the X is gone from the server", { skip: blocked }, async () => {
+  await pickNewItem("Terminal");
+  await page.waitForSelector("#tabs .tab.shell", { timeout: 5000 });
+  const id = await page.evaluate(() => document.querySelector(".tab.shell")?.getAttribute("data-id") ?? "");
+  assert.ok(id.startsWith("s"), "the tab is a terminal");
+
+  await page.click("#tabs .tab.shell .tab-close");
+  await page.waitForFunction(() => !document.querySelector(".tab.shell"), null, { timeout: 5000 });
+
+  const left = await page.evaluate(async () => (await fetch("/api/pty")).json());
+  assert.equal(
+    left.shells.filter((/** @type {{id: string}} */ s) => s.id === id).length,
+    0,
+    "the window was closed, not only hidden",
+  );
 });

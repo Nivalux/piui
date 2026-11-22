@@ -8,6 +8,7 @@ const json = piui.json;
 const server = piui.server;
 const sessions = piui.sessions;
 const settings = piui.settings;
+const shells = piui.shells;
 const log = piui.log;
 
 pub fn main(minimal: std.process.Init.Minimal) !void {
@@ -70,11 +71,23 @@ pub fn main(minimal: std.process.Init.Minimal) !void {
     var group: Io.Group = .init;
     center.group = &group;
 
+    // Shells hang off the same group as the chats: one kind of work that outlives
+    // the request which started it. They inherit this process's own environment,
+    // so a shell has the PATH piui was started with.
+    const shell_pool = try a.create(shells.Pool);
+    shell_pool.* = .{
+        .allocator = a,
+        .io = io,
+        .group = &group,
+        .environ = minimal.environ,
+    };
+
     const web = try a.create(server.Server);
     web.* = .{ .options = .{
         .allocator = a,
         .io = io,
         .hub = center,
+        .shells = shell_pool,
         .index = index,
         .config = config,
         .token = token,

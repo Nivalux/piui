@@ -13,6 +13,10 @@ build:
 test:
     zig build test
 
+# put this build in front of the service; nothing that fails a test gets copied
+live: test build
+    cp zig-out/bin/piui zig-out/bin/piui-live
+
 # the server, serving web/ embedded
 run ADDR=addr:
     zig build run -- --addr {{ADDR}}

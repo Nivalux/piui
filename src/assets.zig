@@ -23,6 +23,8 @@ pub const files = [_]Asset{
     .{ .name = "/filter.js", .mime = "text/javascript; charset=utf-8", .body = @embedFile("../web/filter.js") },
     .{ .name = "/dirview.js", .mime = "text/javascript; charset=utf-8", .body = @embedFile("../web/dirview.js") },
     .{ .name = "/panel.js", .mime = "text/javascript; charset=utf-8", .body = @embedFile("../web/panel.js") },
+    .{ .name = "/term.js", .mime = "text/javascript; charset=utf-8", .body = @embedFile("../web/term.js") },
+    .{ .name = "/termview.js", .mime = "text/javascript; charset=utf-8", .body = @embedFile("../web/termview.js") },
 };
 
 /// One fingerprint over every baked file. A page that arrived with a different

@@ -13,6 +13,8 @@ const json = @import("json.zig");
 
 pub const head_limit = 1 << 20;
 pub const tail_limit = 8 * 1024;
+/// How far back from the end of a session file to look for a line that finished.
+const tail_scan_limit = 4 << 20;
 pub const max_sessions = 300;
 pub const title_limit = 160;
 
@@ -154,6 +156,13 @@ pub const Index = struct {
     /// The `timestamp` of the last line of a file, which is the activity the
     /// sidebar sorts on. A session longer than the head read has its newest line
     /// far behind it, so the end gets its own look.
+    ///
+    /// One answer can append a line far bigger than a window - a file read whole,
+    /// a tool result with a trace in it - and while that line is still going in,
+    /// nothing in the last window parses. Stepping back a window at a time is
+    /// what keeps the sidebar showing the last thing that finished rather than
+    /// falling back on a header from the start of the chat, which is how a row
+    /// used to lose its time and its place in the list until the next line landed.
     fn tailStamp(self: Index, path: []const u8) ?[]const u8 {
         var file = Io.Dir.cwd().openFile(self.io, path, .{}) catch return null;
         defer file.close(self.io);
@@ -161,13 +170,18 @@ pub const Index = struct {
         const info = file.stat(self.io) catch return null;
         if (info.size <= head_limit) return null;
 
-        const length: usize = @min(tail_limit, @as(usize, @intCast(info.size)));
+        const size: usize = @intCast(info.size);
         var buffer: [tail_limit]u8 = undefined;
-        const read = file.readPositionalAll(self.io, buffer[0..length], info.size - length) catch return null;
-
-        var lines = std.mem.splitScalar(u8, buffer[0..read], '\n');
-        _ = lines.first(); // the window starts in the middle of a line
-        return lastTimestamp(self.allocator, lines.rest());
+        var back: usize = 0;
+        while (back < size and back <= tail_scan_limit) {
+            const length: usize = @min(tail_limit, size - back);
+            const read = file.readPositionalAll(self.io, buffer[0..length], size - back - length) catch return null;
+            // A fragment at either edge belongs to a line that began or ends
+            // outside the window. It will not parse, so it costs nothing.
+            if (lastTimestamp(self.allocator, buffer[0..read])) |stamp| return stamp;
+            back += length;
+        }
+        return null;
     }
 
     fn readHeadRaw(self: Index, path: []const u8) ![]u8 {
@@ -290,6 +304,41 @@ test "lastTimestamp takes the newest line, not the first" {
 
     const found = lastTimestamp(arena.allocator(), raw) orelse return error.TestUnexpectedResult;
     try std.testing.equalStrings("2026-11-20T18:30:00.000Z", found);
+}
+
+test "a session still writing its last line keeps the stamp before it" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const io = std.testing.io;
+
+    var store = std.testing.tmpDir(.{});
+    defer store.cleanup(io);
+
+    var body: std.ArrayList(u8) = .empty;
+    try body.appendSlice(a, "{\"type\":\"session\",\"cwd\":\"/srv/app\",\"timestamp\":\"2026-11-20T09:00:00.000Z\"}\n");
+
+    // One line longer than the head read, so the end of the file is all the
+    // sidebar has to go on.
+    try body.appendSlice(a, "{\"type\":\"message\",\"timestamp\":\"2026-11-20T10:00:00.000Z\",\"text\":\"");
+    while (body.items.len <= head_limit) try body.append(a, 'x');
+    try body.appendSlice(a, "\"}\n");
+
+    try body.appendSlice(a, "{\"type\":\"message\",\"timestamp\":\"2026-11-20T18:30:00.000Z\"}\n");
+
+    // And a line still going in, bigger than one window, so no window at the end
+    // of the file holds a line that ends.
+    try body.appendSlice(a, "{\"type\":\"message\",\"timestamp\":\"2026-11-20T19:00:00.000Z\",\"text\":\"");
+    var trailing: usize = 0;
+    while (trailing < tail_limit * 2) : (trailing += 1) try body.append(a, 'y');
+
+    try store.dir.writeFile(io, .{ .sub_path = "s.jsonl", .data = body.items });
+    var buffer: [4096]u8 = undefined;
+    const directory = store.dir.realPath(io, &buffer) catch return error.SkipZigTest;
+
+    var index = Index.init(a, io, directory);
+    const entry = try index.readHead(std.fs.path.join(a, &.{ directory, "s.jsonl" }));
+    try std.testing.equalStrings("2026-11-20T18:30:00.000Z", entry.updated);
 }
 
 test "sessionId strips the timestamp prefix" {

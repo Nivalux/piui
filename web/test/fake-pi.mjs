@@ -56,6 +56,40 @@ const file = {
  */
 const history = [];
 
+/**
+ * What Pi holds between turns. `steer` lands after the current turn's tool
+ * calls, `follow_up` once the answer is in, and `clear_queue` hands both back to
+ * whoever sent them, which is what the page's "back to input" button is.
+ *
+ * @type {{steering: string[], followUp: string[]}}
+ */
+const queue = { steering: [], followUp: [] };
+let steeringMode = "one-at-a-time";
+let followUpMode = "one-at-a-time";
+
+/** Whether a turn is in flight, which is what `get_state` reports. */
+let isStreaming = false;
+
+/** Every command this stand-in was sent, newest last, where a test can read it. */
+const commandLog = process.env.PIUI_FAKE_COMMANDS;
+
+/**
+ * Hand the queued messages to the model: into the history and onto the stream,
+ * so a client sees them leave the queue the way it sees a real Pi deliver them.
+ *
+ * @param {"steering" | "followUp"} kind
+ */
+function deliver(kind) {
+  const texts = queue[kind];
+  queue[kind] = [];
+  for (const text of texts) {
+    const message = { role: "user", content: [{ type: "text", text }] };
+    history.push(message);
+    send({ type: "message_start", message, timestamp: now() });
+    send({ type: "message_end", message, timestamp: now() });
+  }
+}
+
 readline
   .createInterface({ input: process.stdin })
   .on("line", (line) => void answer(line.trim()));
@@ -63,12 +97,15 @@ readline
 /** @param {string} line */
 async function answer(line) {
   /** @type {{type?: string, message?: string}} */
+  /** @type {{type?: string, mode?: string, message?: string}} */
   let command;
   try {
     command = JSON.parse(line);
   } catch {
     return;
   }
+
+  if (commandLog) fs.appendFileSync(commandLog, `${line}\n`);
 
   switch (command.type) {
     case "get_available_models":
@@ -106,6 +143,37 @@ async function answer(line) {
 
     case "get_messages":
       return reply("get_messages", { messages: history });
+
+    case "get_state":
+      return reply("get_state", {
+        isStreaming,
+        steeringMode,
+        followUpMode,
+        pendingMessageCount: queue.steering.length + queue.followUp.length,
+      });
+
+    case "set_steering_mode":
+      steeringMode = String(command.mode ?? "one-at-a-time");
+      return reply("set_steering_mode", {});
+
+    case "set_follow_up_mode":
+      followUpMode = String(command.mode ?? "one-at-a-time");
+      return reply("set_follow_up_mode", {});
+
+    case "steer":
+      queue.steering.push(String(command.message ?? ""));
+      return reply("steer", {});
+
+    case "follow_up":
+      queue.followUp.push(String(command.message ?? ""));
+      return reply("follow_up", {});
+
+    case "clear_queue": {
+      const held = { steering: queue.steering, followUp: queue.followUp };
+      queue.steering = [];
+      queue.followUp = [];
+      return reply("clear_queue", held);
+    }
 
     case "prompt":
       history.push({ role: "user", content: [{ type: "text", text: command.message ?? "" }] });
@@ -152,6 +220,7 @@ async function turn(prompt) {
 
   send({ type: "agent_start", timestamp: now() });
   send({ type: "turn_start", timestamp: now() });
+  isStreaming = true;
   send({ type: "message_start", message: { role: "assistant" }, timestamp: now() });
 
   if (/dumbstruck/i.test(prompt)) return dumbstruck();
@@ -177,10 +246,12 @@ async function turn(prompt) {
 
   if (long) {
     await shell(slow, "later\n");
+    deliver("steering");
     return answer2();
   }
 
   await shell(bash, "done\n");
+  deliver("steering");
 
   send({
     type: "tool_execution_start",
@@ -297,9 +368,10 @@ async function streamAnswer() {
 
   history.push({ role: "assistant", content: [{ type: "text", text }] });
   send({ type: "message_end", message: { role: "assistant" }, timestamp: now() });
+  deliver("steering");
   send({ type: "turn_end", timestamp: now() });
   send({ type: "agent_end", willRetry: false, timestamp: now() });
-  send({ type: "agent_settled", timestamp: now() });
+  settle();
 }
 
 /**
@@ -323,7 +395,7 @@ async function tallAnswer() {
   send({ type: "message_end", message: { role: "assistant" }, timestamp: now() });
   send({ type: "turn_end", timestamp: now() });
   send({ type: "agent_end", willRetry: false, timestamp: now() });
-  send({ type: "agent_settled", timestamp: now() });
+  settle();
 }
 
 /**
@@ -347,10 +419,11 @@ async function dumbstruck() {
   send({ type: "message_end", message, timestamp: now() });
   send({ type: "turn_end", timestamp: now() });
   send({ type: "agent_end", willRetry: false, timestamp: now() });
-  send({ type: "agent_settled", timestamp: now() });
+  settle();
 }
 
 async function answer2() {
+  deliver("followUp");
   let text = "";
   for (const part of [
     "**Beide Tools** sind durch.\n\n",
@@ -371,5 +444,11 @@ async function answer2() {
   send({ type: "message_end", message: { role: "assistant" }, timestamp: now() });
   send({ type: "turn_end", timestamp: now() });
   send({ type: "agent_end", willRetry: false, timestamp: now() });
+  settle();
+}
+
+/** Close the run out, so `get_state` stops saying a turn is in flight. */
+function settle() {
+  isStreaming = false;
   send({ type: "agent_settled", timestamp: now() });
 }

@@ -47,7 +47,7 @@ declare module "node:child_process" {
   export function spawn(
     command: string,
     args: string[],
-    options: { cwd: string; stdio: ["ignore", "pipe", "pipe"] },
+    options: { cwd: string; env?: Record<string, string | undefined>; stdio: ["ignore", "pipe", "pipe"] },
   ): ChildProcess;
   export function spawnSync(
     command: string,

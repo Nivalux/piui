@@ -17,7 +17,7 @@ pub const Subscriber = struct {
     queue: std.ArrayList([]const u8) = .empty,
     closed: bool = false,
 
-    fn push(self: *Subscriber, io: Io, text: []const u8) void {
+    pub fn push(self: *Subscriber, io: Io, text: []const u8) void {
         self.lock.lockUncancelable(io);
         defer self.lock.unlock(io);
         if (self.closed) return;

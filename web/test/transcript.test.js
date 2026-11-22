@@ -4,7 +4,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
-import { Transcript } from "../transcript.js";
+import { Transcript, toolRun } from "../transcript.js";
 
 /** @param {string} name */
 function fixture(name) {
@@ -307,6 +307,75 @@ test("a tool that reports its own length is believed", () => {
   const tool = transcript.blocks[0];
   assert.equal(tool.done, true);
   assert.equal(tool.durationMs, 9400, "the row shows the run, not the gap between two frames");
+});
+
+test("a tool does not finish before it started when the result lands late", () => {
+  const transcript = new Transcript();
+
+  transcript.event({ type: "tool_execution_start", toolCallId: "c1", toolName: "bash", args: { command: "make" } });
+  transcript.event({
+    type: "tool_execution_end",
+    toolCallId: "c1",
+    toolName: "bash",
+    durationMs: 4046,
+    result: { content: [{ type: "text", text: "built" }] },
+    isError: false,
+  });
+
+  // The stored toolResult stamps itself with the time pi wrote it, which is a
+  // different clock from the moment the browser saw the tool start. Reading it
+  // used to drag the finish back before the start, and the row lost its time
+  // until the page was reloaded.
+  transcript.event({
+    type: "message_start",
+    message: {
+      role: "toolResult",
+      toolCallId: "c1",
+      toolName: "bash",
+      timestamp: new Date(Date.now() - 120000).toISOString(),
+      content: [{ type: "text", text: "built" }],
+    },
+  });
+
+  const tool = transcript.blocks[0];
+  assert.ok(tool.doneAt >= tool.startedAt, "the finish never walks back");
+  assert.equal(toolRun(tool), 4046);
+});
+
+test("a restored tool keeps the length the session stored with the result", () => {
+  const transcript = new Transcript();
+
+  transcript.replay([
+    {
+      role: "assistant",
+      timestamp: "2026-01-01T00:00:00.000Z",
+      content: [{ type: "toolCall", id: "c1", name: "bash", arguments: { command: "make" } }],
+    },
+    {
+      role: "toolResult",
+      toolCallId: "c1",
+      toolName: "bash",
+      durationMs: 31000,
+      timestamp: "2026-01-01T00:00:31.000Z",
+      content: [{ type: "text", text: "built" }],
+    },
+  ]);
+
+  assert.equal(toolRun(transcript.blocks[0]), 31000);
+});
+
+test("a tool seen only at its end has no length to show", () => {
+  const transcript = new Transcript();
+
+  transcript.event({
+    type: "tool_execution_end",
+    toolCallId: "c1",
+    toolName: "bash",
+    result: { content: [{ type: "text", text: "built" }] },
+    isError: false,
+  });
+
+  assert.equal(toolRun(transcript.blocks[0]), 0, "a run nobody watched is not measured by its tail");
 });
 
 test("a turn that stops on a thought leaves that thought as the reply", () => {

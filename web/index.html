@@ -22,6 +22,18 @@
         <button class="button primary" type="submit">Sign in</button>
         <p id="gate-error" class="error-text" hidden></p>
       </form>
+
+      <div id="gate-wait" class="card gate-card" hidden>
+        <h1 class="card-title">piui</h1>
+        <p class="muted">
+          You are signed in — this browser has the token. Only piui itself is not answering, so there is nothing to
+          type. The page loads itself as soon as the server is back.
+        </p>
+        <p class="gate-wait-line">
+          <span class="spinner"></span>
+          <span id="gate-wait-time">asking again</span>
+        </p>
+      </div>
     </div>
 
     <div id="shell" class="shell" hidden>
@@ -29,6 +41,7 @@
         <div class="side-head">
           <button id="new-chat" class="button primary" title="Chat without a project">+ Chat</button>
           <button id="new-project" class="button" title="Chat inside a directory">+ Project</button>
+          <span id="new-item" class="new-item"></span>
         </div>
         <input id="filter" class="filter" type="search" placeholder="filter · /" spellcheck="false" />
         <nav id="tab-list" class="tab-list"></nav>
@@ -93,9 +106,27 @@
               <div id="file-body" class="file-body"></div>
             </section>
 
+            <div id="terminal" class="terminal" hidden></div>
+
             <div id="offline" class="offline" hidden>
               <span class="spinner"></span>
               <span>piui is not reachable. What is on screen stays; the page keeps asking every two seconds.</span>
+            </div>
+
+            <div id="meter-bar" class="chat-meter">
+              <span id="busy" class="busy" hidden>
+                <span class="spinner"></span>
+                <span id="busy-time"></span>
+              </span>
+              <span id="status" class="muted"></span>
+              <span id="rate" class="rate"></span>
+              <span id="context" class="context" hidden>
+                <svg class="ring" viewBox="0 0 20 20" aria-hidden="true">
+                  <circle class="track" cx="10" cy="10" r="7.5"></circle>
+                  <circle id="context-ring" class="used" cx="10" cy="10" r="7.5"></circle>
+                </svg>
+                <span id="context-pct"></span>
+              </span>
             </div>
 
             <div id="composer" class="composer">
@@ -136,22 +167,6 @@
                   <button id="abort" class="button" hidden>Cancel</button>
                   <button id="send" class="button primary">Send</button>
                 </div>
-                <div class="foot-counters">
-                  <span id="busy" class="busy" hidden>
-                    <span class="spinner"></span>
-                    <span id="busy-time"></span>
-                  </span>
-                  <span id="status" class="muted"></span>
-                  <span id="rate" class="rate"></span>
-                  <span id="context" class="context" hidden>
-                    <svg class="ring" viewBox="0 0 20 20" aria-hidden="true">
-                      <circle class="track" cx="10" cy="10" r="7.5"></circle>
-                      <circle id="context-ring" class="used" cx="10" cy="10" r="7.5"></circle>
-                    </svg>
-                    <span id="context-pct"></span>
-                  </span>
-                </div>
-                
               </div>
             </div>
           </div>

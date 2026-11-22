@@ -9,6 +9,7 @@ const files = @import("files.zig");
 const json = @import("json.zig");
 const assets = @import("assets.zig");
 const protocol = @import("protocol.zig");
+const shells = @import("shells.zig");
 const auth = @import("auth.zig");
 const log = @import("log.zig");
 
@@ -16,6 +17,7 @@ pub const Options = struct {
     allocator: std.mem.Allocator,
     io: Io,
     hub: *hub.Hub,
+    shells: *shells.Pool,
     index: sessions.Index,
     config: *settings.Settings,
     token: auth.Token,
@@ -103,6 +105,37 @@ pub const Server = struct {
         if (std.mem.eql(u8, path, "/api/events")) {
             const tab = self.tabFor(request, a) orelse return self.text(request, .not_found, "no such tab");
             return self.events(request, tab);
+        }
+
+        // The terminal windows. The list is what a page opens tabs for when it
+        // loads; everything else addresses one shell by its number.
+        if (std.mem.eql(u8, path, "/api/pty")) {
+            if (request.head.method == .GET) {
+                const payload = json.encode(a, ShellList{ .shells = self.options.shells.alive(a) }) catch
+                    return self.text(request, .internal_server_error, "encode");
+                return self.respond(request, .ok, "application/json", payload);
+            }
+            if (request.head.method == .DELETE) {
+                const shell = self.shellFor(request, a) orelse return self.text(request, .not_found, "no such shell");
+                self.options.shells.close(shell, "closed by user");
+                return self.sendJson(request, .ok, "{\"ok\":true}");
+            }
+            return self.openShell(request, a);
+        }
+
+        if (std.mem.eql(u8, path, "/api/pty/write")) {
+            const shell = self.shellFor(request, a) orelse return self.text(request, .not_found, "no such shell");
+            return self.shellWrite(request, shell, a);
+        }
+
+        if (std.mem.eql(u8, path, "/api/pty/resize")) {
+            const shell = self.shellFor(request, a) orelse return self.text(request, .not_found, "no such shell");
+            return self.shellResize(request, shell, a);
+        }
+
+        if (std.mem.eql(u8, path, "/api/pty/events")) {
+            const shell = self.shellFor(request, a) orelse return self.text(request, .not_found, "no such shell");
+            return self.shellEvents(request, shell);
         }
 
         if (std.mem.eql(u8, path, "/api/cmd")) {
@@ -360,6 +393,27 @@ pub const Server = struct {
         const sub = self.options.hub.subscribe(tab) orelse return self.text(request, .internal_server_error, "oom");
         defer self.options.hub.unsubscribe(tab, sub);
 
+        var scratch: std.heap.ArenaAllocator = .init(a);
+        defer scratch.deinit();
+        const snapshot = json.encode(scratch.allocator(), hub.infoOf(tab, io)) catch return;
+        return self.stream(request, sub, snapshot);
+    }
+
+    /// The loop behind both event streams: say what is already there, then
+    /// whatever arrives, then a ping when nothing does.
+    ///
+    /// Whoever calls this subscribes first and hands over what was already worth
+    /// sending, because from that moment new frames queue up behind the one the
+    /// caller is about to write by hand.
+    fn stream(
+        self: *Server,
+        request: *std.http.Server.Request,
+        sub: *hub.Subscriber,
+        opening: ?[]const u8,
+    ) !void {
+        const a = self.options.allocator;
+        const io = self.options.io;
+
         var body_buffer: [16 * 1024]u8 = undefined;
         var body = request.respondStreaming(&body_buffer, .{
             .respond_options = .{
@@ -371,14 +425,13 @@ pub const Server = struct {
             },
         }) catch return;
 
-        log.info("sse open {s}", .{tab.id});
+        log.info("sse open", .{});
         body.writer.writeAll("retry: 1500\n\n") catch return;
 
-        var scratch: std.heap.ArenaAllocator = .init(a);
-        defer scratch.deinit();
-        const snapshot = json.encode(scratch.allocator(), hub.infoOf(tab, io)) catch return;
-        writeFrame(&body.writer, snapshot) catch return;
-        flushStream(&body) catch return;
+        if (opening) |first| {
+            writeFrame(&body.writer, first) catch return;
+            flushStream(&body) catch return;
+        }
 
         var batch: std.ArrayList([]const u8) = .empty;
         defer {
@@ -404,6 +457,94 @@ pub const Server = struct {
             batch.clearRetainingCapacity();
             flushStream(&body) catch return;
         }
+    }
+
+    fn openShell(self: *Server, request: *std.http.Server.Request, a: std.mem.Allocator) !void {
+        var cwd: []const u8 = "";
+        var rows: u16 = 24;
+        var cols: u16 = 80;
+
+        if (self.readBody(request, a)) |body| {
+            if (body.len > 0) {
+                var parsed = std.json.parseFromSlice(std.json.Value, a, body, .{}) catch
+                    return self.text(request, .bad_request, "not json");
+                defer parsed.deinit();
+                if (parsed.value == .object) {
+                    cwd = protocol.string(parsed.value.object, "cwd") orelse "";
+                    rows = number(parsed.value.object, "rows", 24);
+                    cols = number(parsed.value.object, "cols", 80);
+                }
+            }
+        } else |_| {}
+
+        if (cwd.len == 0) return self.text(request, .bad_request, "folder missing");
+        Io.Dir.access(.cwd(), self.options.io, cwd, .{}) catch
+            return self.text(request, .not_found, "no such folder");
+
+        const shell = self.options.shells.open(cwd, rows, cols) catch |err| switch (err) {
+            error.NoWorkdir => return self.text(request, .bad_request, "folder missing"),
+            else => return self.text(request, .internal_server_error, "cannot start a shell"),
+        };
+
+        const payload = json.encode(a, ShellOne{ .shell = shells.Pool.infoOf(shell, self.options.io) }) catch
+            return self.text(request, .internal_server_error, "encode");
+        return self.respond(request, .ok, "application/json", payload);
+    }
+
+    fn shellFor(self: *Server, request: *std.http.Server.Request, a: std.mem.Allocator) ?*shells.Shell {
+        const id = query(a, request.head.target, "id") orelse return null;
+        return self.options.shells.get(id);
+    }
+
+    /// What is typed in a terminal window, sent on as it came. No JSON in here:
+    /// a keystroke is a byte and the body is already bytes.
+    fn shellWrite(
+        self: *Server,
+        request: *std.http.Server.Request,
+        shell: *shells.Shell,
+        a: std.mem.Allocator,
+    ) !void {
+        const body = self.readBody(request, a) catch return self.text(request, .bad_request, "body");
+        self.options.shells.write(shell, body);
+        return self.sendJson(request, .ok, "{\"ok\":true}");
+    }
+
+    fn shellResize(
+        self: *Server,
+        request: *std.http.Server.Request,
+        shell: *shells.Shell,
+        a: std.mem.Allocator,
+    ) !void {
+        const target = request.head.target;
+        const rows = std.fmt.parseInt(u16, query(a, target, "rows") orelse "", 10) catch 0;
+        const cols = std.fmt.parseInt(u16, query(a, target, "cols") orelse "", 10) catch 0;
+        if (rows == 0 or cols == 0) return self.text(request, .bad_request, "rows and cols");
+
+        self.options.shells.resize(shell, rows, cols);
+        return self.sendJson(request, .ok, "{\"ok\":true}");
+    }
+
+    fn shellEvents(self: *Server, request: *std.http.Server.Request, shell: *shells.Shell) !void {
+        const a = self.options.allocator;
+        defer log.info("shell stream closed after {d} ms", .{log.elapsed()});
+
+        const sub = self.options.shells.subscribe(shell) orelse
+            return self.text(request, .internal_server_error, "oom");
+        defer self.options.shells.unsubscribe(shell, sub);
+
+        // What the shell wrote before this reader showed up. Reading it out is
+        // honest from here on: the queue behind it holds only what came after.
+        var scratch: std.heap.ArenaAllocator = .init(a);
+        defer scratch.deinit();
+
+        const opening: ?[]const u8 = blk: {
+            const kept = shells.backlogOf(shell, scratch.allocator()) orelse break :blk null;
+            const encoded = base64Of(scratch.allocator(), kept) orelse break :blk null;
+            break :blk json.encode(scratch.allocator(), shells.Output{ .id = shell.id, .data = encoded }) catch
+                null;
+        };
+
+        return self.stream(request, sub, opening);
     }
 
     fn tabFor(self: *Server, request: *std.http.Server.Request, a: std.mem.Allocator) ?*hub.Tab {
@@ -583,6 +724,29 @@ fn readFile(allocator: std.mem.Allocator, io: Io, path: []const u8) ![]u8 {
         try out.appendSlice(allocator, chunk[0..read]);
     }
     return out.items;
+}
+
+/// One shell, as the browser asked for it.
+const ShellOne = struct { ok: bool = true, shell: shells.ShellInfo };
+
+/// The shells standing right now.
+const ShellList = struct { ok: bool = true, shells: []const shells.ShellInfo };
+
+/// A size from a browser payload, where anything that is not a plausible number
+/// means the caller did not say and the default stands.
+fn number(object: std.json.ObjectMap, key: []const u8, fallback: u16) u16 {
+    const value = object.get(key) orelse return fallback;
+    return switch (value) {
+        .integer => |n| if (n > 0 and n <= 4096) @intCast(n) else fallback,
+        else => fallback,
+    };
+}
+
+/// Terminal bytes in the only shape an event stream carries without one of them
+/// being read as part of the framing.
+fn base64Of(a: std.mem.Allocator, bytes: []const u8) ?[]const u8 {
+    const out = a.alloc(u8, std.base64.standard.Encoder.calcSize(bytes.len)) catch return null;
+    return std.base64.standard.Encoder.encode(out, bytes);
 }
 
 fn query(a: std.mem.Allocator, target: []const u8, name: []const u8) ?[]const u8 {

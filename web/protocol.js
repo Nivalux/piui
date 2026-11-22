@@ -64,12 +64,19 @@
  * @property {string} [toolName]
  * @property {boolean} [isError]
  * @property {unknown} [details]
- * @property {number} [timestamp]
+ * @property {number | string} [timestamp]
+ * @property {number} [durationMs] what the tool says the call took, on the result
  */
 
 /**
  * What `/api/tabs` and the first SSE frame describe.
  *
+ * A terminal window the server keeps open: one shell, one folder.
+ *
+ * @typedef {{id: string, cwd: string, closed: boolean, exitCode: number, createdMs: number, lastOutputMs: number}} ShellInfo
+ */
+
+/**
  * @typedef {Object} TabInfo
  * @property {string} id
  * @property {string} cwd

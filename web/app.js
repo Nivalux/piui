@@ -32,6 +32,7 @@ import { parseDiff } from "./diff.js";
 import { toolView } from "./toolview.js";
 import { markdownNode, parseMarkdown } from "./markdown.js";
 import { flattenResult as flatten, imageDataUrl, isPiuiEvent, parseFrame } from "./protocol.js";
+import { TermView } from "./termview.js";
 import { highlight, rank } from "./filter.js";
 import { chosen, splitTyping, step, suggestions } from "./dirview.js";
 import {
@@ -53,6 +54,7 @@ import {
  * @typedef {import("./protocol.js").TabInfo} TabInfo
  * @typedef {import("./protocol.js").Ui} Ui
  * @typedef {import("./protocol.js").Command} Command
+ * @typedef {import("./protocol.js").ShellInfo} ShellInfo
  * @typedef {import("./protocol.js").PiModel} PiModel
  * @typedef {import("./transcript.js").Block} Block
  */
@@ -70,6 +72,8 @@ const ids = {
   gateForm: "gate-form",
   gateToken: "gate-token",
   gateError: "gate-error",
+  gateWait: "gate-wait",
+  gateWaitTime: "gate-wait-time",
   shell: "shell",
   tabs: "tab-list",
   sessions: "session-list",
@@ -77,6 +81,8 @@ const ids = {
   filter: "filter",
   newChat: "new-chat",
   newProject: "new-project",
+  newItem: "new-item",
+  terminal: "terminal",
   title: "tab-title",
   cwd: "tab-cwd",
   branch: "branch",
@@ -124,6 +130,7 @@ const ids = {
   send: "send",
   abort: "abort",
   offline: "offline",
+  meterBar: "meter-bar",
   askModal: "ask-modal",
   settingsButton: "settings-button",
   settingsModal: "settings-modal",
@@ -140,9 +147,9 @@ for (const [key, id] of Object.entries(ids)) {
 }
 
 /**
- * @type {{tabs: TabInfo[], active: string | null, sessions: SessionEntry[], commands: Command[], ui: Ui,
+ * @type {{tabs: TabInfo[], active: string | null, shells: ShellInfo[], sessions: SessionEntry[], commands: Command[], ui: Ui,
  *   base: string, model: string, modelKey: string, models: PiModel[], thinking: string, thinkingDefault: string,
- *   thinkingLevels: string[], thinkingChoice: string, connected: boolean, offline: boolean, build: string,
+ *   thinkingLevels: string[], thinkingChoice: string, connected: boolean, queued: number, offline: boolean, build: string,
  *   context: {used: number, size: number}, follow: boolean,
  *   views: View[], activeView: number, panel: "diff" | "files",
  *   files: {path: string}[], filesTruncated: boolean}}
@@ -150,6 +157,8 @@ for (const [key, id] of Object.entries(ids)) {
 const state = {
   tabs: [],
   active: null,
+  /** Terminal windows the server is holding open. @type {import("./protocol.js").ShellInfo[]} */
+  shells: [],
   sessions: [],
   commands: [],
   ui: {},
@@ -162,6 +171,8 @@ const state = {
   thinkingLevels: [],
   thinkingChoice: "default",
   connected: false,
+  /** How many messages Pi is still holding for the chat in view. */
+  queued: 0,
   /** The whole server is gone, not just this chat's stream. */
   offline: false,
   /** Which build of the frontend this page arrived with. */
@@ -197,7 +208,7 @@ const folds = new Map();
 /** @type {HTMLElement | null} the transcript row the pointer is currently down on */
 let pressed = null;
 /** Which sidebar chat groups are unfolded. */
-const groups = /** @type {Record<string, boolean>} */ ({ Working: true, Settled: true });
+const groups = /** @type {Record<string, boolean>} */ ({ Working: true, Terminals: true, Settled: true });
 
 /**
  * When the reader last looked at each chat, kept between visits so a run that
@@ -243,9 +254,20 @@ boot().catch((err) => {
 async function boot() {
   const health = await getJSON("/api/health").catch(() => null);
   state.build = typeof health?.build === "string" ? health.build : "";
+
+  if (health) {
+    if (health.signedIn) localStorage.setItem("piui:signed", "1");
+    else localStorage.removeItem("piui:signed");
+  }
+
   if (!health?.signedIn) {
+    // No answer is not a wrong token. A browser that has signed in before knows
+    // it, and being asked for a token it already has is a bad way to find out
+    // that the server is merely not up yet.
+    if (!health && localStorage.getItem("piui:signed") === "1") return waitForServer();
     const ok = await askForToken();
     if (!ok) return;
+    localStorage.setItem("piui:signed", "1");
   }
 
   el.shell.hidden = false;
@@ -256,9 +278,13 @@ async function boot() {
   setInterval(() => void watchServer(), 2000);
   await loadSettings();
   await loadTabs();
+  await loadShells();
   poll();
 
   const remembered = localStorage.getItem("piui:tab");
+  if (remembered && isShellId(remembered) && state.shells.some((shell) => shell.id === remembered)) {
+    return openTab(remembered);
+  }
   const first = state.tabs.find((tab) => tab.id === remembered) ?? state.tabs[0];
   if (first) return openTab(first.id);
 
@@ -281,6 +307,7 @@ async function boot() {
  * that swallows what you type. Say what is missing and offer the way in.
  */
 function showEmptyState() {
+  showTerminal(null);
   el.transcript.replaceChildren();
 
   const box = element("div", "empty-chat");
@@ -340,6 +367,33 @@ async function jsonOf(response) {
 // ----------------------------------------------------------------- sign-in
 
 /** The gate waits for the token once; the cookie then does the rest. */
+/**
+ * Signed in, server not there. Say which of the two is missing and keep asking;
+ * the first answer reloads the page into the app.
+ *
+ * @returns {Promise<boolean>}
+ */
+function waitForServer() {
+  el.gate.hidden = false;
+  el.gateForm.hidden = true;
+  el.gateWait.hidden = false;
+
+  const began = Date.now();
+  const count = setInterval(() => {
+    el.gateWaitTime.textContent = `still asking · ${duration(Date.now() - began)}`;
+  }, 1000);
+
+  const ask = setInterval(async () => {
+    const health = await getJSON("/api/health").catch(() => null);
+    if (!health) return;
+    clearInterval(ask);
+    clearInterval(count);
+    location.reload();
+  }, 1500);
+
+  return new Promise(() => {});
+}
+
 function askForToken() {
   el.gate.hidden = false;
   el.gateToken.focus();
@@ -367,6 +421,18 @@ function askForToken() {
 function wire() {
   el.newChat.onclick = () => void createTab({});
   el.newProject.onclick = () => void createProject();
+  el.newItem.replaceChildren(
+    menuButton(
+      () => [
+        { label: "Terminal in this project", run: () => void openTerminalHere() },
+        { label: "Terminal in another folder", run: () => void openTerminalPicker() },
+        { label: "Chat", run: () => void createTab({}) },
+        { label: "Project", run: () => void createProject() },
+      ],
+      "+",
+      "button",
+    ),
+  );
   el.dirModal.onclick = /** @param {MouseEvent} event */ (event) => {
     if (event.target === el.dirModal) el.dirModal.hidden = true;
   };
@@ -448,6 +514,9 @@ function wire() {
   // for files and diff. Both are one click, but that click is a hundred a day.
   window.addEventListener("keydown", (event) => {
     if (!(event.ctrlKey || event.metaKey) || event.altKey || event.shiftKey) return;
+    // Ctrl+B is the chat list and Ctrl+J the panel, but Ctrl+B is also "go back"
+    // in a shell. Whoever is typing in a terminal keeps both.
+    if (event.target instanceof Element && event.target.closest(".term")) return;
     if (event.key === "b" || event.key === "B") {
       event.preventDefault();
       void saveUi({ sidebar: state.ui.sidebar === false });
@@ -536,6 +605,225 @@ async function loadTabs() {
   renderSidebar();
 }
 
+// ---------------------------------------------------------------- terminals
+
+/** Terminals are numbered s1, s2…; chats are t1, t2… and never collide. */
+function isShellId(/** @type {string | null} */ id) {
+  return /^s\d+$/.test(String(id));
+}
+
+async function loadShells() {
+  const answer = await getJSON("/api/pty").catch(() => null);
+  state.shells = Array.isArray(answer?.shells) ? answer.shells : [];
+  renderSidebar();
+}
+
+/** @param {string} cwd */
+async function createShell(cwd) {
+  try {
+    const answer = await postJSON("/api/pty", { cwd });
+    const shell = answer?.shell;
+    if (!shell?.id) return toast("the terminal did not open");
+    state.shells = [shell, ...state.shells.filter((item) => item.id !== shell.id)];
+    renderSidebar();
+    await openTab(shell.id);
+  } catch (error) {
+    toast(error instanceof Error ? error.message : "could not open a terminal");
+  }
+}
+
+function openTerminalHere() {
+  const tab = active();
+  const cwd = tab && isProjectCwd(tab.cwd) ? tab.cwd : "";
+  if (cwd) return void createShell(cwd);
+  openTerminalPicker();
+}
+
+/** The same folder picker +Project uses, with the terminal as the answer. */
+function openTerminalPicker() {
+  picker.onChoose = (cwd) => void createShell(cwd);
+  void createProject();
+}
+
+/** @param {import("./protocol.js").ShellInfo} shell */
+function shellRow(shell) {
+  const row = element("button", `tab shell${shell.id === state.active ? " active" : ""}`);
+  row.dataset.shell = shell.id;
+
+  const top = element("div", "tab-top");
+  top.append(span("tty", "badge"), span(isProjectCwd(shell.cwd) ? basename(shell.cwd) : "terminal", "tab-proj"));
+  const status = element("span", "tab-status");
+  status.append(
+    span(shell.lastOutputMs > 0 ? ago(Date.now() - shell.lastOutputMs) : "open", shell.closed ? "idle" : "live"),
+  );
+  top.append(status);
+
+  row.append(top, span(shell.cwd, "tab-title"));
+  row.onclick = () => void openTab(shell.id);
+  row.append(
+    menuButton(() => [
+      { label: "Copy path", run: () => void copyPath(shell.cwd) },
+      { label: "Close terminal", danger: true, run: () => void closeShell(shell.id) },
+    ]),
+  );
+  return row;
+}
+
+/** @param {string} id */
+async function openShellTab(id) {
+  const known = state.shells.find((shell) => shell.id === id);
+  state.active = id;
+  localStorage.setItem("piui:tab", id);
+
+  stream?.close();
+  stream = null;
+  transcript.clear();
+  meter.reset();
+  el.transcript.replaceChildren();
+  el.title.textContent = known ? `terminal · ${basename(known.cwd)}` : "terminal";
+  el.cwd.textContent = known?.cwd ?? "";
+  el.branch.textContent = "";
+  el.views.replaceChildren();
+
+  const view = shellViewFor(id);
+  showTerminal(id);
+  renderSidebar();
+  view.fit();
+  view.paint();
+  view.focus();
+}
+
+/** @param {string} id */
+async function closeShell(id) {
+  await request(`/api/pty?id=${encodeURIComponent(id)}`, { method: "DELETE" }).catch(() => {});
+  const source = shellStreams.get(id);
+  source?.close();
+  shellStreams.delete(id);
+  shellViews.get(id)?.root.remove();
+  shellViews.delete(id);
+  observers.get(id)?.disconnect();
+  observers.delete(id);
+
+  state.shells = state.shells.filter((shell) => shell.id !== id);
+  if (state.active === id) state.active = null;
+  renderSidebar();
+
+  const next = state.tabs[0];
+  if (state.active === null && next) return openTab(next.id);
+  if (state.active === null) {
+    showTerminal(null);
+    showEmptyState();
+  }
+}
+
+/** @param {string} id @returns {import("./termview.js").TermView} */
+function shellViewFor(id) {
+  const seen = shellViews.get(id);
+  if (seen) return seen;
+
+  const view = new TermView({
+    write: (bytes) => void shellWrite(id, bytes),
+    resize: (rows, cols) => void shellResize(id, rows, cols),
+    title: (text) => {
+      if (state.active === id && text) el.title.textContent = `terminal · ${text}`;
+    },
+  });
+  el.terminal.append(view.root);
+  shellViews.set(id, view);
+
+  const watch = new ResizeObserver(() => {
+    if (view.root.hidden) return;
+    view.fit();
+  });
+  watch.observe(view.scroll);
+  observers.set(id, watch);
+
+  attachShell(id);
+  return view;
+}
+
+/**
+ * One stream per terminal, opened the first time it is looked at and kept open
+ * after that: output keeps landing in its screen while the reader is somewhere
+ * else, so coming back shows what ran.
+ *
+ * @param {string} id
+ */
+function attachShell(id) {
+  if (shellStreams.has(id)) return;
+
+  const source = new EventSource(`/api/pty/events?id=${encodeURIComponent(id)}`);
+  const decoder = new TextDecoder("utf-8");
+  shellStreams.set(id, source);
+
+  source.addEventListener("shellOut", (event) => {
+    const view = shellViews.get(id);
+    if (!view) return;
+    const data = String(/** @type {MessageEvent} */ (event).data ?? "");
+    let payload = "";
+    try {
+      payload = JSON.parse(data).data ?? "";
+    } catch {
+      return;
+    }
+    view.write(decoder.decode(base64Bytes(payload), { stream: true }));
+  });
+
+  source.addEventListener("shellExit", (event) => {
+    let code = -1;
+    try {
+      code = Number(JSON.parse(String(/** @type {MessageEvent} */ (event).data ?? "{}")).code);
+    } catch {
+      code = -1;
+    }
+    const view = shellViews.get(id);
+    view?.note(Number.isInteger(code) && code === 0 ? "the shell closed" : `the shell closed · code ${code}`);
+    const known = state.shells.find((shell) => shell.id === id);
+    if (known) known.closed = true;
+    if (state.active === id) el.title.textContent = "terminal · closed";
+  });
+}
+
+/** @param {string} id @param {string} bytes */
+async function shellWrite(id, bytes) {
+  await request(`/api/pty/write?id=${encodeURIComponent(id)}`, { method: "POST", body: bytes }).catch(() => {});
+}
+
+/** @param {string} id @param {number} rows @param {number} cols */
+async function shellResize(id, rows, cols) {
+  await request(`/api/pty/resize?id=${encodeURIComponent(id)}`, {
+    method: "POST",
+    body: JSON.stringify({ rows, cols }),
+  }).catch(() => {});
+}
+
+/** @param {string} text @returns {Uint8Array} */
+function base64Bytes(text) {
+  const raw = atob(text);
+  const bytes = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; i += 1) bytes[i] = raw.charCodeAt(i);
+  return bytes;
+}
+
+/**
+ * Show one terminal window, or none. A terminal takes the whole middle of the
+ * page: a chat and a composer around a shell would only get in the way.
+ *
+ * @param {string | null} id
+ */
+function showTerminal(id) {
+  for (const [key, view] of shellViews) view.root.hidden = key !== id;
+  const live = id !== null;
+  el.terminal.hidden = !live;
+  el.stream.hidden = live;
+  el.composer.hidden = live;
+  el.views.hidden = live;
+  el.meterBar.hidden = live;
+  if (live) return;
+  if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+  renderFooter();
+}
+
 /**
  * Past chats, for resuming. Everything comes back and the sidebar narrows it by
  * folder, so switching tabs never has to refetch.
@@ -552,6 +840,7 @@ function poll() {
   setInterval(() => {
     if (document.hidden) return;
     void loadTabs();
+    void loadShells();
     if (ticks++ % 6 !== 0) return;
     void loadSessions();
   }, 5000);
@@ -568,7 +857,16 @@ const picker = {
   dirs: /** @type {{name: string, path: string}[]} */ ([]),
   rows: /** @type {{name: string, path: string}[]} */ ([]),
   cursor: -1,
+  /** Set when the folder is wanted for something other than a chat. */
+  onChoose: /** @type {((cwd: string) => void) | null} */ (null),
 };
+
+/** Every terminal the page has drawn, by shell number. */
+const shellViews = new Map();
+/** @type {Map<string, EventSource>} */
+const shellStreams = new Map();
+/** @type {Map<string, ResizeObserver>} */
+const observers = new Map();
 
 /** @type {{field: HTMLInputElement, list: HTMLElement} | null} */
 let pickerNodes = null;
@@ -687,6 +985,10 @@ async function pickKey(event, field) {
 async function pickChosen(typed) {
   const cwd = chosen(picker.rows, picker.cursor, typed);
   el.dirModal.hidden = true;
+
+  const wanted = picker.onChoose;
+  picker.onChoose = null;
+  if (wanted) return wanted(cwd);
   await createTab({ cwd });
 }
 
@@ -734,6 +1036,8 @@ async function createTab(body) {
 
 /** @param {string} id */
 async function openTab(id) {
+  if (isShellId(id)) return openShellTab(id);
+
   state.active = id;
   localStorage.setItem("piui:tab", id);
   markSeen(id);
@@ -748,6 +1052,7 @@ async function openTab(id) {
   el.transcript.replaceChildren();
   state.follow = true;
   el.jump.hidden = true;
+  showTerminal(null);
 
   // Files belong to the project of the chat they were opened from, so a new
   // chat starts with a clean strip rather than someone else's files.
@@ -783,6 +1088,12 @@ function connect(id) {
 
   source.onopen = () => {
     state.connected = true;
+    // Everything the reader queued goes in together at the next chance, rather
+    // than one message per completed turn. Two thoughts typed in a row belong to
+    // one instruction, and answering them one at a time means the second waits
+    // for a whole turn of work the reader already knew about.
+    void sendCommand({ type: "set_steering_mode", mode: "all" });
+    void sendCommand({ type: "set_follow_up_mode", mode: "all" });
     ask("get_state");
     ask("get_commands");
     ask("get_messages");
@@ -966,6 +1277,13 @@ function response(frame) {
     return;
   }
 
+  if (frame.command === "clear_queue") {
+    const waiter = queueWaiter;
+    queueWaiter = null;
+    if (waiter) waiter([...strings(data.steering), ...strings(data.followUp)]);
+    return;
+  }
+
   if (frame.command === "get_state") {
     const model = /** @type {PiModel | undefined} */ (data.model);
     state.model = model ? modelLabel(model) : "";
@@ -975,8 +1293,15 @@ function response(frame) {
     state.thinking = level;
     if (!state.thinkingDefault) state.thinkingDefault = level;
 
+    // Pi counts what it is still holding. A page that reloaded mid-run never saw
+    // those messages go in and would otherwise have no way of asking for them
+    // back.
+    const held = Number(data.pendingMessageCount);
+    state.queued = Number.isFinite(held) ? held : 0;
+
     renderPickers();
     renderFooter();
+    renderQueue();
     return;
   }
 
@@ -1017,6 +1342,8 @@ function replaceTab(tab) {
 async function closeTab() {
   if (!state.active) return;
   const id = state.active;
+
+  if (isShellId(id)) return closeShell(id);
 
   // The ✕ sits close enough to the other buttons that it is clicked by
   // accident, and on a chat that is working it is not a close but an end.
@@ -1108,24 +1435,56 @@ function release(tabId, text) {
 
 function renderQueue() {
   const items = pending.get(state.active ?? "") ?? [];
-  el.queue.hidden = items.length === 0;
+  const held = state.queued > items.length ? state.queued : items.length;
+  el.queue.hidden = held === 0;
   el.queue.replaceChildren();
 
   for (const item of items) {
     const row = element("div", "queued");
-    row.append(
-      span(item.mode === "follow_up" ? "follow-up" : "steering", "tag"),
-      span(truncate(firstLine(item.text), 140), "text"),
-    );
+    const tag = item.mode === "follow_up" ? "follow-up" : item.mode === "steer" ? "steering" : "on its way";
+    row.append(span(tag, "tag"), span(truncate(firstLine(item.text), 140), "text"));
     el.queue.append(row);
   }
 
-  if (items.length > 0) {
+  // Pi is holding more than this page watched go in, which is what a reload in
+  // the middle of a run leaves behind. The count is all the page can say.
+  if (held > items.length) {
+    const row = element("div", "queued");
+    row.append(span("queued", "tag"), span(`${held - items.length} from before this page`, "text"));
+    el.queue.append(row);
+  }
+
+  if (held > 0) {
     el.queue.append(button("back to input", () => void pullQueue()));
   }
 }
 
-/** Hand the queued messages back to the editor, the way Esc does in the terminal. */
+/**
+ * @param {unknown} value
+ * @returns {string[]}
+ */
+function strings(value) {
+  return Array.isArray(value) ? value.map((item) => String(item)) : [];
+}
+
+/**
+ * The one `clear_queue` this page is waiting an answer for. Pi's replies come
+ * back on the event stream, not as the answer to the request that asked, so the
+ * text has to be caught where the frames arrive.
+ *
+ * @type {((texts: string[] | null) => void) | null}
+ */
+let queueWaiter = null;
+
+/**
+ * Hand the queued messages back to the editor, the way Esc does in the terminal.
+ *
+ * Pi holds the queue, so it is asked to empty it and what it hands back goes in
+ * the box. An answer that says nothing was queued is taken at its word: those
+ * messages are already in the chat and putting them back would send them twice.
+ * Only when no answer comes at all does the page fall back on the copies it was
+ * holding, which is what a reader would otherwise have lost.
+ */
 async function pullQueue() {
   const tabId = state.active;
   if (!tabId) return;
@@ -1134,15 +1493,22 @@ async function pullQueue() {
   pending.delete(tabId);
   renderQueue();
 
-  const kept = items.map((item) => item.text);
-  try {
-    const reply = await postJSON(`/api/cmd?id=${encodeURIComponent(tabId)}`, { type: "clear_queue" });
-    const data = /** @type {{steering?: string[], followUp?: string[]}} */ (reply?.data ?? {});
-    const cleared = [...(data.steering ?? []), ...(data.followUp ?? [])];
-    if (cleared.length > 0) el.input.value = [el.input.value, ...cleared].filter((line) => line).join("\n\n");
-  } catch {
-    el.input.value = [el.input.value, ...kept].filter((line) => line).join("\n\n");
-  }
+  const cleared = await new Promise((resolve) => {
+    let settled = false;
+    /** @param {string[] | null} texts */
+    const done = (texts) => {
+      if (settled) return;
+      settled = true;
+      queueWaiter = null;
+      resolve(texts);
+    };
+    queueWaiter = done;
+    void sendCommand({ type: "clear_queue" });
+    setTimeout(() => done(null), 2000);
+  });
+
+  const texts = cleared ?? items.map((item) => item.text);
+  if (texts.length > 0) el.input.value = [el.input.value, ...texts].filter((line) => line).join("\n\n");
   grow();
   el.input.focus();
 }
@@ -1158,7 +1524,9 @@ function retirePending(frame) {
   if (!tabId) return;
 
   if (frame.type === "agent_settled") {
-    if (pending.delete(tabId)) renderQueue();
+    state.queued = 0;
+    if (pending.delete(tabId)) return void renderQueue();
+    renderQueue();
     return;
   }
 
@@ -1174,6 +1542,7 @@ function retirePending(frame) {
 
   items.splice(index, 1);
   if (items.length === 0) pending.delete(tabId);
+  state.queued = state.queued > 0 ? state.queued - 1 : 0;
   renderQueue();
 }
 
@@ -1431,13 +1800,18 @@ function renderSidebar() {
   const row = (/** @type {TabInfo} */ tab) => tabRow(tab, marks.get(tab.id) ?? []);
 
   const { working, settled } = splitTabs(visible);
+  const terms = filter === "" ? state.shells : rank(filter, state.shells, (shell) => [shell.cwd, shell.id]).map((hit) => hit.item);
 
   /** @type {HTMLElement[]} */
   const rows = [groupHeader("Working", working.length, groups.Working)];
   if (groups.Working) rows.push(...working.map(row));
+  if (state.shells.length > 0) {
+    rows.push(groupHeader("Terminals", terms.length, groups.Terminals));
+    if (groups.Terminals) rows.push(...terms.map((shell) => shellRow(shell)));
+  }
   rows.push(groupHeader("Settled", settled.length, groups.Settled));
   if (groups.Settled) rows.push(...settled.map(row));
-  if (visible.length === 0) rows.push(element("div", "empty", "no open chats"));
+  if (visible.length === 0 && state.shells.length === 0) rows.push(element("div", "empty", "no open chats"));
 
   repaint(el.tabs, rows, tabsMemo);
   renderSessions(filter);
@@ -1670,8 +2044,16 @@ function tabRow(tab, ranges = []) {
  *
  * @param {() => {label: string, danger?: boolean, run: () => void}[]} build
  */
-function menuButton(build) {
-  const button = element("button", "row-menu", "⋯");
+/**
+ * A button that hangs a list of actions under itself. The list is built when it
+ * is opened, so what is offered can match what is true at that moment.
+ *
+ * @param {() => {label: string, run: () => void, danger?: boolean}[]} build
+ * @param {string} [glyph]
+ * @param {string} [cls]
+ */
+function menuButton(build, glyph = "⋯", cls = "row-menu") {
+  const button = element("button", cls, glyph);
   button.setAttribute("type", "button");
   button.title = "Actions";
   button.onclick = (event) => {
@@ -2294,6 +2676,9 @@ function renderFooter() {
   el.rate.classList.toggle("live", transcript.running);
   el.abort.hidden = !tab?.running;
   el.send.disabled = state.active ? !state.connected : false;
+
+  // A band that would hold nothing but a hairline is better off gone.
+  el.meterBar.hidden = el.busy.hidden && el.context.hidden && parts.length === 0 && el.rate.textContent.length === 0;
 }
 
 /**
@@ -2518,6 +2903,7 @@ function closeView(index) {
  * @param {number} index
  */
 function showView(index) {
+  if (isShellId(state.active ?? "")) return;
   const at = Math.max(0, Math.min(index, state.views.length - 1));
   state.activeView = state.views[at]?.kind === "chat" || !state.views[at] ? 0 : at;
 

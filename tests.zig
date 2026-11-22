@@ -7,4 +7,5 @@ test {
     _ = @import("tests/fuzz_test.zig");
     _ = @import("tests/git_test.zig");
     _ = @import("tests/files_test.zig");
+    _ = @import("tests/pty_test.zig");
 }

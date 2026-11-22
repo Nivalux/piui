@@ -71,6 +71,27 @@ import { blocks, imagesOf } from "./protocol.js";
 
 let nextId = 0;
 
+/**
+ * How long a finished tool ran, in milliseconds, or 0 when nothing honest is known.
+ *
+ * Two sources describe the same finish and they are not the same clock. pi's
+ * `durationMs` is the better number where it is sent, and the start of the run
+ * often is not: a live `tool_execution_start` carries no timestamp, so the start
+ * becomes the moment the browser saw it, while the toolResult message stamps
+ * itself with the time pi wrote it. Whichever is missing the other has to carry
+ * the row, and a difference that came out negative is dropped rather than shown:
+ * that is what made a finished tool's time disappear until the page was
+ * reloaded, because a replay from the session file stamps both ends the same way
+ * and the difference is positive again.
+ *
+ * @param {Block} block
+ */
+export function toolRun(block) {
+  const stamps =
+    block.doneAt !== undefined && block.startedAt !== undefined ? block.doneAt - block.startedAt : 0;
+  return Math.max(block.durationMs ?? 0, stamps > 0 ? stamps : 0);
+}
+
 export class Transcript {
   /** @type {Block[]} */
   #blocks = [];
@@ -208,7 +229,7 @@ export class Transcript {
         block.isError = frame.isError === true;
         block.done = true;
         block.progress = null;
-        block.doneAt = stamp(frame);
+        this.#finish(block, stamp(frame));
         block.startedAt ??= block.doneAt;
         if (typeof frame.durationMs === "number") block.durationMs = frame.durationMs;
         return true;
@@ -450,8 +471,8 @@ export class Transcript {
       if (message.details !== undefined) block.details = message.details;
       block.isError = message.isError === true;
       block.done = true;
-      block.doneAt = stamped(message) ?? block.doneAt ?? Date.now();
-      block.startedAt ??= block.doneAt;
+      if (typeof message.durationMs === "number") block.durationMs = message.durationMs;
+      this.#finish(block, stamped(message) ?? block.doneAt ?? Date.now());
       return;
     }
 
@@ -556,6 +577,20 @@ export class Transcript {
     this.#tools.set(key, block);
     this.#push(block);
     return block;
+  }
+
+  /**
+   * Close a tool row out. The frames and the stored messages describe the same
+   * finish from two clocks, so the row ends at whichever of them is later and
+   * never walks back; a start that landed after the finish is pulled up to it,
+   * which leaves a zero-length run rather than a negative one.
+   *
+   * @param {Block} block
+   * @param {number} when
+   */
+  #finish(block, when) {
+    block.doneAt = Math.max(block.doneAt ?? 0, when);
+    if (block.startedAt !== undefined && block.startedAt > block.doneAt) block.startedAt = block.doneAt;
   }
 
   /** @returns {Block | undefined} */
