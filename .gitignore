@@ -13,3 +13,6 @@ zig-out/
 # Only appears if the browser tests get a local playwright-core rather than the
 # one the nix shell puts on NODE_PATH.
 node_modules/
+
+# The stand-in for pi appends to this when a browser test runs its scripted tool.
+log.txt
