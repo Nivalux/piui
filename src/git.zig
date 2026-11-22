@@ -96,39 +96,61 @@ pub fn validRef(allocator: std.mem.Allocator, io: Io, cwd: []const u8, name: []c
     return true;
 }
 
-pub const Branches = struct {
-    names: []const []const u8 = &.{},
+pub const Name = struct {
+    name: []const u8,
+    ahead: u32 = 0,
+    behind: u32 = 0,
 };
 
-/// What the diff can be compared against: the branches of this repository, then the remotes'
-/// copies of them. A folder that is not a repository has none, which is an answer and not a
-/// failure, because the picker simply offers the two it always has.
+pub const Branches = struct {
+    branch: []const u8 = "",
+    names: []const Name = &.{},
+};
+
+/// The branch this checkout is on, and the ones a diff can be compared against with the distance to
+/// each. Local branches come first, then a remote's copies; a folder that is not a repository has none.
 pub fn branches(allocator: std.mem.Allocator, io: Io, cwd: []const u8) Branches {
     if (!isRepository(allocator, io, cwd)) return .{};
+    const a = allocator;
 
-    const out = git(allocator, io, cwd, &.{
+    const out = git(a, io, cwd, &.{
         "for-each-ref",
         "--format=%(refname)",
         "refs/heads",
         "refs/remotes",
     }, .limited(1 << 20)) catch return .{};
+    const here = git(a, io, cwd, &.{ "branch", "--show-current" }, .limited(4096)) catch "";
 
-    var list: std.ArrayList([]const u8) = .empty;
+    var list: std.ArrayList(Name) = .empty;
     var lines = std.mem.tokenizeScalar(u8, out, '\n');
-    while (lines.next()) |name| {
-        const bare = if (std.mem.startsWith(u8, name, "refs/heads/"))
-            name["refs/heads/".len..]
-        else if (std.mem.startsWith(u8, name, "refs/remotes/"))
-            name["refs/remotes/".len..]
+    while (lines.next()) |ref| {
+        const bare = if (std.mem.startsWith(u8, ref, "refs/heads/"))
+            ref["refs/heads/".len..]
+        else if (std.mem.startsWith(u8, ref, "refs/remotes/"))
+            ref["refs/remotes/".len..]
         else
             continue;
-        // Which branch a remote's name points at is the remote's own choice, and
-        // a comparison against it is a comparison against the branch below it.
+        // A remote's own head names a branch that is already in the list.
         if (std.mem.endsWith(u8, bare, "/HEAD")) continue;
         if (list.items.len >= max_branches) break;
-        list.append(allocator, bare) catch break;
+        const gap = aheadBehind(a, io, cwd, bare);
+        list.append(a, .{ .name = bare, .ahead = gap.ahead, .behind = gap.behind }) catch break;
     }
-    return .{ .names = list.items };
+    return .{ .branch = trim(here), .names = list.items };
+}
+
+const Gap = struct { ahead: u32 = 0, behind: u32 = 0 };
+
+/// How far this checkout stands from a ref: how far ahead of it, and how far behind it.
+fn aheadBehind(allocator: std.mem.Allocator, io: Io, cwd: []const u8, ref: []const u8) Gap {
+    const spec = std.fmt.allocPrint(allocator, "{s}...HEAD", .{ref}) catch return .{};
+    const out = git(allocator, io, cwd, &.{ "rev-list", "--left-right", "--count", spec }, .limited(4096)) catch return .{};
+
+    var parts = std.mem.tokenizeAny(u8, trim(out), " \t");
+    return .{
+        .behind = parseCount(parts.next() orelse "0"),
+        .ahead = parseCount(parts.next() orelse "0"),
+    };
 }
 
 pub const Collector = struct {
@@ -165,12 +187,9 @@ pub fn status(allocator: std.mem.Allocator, io: Io, cwd: []const u8, base: Base)
     } else |_| {}
 
     if (base == .branch) {
-        const spec = std.fmt.allocPrint(a, "{s}...HEAD", .{base.refName().?}) catch return result;
-        if (git(a, io, cwd, &.{ "rev-list", "--left-right", "--count", spec }, .limited(4096))) |counts| {
-            var parts = std.mem.tokenizeAny(u8, trim(counts), " \t");
-            if (parts.next()) |behind| result.behind = parseCount(behind);
-            if (parts.next()) |ahead| result.ahead = parseCount(ahead);
-        } else |_| {}
+        const gap = aheadBehind(a, io, cwd, base.refName().?);
+        result.ahead = gap.ahead;
+        result.behind = gap.behind;
     }
 
     const argv: []const []const u8 = switch (base) {

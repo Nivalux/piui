@@ -436,7 +436,10 @@ function wire() {
   el.lightbox.onclick = () => hideShot();
   // Anywhere else on the page dismisses an open row menu; the ⋯ and its items
   // stop their own clicks, so this only ever sees a click outside of it.
-  document.addEventListener("click", () => closeMenuButton());
+  document.addEventListener("click", () => {
+    closeMenuButton();
+    if (baseMenu) closeBaseMenu();
+  });
   // Escape closes the picker wherever the page happens to have put the caret.
   document.addEventListener("keydown", (event) => {
     if (event.key !== "Escape" || el.dirModal.hidden) return;
@@ -466,7 +469,14 @@ function wire() {
     expanded.clear();
     renderSidebar();
   };
-  el.base.onclick = () => cycleBase();
+  el.base.onclick = /** @param {MouseEvent} event */ (event) => {
+    event.stopPropagation();
+    openBaseMenu(el.base);
+  };
+  el.branch.onclick = /** @param {MouseEvent} event */ (event) => {
+    event.stopPropagation();
+    openBaseMenu(el.branch);
+  };
   el.sidebarToggle.onclick = () => void saveUi({ sidebar: state.ui.sidebar === false });
   el.panelToggle.onclick = () => void togglePanel();
   el.panelClose.onclick = () => void setPanel(false);
@@ -2879,9 +2889,7 @@ async function refreshGit() {
   if (id !== state.active) return;
 
   el.base.textContent = status?.label ?? state.base;
-  el.branch.textContent = status?.branch
-    ? `${status.branch}${status.ahead ? ` ↑${status.ahead}` : ""}${status.behind ? ` ↓${status.behind}` : ""}`
-    : "";
+  renderBranch();
 
   if (state.ui.files !== true || state.panel !== "diff") return;
 
@@ -2944,9 +2952,166 @@ function statusClass(code) {
   return "mod";
 }
 
-function cycleBase() {
-  const order = ["working", "staged", "branch:main", "branch:master"];
-  state.base = order[(order.indexOf(state.base) + 1) % order.length] ?? "working";
+/** The branch of the chat in view, and the distance to the base the panel compares against. */
+function renderBranch() {
+  const name = status?.branch ?? "";
+  el.branch.hidden = name.length === 0;
+  el.branch.replaceChildren(
+    span(name),
+    ...(status?.ahead ? [span(`+${status.ahead}`, "branch-up")] : []),
+    ...(status?.behind ? [span(`−${status.behind}`, "branch-down")] : []),
+  );
+  el.branch.title = `${status?.label ?? state.base} · click to compare with something else`;
+}
+
+/** The two things a diff can be compared against in any folder, git or not. */
+/** @type {[string, string][]} */
+const fixedBases = [
+  ["working", "Working changes"],
+  ["staged", "Staged changes"],
+];
+
+/**
+ * @typedef {{root: HTMLElement, anchor: HTMLElement, field: HTMLInputElement,
+ *   list: HTMLElement, branches: string[], picked: number}} BaseMenu
+ */
+
+/** @type {BaseMenu | null} */
+let baseMenu = null;
+
+/**
+ * Hung under whichever of the two places names a base, with branches fetched as it opens.
+ *
+ * @param {HTMLElement} anchor
+ */
+function openBaseMenu(anchor) {
+  if (!state.active) return;
+  if (baseMenu?.anchor === anchor) return closeBaseMenu();
+  closeBaseMenu();
+  closeMenu();
+
+  const field = /** @type {HTMLInputElement} */ (element("input", "base-filter"));
+  field.type = "search";
+  field.placeholder = "filter";
+  field.spellcheck = false;
+
+  const list = element("div", "base-list");
+  const root = element("div", "base-menu");
+  root.append(field, list);
+  document.body.append(root);
+
+  /** @type {BaseMenu} */
+  const menu = { root, anchor, field, list, branches: [], picked: 0 };
+  baseMenu = menu;
+
+  const draw = () => {
+    const needle = field.value.trim().toLowerCase();
+    const hit = (/** @type {string} */ text) => needle.length === 0 || text.toLowerCase().includes(needle);
+    const changes = fixedBases
+      .filter(([, label]) => hit(label))
+      .map(([value, label]) => baseOption(value, label, state.base === value));
+    const branches = menu.branches
+      .filter(hit)
+      .map((name) => baseOption(`branch:${name}`, name, state.base === `branch:${name}`));
+
+    list.replaceChildren(
+      baseGroup("Changes"),
+      ...changes,
+      ...(branches.length > 0 ? [baseGroup("Branches"), ...branches] : []),
+    );
+    menu.picked = 0;
+    markBaseRow([...list.querySelectorAll(".base-option")], 0);
+  };
+
+  field.oninput = draw;
+  field.onkeydown = /** @param {KeyboardEvent} event */ (event) => stepBaseMenu(event);
+
+  const at = anchor.getBoundingClientRect();
+  root.style.left = `${Math.max(8, Math.min(at.right - root.offsetWidth, window.innerWidth - root.offsetWidth - 8))}px`;
+  root.style.top = `${at.bottom + 6}px`;
+
+  draw();
+  field.focus();
+
+  void getJSON(`/api/git/branches?id=${encodeURIComponent(state.active)}`)
+    .then((found) => {
+      menu.branches = /** @type {{names: {name: string}[]}} */ (found).names.map((row) => row.name);
+      if (baseMenu === menu) draw();
+    })
+    .catch(() => {});
+}
+
+function closeBaseMenu() {
+  if (!baseMenu) return;
+  baseMenu.root.remove();
+  baseMenu = null;
+}
+
+/** @param {KeyboardEvent} event */
+function stepBaseMenu(event) {
+  const menu = baseMenu;
+  if (!menu) return;
+  const rows = [...menu.list.querySelectorAll(".base-option")];
+
+  if (event.key === "Enter") {
+    event.preventDefault();
+    const value = /** @type {HTMLElement | null} */ (rows[menu.picked] ?? rows[0] ?? null)?.dataset.base ?? "";
+    if (value) pickBase(value);
+    return;
+  }
+
+  if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+    event.preventDefault();
+    if (rows.length === 0) return;
+    const step = event.key === "ArrowDown" ? 1 : -1;
+    menu.picked = (menu.picked + step + rows.length) % rows.length;
+    markBaseRow(rows, menu.picked);
+    rows[menu.picked]?.scrollIntoView({ block: "nearest" });
+    return;
+  }
+
+  if (event.key === "Escape") {
+    event.preventDefault();
+    closeBaseMenu();
+  }
+}
+
+/**
+ * @param {Element[]} rows
+ * @param {number} picked
+ */
+function markBaseRow(rows, picked) {
+  rows.forEach((row, at) => {
+    row.classList.toggle("active", at === picked);
+  });
+}
+
+/** @param {string} label */
+function baseGroup(label) {
+  return element("div", "base-group", label);
+}
+
+/**
+ * @param {string} value
+ * @param {string} label
+ * @param {boolean} current
+ * @returns {HTMLElement}
+ */
+function baseOption(value, label, current) {
+  const row = element("div", current ? "base-option on" : "base-option", label);
+  row.dataset.base = value;
+  row.onclick = /** @param {MouseEvent} event */ (event) => {
+    event.stopPropagation();
+    pickBase(value);
+  };
+  return row;
+}
+
+/** @param {string} value */
+function pickBase(value) {
+  closeBaseMenu();
+  if (state.base === value) return;
+  state.base = value;
   void refreshGit();
   refreshOpenDiff();
 }

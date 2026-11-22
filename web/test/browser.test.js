@@ -305,7 +305,7 @@ before(async () => {
     fs.writeFileSync(path.join(gitProject, "log.txt"), "start\n");
     fs.mkdirSync(path.join(gitProject, "sub"), { recursive: true });
     fs.writeFileSync(path.join(gitProject, "sub", "nested.md"), "deeper\n");
-    git(gitProject, ["init", "-q"]);
+    git(gitProject, ["init", "-q", "-b", "main"]);
     git(gitProject, ["config", "user.email", "piui@example.invalid"]);
     git(gitProject, ["config", "user.name", "piui"]);
     git(gitProject, ["add", "."]);
@@ -1060,6 +1060,85 @@ test("the diff tab reads like git status and opens a patch beside the chat", { s
   await page.locator("#view-tabs .view-tab").first().click();
   await page.waitForFunction(() => !document.getElementById("composer")?.hasAttribute("hidden"));
   assert.ok(await page.locator("#transcript").isVisible(), "and the chat is where it was");
+});
+
+test("the branch sits in the title bar and both places pick the same base", { skip: blocked || noGit }, async () => {
+  const open = await page.locator("#tab-list .tab").count();
+  await openProjectChat(gitProject);
+
+  fs.writeFileSync(path.join(gitProject, "notes.md"), "one\ntwo\n");
+  git(gitProject, ["branch", "release"]);
+  git(gitProject, ["add", "notes.md"]);
+  git(gitProject, ["commit", "-qm", "two lines"]);
+  git(gitProject, ["update-ref", "refs/remotes/origin/main", "HEAD"]);
+  git(gitProject, ["update-ref", "refs/remotes/origin/HEAD", "HEAD"]);
+
+  const chat = await chatId();
+  await page.reload();
+  await switchTo(chat);
+
+  const chip = () =>
+    page.locator("#branch").evaluate((/** @type {HTMLElement} */ node) => ({
+      parts: [...node.childNodes].map((part) => part.textContent ?? ""),
+      base: node.title.split(" · ")[0] ?? "",
+    }));
+
+  await page.waitForFunction(() => document.getElementById("branch")?.hidden === false, undefined, {
+    timeout: 30000,
+  });
+  assert.deepEqual(await chip(), { parts: ["main"], base: "Working changes" }, "the branch of the chat, on the right");
+
+  await page.click("#branch");
+  await page.waitForSelector('.base-option[data-base^="branch:"]');
+  const bases = await page
+    .locator(".base-option")
+    .evaluateAll((/** @type {HTMLElement[]} */ rows) => rows.map((row) => row.dataset.base ?? ""));
+
+  assert.deepEqual(bases.slice(0, 2), ["working", "staged"], "the two that are always there come first");
+  assert.ok(bases.includes("branch:release"), "then the branches of this repository");
+  assert.ok(bases.includes("branch:origin/main"), "then a remote's copy of one");
+  assert.ok(!bases.includes("branch:origin/HEAD"), "a remote's own head is not something to compare against");
+
+  await page.fill(".base-filter", "release");
+  assert.deepEqual(
+    await page
+      .locator(".base-option")
+      .evaluateAll((/** @type {HTMLElement[]} */ rows) => rows.map((row) => row.textContent)),
+    ["release"],
+    "a filter leaves what it matches",
+  );
+
+  await page.keyboard.press("Escape");
+  assert.equal(await page.locator(".base-menu").count(), 0, "escape closes the list");
+
+  await page.click("#base");
+  await page.waitForSelector(".base-menu");
+  await page.locator('.base-option[data-base="branch:release"]').click();
+  await page.waitForFunction(() => document.getElementById("base")?.textContent === "release", undefined, {
+    timeout: 30000,
+  });
+  assert.deepEqual(
+    await chip(),
+    { parts: ["main", "+1"], base: "release" },
+    "the same answer, counted against that base",
+  );
+
+  await page.click("#branch");
+  await page.waitForSelector(".base-menu");
+  await page.locator('.base-option[data-base="working"]').click();
+  await page.waitForFunction(
+    () => (document.getElementById("branch")?.title ?? "").startsWith("Working changes"),
+    undefined,
+    { timeout: 30000 },
+  );
+  assert.deepEqual(await chip(), { parts: ["main"], base: "Working changes" }, "and back again");
+
+  await page.click("#kill");
+  await page.waitForFunction(
+    (/** @type {number} */ want) => document.querySelectorAll("#tab-list .tab").length === want,
+    open,
+    { timeout: 30000 },
+  );
 });
 
 test("the panel never covers the chat", { skip: blocked || noGit }, async () => {

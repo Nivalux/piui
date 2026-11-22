@@ -74,10 +74,46 @@ test "the branches to compare against are the local ones, then the remotes' copi
     try run(io, a, repo, &.{ "update-ref", "refs/remotes/origin/main", "HEAD" });
     try run(io, a, repo, &.{ "update-ref", "refs/remotes/origin/HEAD", "HEAD" });
 
-    const want = [_][]const u8{ "master", "release", "origin/main" };
-    const names = git.branches(a, io, repo).names;
-    try testing.expectEqual(want.len, names.len);
-    for (want, names) |one, got| try testing.expectEqualStrings(one, got);
+    const want = [_]git.Name{
+        .{ .name = "master", .ahead = 0, .behind = 0 },
+        .{ .name = "release", .ahead = 0, .behind = 0 },
+        .{ .name = "origin/main", .ahead = 0, .behind = 0 },
+    };
+
+    const found = git.branches(a, io, repo);
+    try testing.expectEqualStrings("master", found.branch);
+    try testing.expectEqual(want.len, found.names.len);
+    for (want, found.names) |one, got| {
+        try testing.expectEqualStrings(one.name, got.name);
+        try testing.expectEqual(one.ahead, got.ahead);
+        try testing.expectEqual(one.behind, got.behind);
+    }
+}
+
+test "a branch ahead of this checkout says by how much" {
+    var threaded: Io.Threaded = .init(testing.allocator, .{ .environ = testing.environ });
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    const repo = try buildRepo(io, a);
+    try run(io, a, repo, &.{ "branch", "release" });
+    try run(io, a, repo, &.{ "-c", "user.email=piui@test", "-c", "user.name=piui", "commit", "-qam", "edited" });
+
+    const found = git.branches(a, io, repo);
+    try testing.expectEqual(@as(usize, 2), found.names.len);
+    try testing.expectEqualStrings("master", found.names[0].name);
+    try testing.expectEqual(@as(u32, 0), found.names[0].ahead);
+    try testing.expectEqualStrings("release", found.names[1].name);
+    try testing.expectEqual(@as(u32, 1), found.names[1].ahead);
+    try testing.expectEqual(@as(u32, 0), found.names[1].behind);
+
+    const status = git.status(a, io, repo, .{ .branch = "release" });
+    try testing.expectEqual(@as(u32, 1), status.ahead);
+    try testing.expectEqual(@as(u32, 0), status.behind);
 }
 
 fn findFile(files: []const git.FileStatus, path: []const u8) ?git.FileStatus {
