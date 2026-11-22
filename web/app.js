@@ -2254,10 +2254,12 @@ function groupHeader(label, count, open) {
 function renderTranscript() {
   const seen = new Set();
   const before = earlierWrites();
+  // How a block is painted depends on it, so it belongs in what a block is remembered by.
+  const thoughts = state.ui.show_thinking === true ? "" : "no-thoughts ";
 
   for (const block of transcript.blocks) {
     seen.add(block.id);
-    const signature = JSON.stringify(block);
+    const signature = thoughts + JSON.stringify(block);
     if (signatures.get(block.id) === signature) continue;
 
     let node = painted.get(block.id);
@@ -2403,14 +2405,13 @@ function paint(node, block, before = null) {
     }
 
     case "thinking": {
-      if (state.ui.show_thinking !== true) return;
       const text = block.text ?? "";
       const { fold, summary, body } = foldFor(block, false, block.lastWord === true);
       if (block.lastWord) node.classList.add("last-word");
-      summary.append(
-        span(block.done ? "thoughts" : "thinking", "name"),
-        span(truncate(block.done ? firstLine(text) : lastLine(text), 90), "title"),
-      );
+      summary.append(span(block.done ? "thoughts" : "thinking", "name"));
+      if (state.ui.show_thinking === true) {
+        summary.append(span(truncate(block.done ? firstLine(text) : lastLine(text), 90), "title"));
+      }
       if (block.lastWord) summary.append(span("nothing after", "state"));
       body.append(markdownBox(text, "thinking-body"));
       node.append(fold);

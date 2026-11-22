@@ -419,6 +419,45 @@ test("a turn draws thoughts, tools and an answer", { skip: blocked }, async () =
   assert.equal(kinds.filter((/** @type {string} */ kind) => kind === "tool").length, 4);
 });
 
+test("with thinking turned off the line stays and only the words beside it go", { skip: blocked }, async () => {
+  await page.click("#new-chat");
+  await page.fill("#input", "run the scripted tools");
+  await page.click("#send");
+  await page.waitForSelector("#transcript .block.text >> text=Beide Tools");
+
+  const thoughts = () =>
+    page.locator("#transcript .block.thinking").evaluateAll((/** @type {Element[]} */ rows) =>
+      rows.map((row) => ({
+        line: (row.querySelector("summary")?.textContent ?? "").trim(),
+        preview: row.querySelector("summary .title")?.textContent ?? "",
+        words: (row.querySelector(".thinking-body")?.textContent ?? "").trim(),
+      })),
+    );
+
+  const toggle = async () => {
+    await page.click("#settings-button");
+    await page.click(".setting.thinking input");
+    await page.click("#settings-modal .button.primary");
+  };
+
+  await toggle();
+
+  const kept = await thoughts();
+  assert.ok(kept.length > 0, "the turn did think");
+  for (const row of kept) {
+    assert.equal(row.line, "thoughts", "the line stays where the thought was");
+    assert.equal(row.preview, "", "and nothing is read beside it");
+    assert.ok(row.words.length > 0, "opened, the thought is still there");
+  }
+
+  await toggle();
+
+  assert.ok(
+    (await thoughts()).every((/** @type {{preview: string}} */ row) => row.preview.length > 0),
+    "turned back on, the words come back beside the line",
+  );
+});
+
 test("a picture a tool read is shown, and opens full size", { skip: blocked }, async () => {
   await page.click("#new-chat");
   await page.fill("#input", "run the scripted tools");
