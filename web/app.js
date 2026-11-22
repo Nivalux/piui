@@ -441,6 +441,9 @@ function wire() {
   el.askModal.onclick = /** @param {MouseEvent} event */ (event) => {
     if (event.target === el.askModal) answerAsk(false);
   };
+  el.settingsModal.onclick = /** @param {MouseEvent} event */ (event) => {
+    if (event.target === el.settingsModal) el.settingsModal.hidden = true;
+  };
   el.lightbox.onclick = () => hideShot();
   // Anywhere else on the page dismisses an open row menu; the ⋯ and its items
   // stop their own clicks, so this only ever sees a click outside of it.
@@ -507,7 +510,12 @@ function wire() {
       answerAsk(false);
       return;
     }
-    if (!el.askModal.hidden || !el.dirModal.hidden || !el.settingsModal.hidden || !el.palette.hidden) return;
+    if (!el.settingsModal.hidden) {
+      event.preventDefault();
+      el.settingsModal.hidden = true;
+      return;
+    }
+    if (!el.askModal.hidden || !el.dirModal.hidden || !el.palette.hidden) return;
     const field = /** @type {HTMLElement | null} */ (/** @type {EventTarget | null} */ (event.target));
     if (field && (field.tagName === "INPUT" || field.tagName === "TEXTAREA" || field.isContentEditable)) return;
     escapePanel();
@@ -2297,8 +2305,7 @@ function paintEnded() {
   if (tab?.copiedFrom) {
     said = {
       title: "The folder this chat was written in is gone",
-      why: `${tab.goneFolder ?? "its folder"}
-It is read from a copy: the chat below is as it was saved, the file it came from was not touched, and nothing was put back where the folder used to be.`,
+      why: tab.goneFolder ?? "its folder",
       label: "create the folder and continue",
       run: () => void createTab({ cwd: tab.goneFolder ?? "", session: tab.copiedFrom ?? "", recreate: true }),
     };
@@ -3024,12 +3031,8 @@ function terminalInView() {
 }
 
 function renderViews() {
-  if (!state.active) {
-    el.views.hidden = true;
-    return;
-  }
-  el.views.hidden = false;
-  el.views.replaceChildren(...state.views.map((view, index) => viewChip(view, index)));
+  const chips = state.active ? state.views.map((view, index) => viewChip(view, index)) : [];
+  el.views.replaceChildren(...chips, el.newItem);
 }
 
 /** @param {View} view @param {number} index */
@@ -3401,26 +3404,46 @@ async function showSettings() {
   el.settingsModal.replaceChildren(
     card(
       "Settings",
-      toggle("theme", "Light theme", state.ui.theme === "light", (on) => void saveUi({ theme: on ? "light" : "dark" })),
-      choice(
-        "sendmode",
-        "While Pi is working",
-        [
-          ["steer", "Steer into the run"],
-          ["queue", "Queue after the run"],
-        ],
-        state.ui.send_mode === "queue" ? "queue" : "steer",
-        (value) => {
-          void saveUi({ send_mode: /** @type {"steer" | "queue"} */ (value) });
-          // The chat in view has to be told which of its two queues to empty at
-          // once, and the other one is left alone.
-          void sendCommand({ type: steeringCommand(), mode: "all" });
-          renderQueue();
-        },
+      section(
+        "Chat",
+        choice(
+          "sendmode",
+          "While Pi is working",
+          [
+            ["steer", "Steer into the run"],
+            ["queue", "Queue after the run"],
+          ],
+          state.ui.send_mode === "queue" ? "queue" : "steer",
+          (value) => {
+            void saveUi({ send_mode: /** @type {"steer" | "queue"} */ (value) });
+            // The chat in view has to be told which of its two queues to empty at
+            // once, and the other one is left alone.
+            void sendCommand({ type: steeringCommand(), mode: "all" });
+            renderQueue();
+          },
+        ),
+        toggle(
+          "thinking",
+          "Show thinking",
+          state.ui.show_thinking === true,
+          (on) => void saveUi({ show_thinking: on }),
+        ),
+        toggle("enter", "Enter sends", state.ui.send_on_enter !== false, (on) => void saveUi({ send_on_enter: on })),
       ),
-      toggle("thinking", "Show thinking", state.ui.show_thinking === true, (on) => void saveUi({ show_thinking: on })),
-      toggle("enter", "Enter sends", state.ui.send_on_enter !== false, (on) => void saveUi({ send_on_enter: on })),
-      toggle("sidebar", "Sidebar", state.ui.sidebar !== false, (on) => void saveUi({ sidebar: on })),
+      section(
+        "Window",
+        choice(
+          "theme",
+          "Theme",
+          [
+            ["dark", "Dark"],
+            ["light", "Light"],
+          ],
+          state.ui.theme === "light" ? "light" : "dark",
+          (value) => void saveUi({ theme: value }),
+        ),
+        toggle("sidebar", "Sidebar", state.ui.sidebar !== false, (on) => void saveUi({ sidebar: on })),
+      ),
       actionsRow(),
     ),
   );
@@ -3440,15 +3463,16 @@ async function saveUi(patch) {
 
 function actionsRow() {
   const row = element("div", "row-buttons");
-  row.append(
-    button("Close", () => {
-      el.settingsModal.hidden = true;
-    }),
-    button("Sign out", async () => {
-      await postJSON("/api/logout", {}).catch(() => {});
-      location.reload();
-    }),
-  );
+  const out = button("Sign out", async () => {
+    await postJSON("/api/logout", {}).catch(() => {});
+    location.reload();
+  });
+  out.className = "button ghost";
+  const close = button("Close", () => {
+    el.settingsModal.hidden = true;
+  });
+  close.className = "button primary";
+  row.append(out, element("span", "spacer"), close);
   return row;
 }
 
@@ -3543,7 +3567,7 @@ function toggle(name, label, checked, onchange) {
   box.type = "checkbox";
   box.checked = checked;
   box.onchange = () => onchange(box.checked);
-  row.append(box, span(label));
+  row.append(span(label), box);
   return row;
 }
 
@@ -3580,6 +3604,19 @@ function choice(name, label, options, value, onchange) {
 function card(title, ...children) {
   const box = element("div", "card");
   box.append(span(title, "card-title"), ...children);
+  return box;
+}
+
+/**
+ * @param {string} title
+ * @param {HTMLElement[]} rows
+ * @returns {HTMLElement}
+ */
+function section(title, ...rows) {
+  const lines = element("div", "setting-rows");
+  lines.append(...rows);
+  const box = element("div", "setting-group");
+  box.append(span(title, "setting-head"), lines);
   return box;
 }
 

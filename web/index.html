@@ -38,13 +38,12 @@
 
     <div id="shell" class="shell" hidden>
       <aside class="sidebar">
-        <input id="filter" class="filter" type="search" placeholder="filter · /" spellcheck="false" />
-        <nav id="tab-list" class="tab-list"></nav>
-        <div class="tab-add">
+        <div class="side-head">
           <button id="new-chat" class="button primary" title="Chat without a project">+ chat</button>
           <button id="new-project" class="button" title="Chat inside a directory">+ project</button>
-          <span id="new-item" class="new-item"></span>
         </div>
+        <input id="filter" class="filter" type="search" placeholder="filter · /" spellcheck="false" />
+        <nav id="tab-list" class="tab-list"></nav>
         <div class="side-sub">
           <span>Sessions</span>
           <select id="session-project" class="project-filter" hidden></select>
@@ -58,9 +57,13 @@
       <main class="main">
         <header class="top">
           <button id="sidebar-toggle" class="chip" title="Hide the sidebar (Ctrl+B)">☰</button>
-          <div id="tab-title" class="title"></div>
-          <div id="tab-cwd" class="cwd muted"></div>
-          <div id="branch" class="muted"></div>
+          <div class="top-line">
+            <div id="tab-title" class="title"></div>
+            <div class="top-sub">
+              <div id="tab-cwd" class="cwd muted"></div>
+              <div id="branch" class="muted"></div>
+            </div>
+          </div>
           <div class="spacer"></div>
           <button id="panel-toggle" class="chip icon" title="Files and diff (Ctrl+J)">
             <svg
@@ -79,7 +82,9 @@
           <button id="kill" class="chip icon" title="Close this tab">✕</button>
         </header>
 
-        <nav id="view-tabs" class="views"></nav>
+        <nav id="view-tabs" class="views">
+          <span id="new-item" class="new-item"></span>
+        </nav>
 
         <div class="work" id="work">
           <div class="center">
