@@ -2,6 +2,9 @@
 
 A lightweight web UI on top of the existing `pi` (no changes to pi, no sessions of our own).
 
+Conventions an agent is expected to keep are in `AGENTS.md`, next to this file: how to verify a change, and how to
+handle comments when editing.
+
 ## Non-goals (v1)
 Multi-user/auth, editing files, terminal emulation, forks/trees/compaction UI, mobile.
 
