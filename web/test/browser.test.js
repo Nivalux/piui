@@ -414,9 +414,7 @@ test("a turn draws thoughts, tools and an answer", { skip: blocked }, async () =
   await page.waitForSelector("#transcript .block.text >> text=Beide Tools");
   const kinds = await page
     .locator("#transcript .block")
-    .evaluateAll((/** @type {Element[]} */ rows) =>
-      rows.map((row) => String(row.className.replace("block ", ""))),
-    );
+    .evaluateAll((/** @type {Element[]} */ rows) => rows.map((row) => String(row.className.replace("block ", ""))));
   assert.ok(kinds.includes("thinking"), "thoughts should be a row of their own");
   assert.equal(kinds.filter((/** @type {string} */ kind) => kind === "tool").length, 4);
 });
@@ -438,7 +436,9 @@ test("a picture a tool read is shown, and opens full size", { skip: blocked }, a
   const text = await shot.evaluate((/** @type {HTMLElement} */ row) => row.textContent ?? "");
   assert.ok(!text.includes("[image image/png]"), "no placeholder stands in for the picture");
 
-  const src = await shot.locator(".thumb").evaluate((/** @type {HTMLImageElement} */ node) => node.getAttribute("src") ?? "");
+  const src = await shot
+    .locator(".thumb")
+    .evaluate((/** @type {HTMLImageElement} */ node) => node.getAttribute("src") ?? "");
   assert.ok(src.startsWith("data:image/png;base64,"), "the bytes pi sent are the bytes drawn");
 
   await shot.locator(".shot").click();
@@ -459,7 +459,9 @@ test("a picture a tool read is shown, and opens full size", { skip: blocked }, a
 });
 
 test("a thought is closed until the reader opens it", { skip: blocked }, async () => {
-  const open = await page.locator("#transcript .block.thinking details").evaluate((/** @type {any} */ fold) => fold.open);
+  const open = await page
+    .locator("#transcript .block.thinking details")
+    .evaluate((/** @type {any} */ fold) => fold.open);
   assert.equal(open, false);
 });
 
@@ -472,11 +474,19 @@ test("clicking a running tool opens it and keeps it open", { skip: blocked }, as
   const summary = row.locator("details > summary");
 
   await summary.click();
-  assert.equal(await row.locator("details").evaluate((/** @type {any} */ fold) => fold.open), true, "the click should open it");
+  assert.equal(
+    await row.locator("details").evaluate((/** @type {any} */ fold) => fold.open),
+    true,
+    "the click should open it",
+  );
 
   // The row is rewritten as output arrives; that must not close it again.
   await page.waitForTimeout(1300);
-  assert.equal(await row.locator("details").evaluate((/** @type {any} */ fold) => fold.open), true, "streaming must not close it");
+  assert.equal(
+    await row.locator("details").evaluate((/** @type {any} */ fold) => fold.open),
+    true,
+    "streaming must not close it",
+  );
 
   const open = await row.locator(".fold-body").innerText();
   assert.match(open, /tick /, "an open call shows the output as it arrives");
@@ -506,10 +516,7 @@ test("clicking a running tool opens it and keeps it open", { skip: blocked }, as
     });
   /** A character of drift is what this guards; a fraction of one is rounding. */
   const keepsWidth = (/** @type {[number, number]} */ pair, /** @type {string} */ where) =>
-    assert.ok(
-      Math.abs(pair[0] - pair[1]) < 1,
-      `${where} keeps its width whatever it shows: ${JSON.stringify(pair)}`,
-    );
+    assert.ok(Math.abs(pair[0] - pair[1]) < 1, `${where} keeps its width whatever it shows: ${JSON.stringify(pair)}`);
 
   const clockAtStart = await clock();
   keepsWidth(clockAtStart.tick, "the tool clock");
@@ -558,7 +565,11 @@ test("clicking a running tool opens it and keeps it open", { skip: blocked }, as
   );
 
   await row.locator(".spinner").waitFor({ state: "detached", timeout: 20000 });
-  assert.equal(await row.locator("details").evaluate((/** @type {any} */ fold) => fold.open), true, "finishing must not close it");
+  assert.equal(
+    await row.locator("details").evaluate((/** @type {any} */ fold) => fold.open),
+    true,
+    "finishing must not close it",
+  );
   assert.match(await summary.innerText(), /6\.\ds/, "a finished row says how long it ran");
 });
 
@@ -626,11 +637,9 @@ test("thoughts typed into a running chat wait, and come back to the box", { skip
 
   // Nothing is queued any more, so the model never sees them and the strip has
   // nothing left to say about this run.
-  await page.waitForFunction(
-    () => /** @type {HTMLElement} */ (document.getElementById("queue")).hidden,
-    null,
-    { timeout: 5000 },
-  );
+  await page.waitForFunction(() => /** @type {HTMLElement} */ (document.getElementById("queue")).hidden, null, {
+    timeout: 5000,
+  });
 });
 
 test("the thinking line that is still streaming opens under the pointer", { skip: blocked }, async () => {
@@ -690,7 +699,10 @@ test("a write says in its summary what it changed", { skip: blocked }, async () 
 
 test("a failed call is marked red on the left", { skip: blocked }, async () => {
   const row = page.locator("#transcript .block.tool", { hasText: "missing.txt" }).first();
-  assert.equal(await row.locator("details").evaluate((/** @type {any} */ fold) => fold.classList.contains("error")), true);
+  assert.equal(
+    await row.locator("details").evaluate((/** @type {any} */ fold) => fold.classList.contains("error")),
+    true,
+  );
   assert.equal(await row.locator(".flag").innerText(), "⚠");
   assert.equal(await row.locator(".state").innerText(), "failed");
 });
@@ -745,9 +757,9 @@ test("scrolling up stops the follow, the arrow brings it back", { skip: blocked 
 });
 
 test("opening a chat lands on its newest line", { skip: blocked }, async () => {
-  const rows = await page.locator("#tab-list .tab").evaluateAll((/** @type {HTMLElement[]} */ list) =>
-    list.map((row) => String(row.dataset.tab)),
-  );
+  const rows = await page
+    .locator("#tab-list .tab")
+    .evaluateAll((/** @type {HTMLElement[]} */ list) => list.map((row) => String(row.dataset.tab)));
   const elsewhere = rows.find((/** @type {string} */ id) => id !== longTab);
   assert.ok(elsewhere, "a second chat is open");
 
@@ -761,10 +773,7 @@ test("opening a chat lands on its newest line", { skip: blocked }, async () => {
   await page.waitForFunction(
     () => {
       const box = /** @type {HTMLElement} */ (document.getElementById("transcript"));
-      return (
-        box.scrollHeight - box.clientHeight > 150 &&
-        box.scrollHeight - box.scrollTop - box.clientHeight < 5
-      );
+      return box.scrollHeight - box.clientHeight > 150 && box.scrollHeight - box.scrollTop - box.clientHeight < 5;
     },
     undefined,
     { timeout: 30000 },
@@ -831,7 +840,12 @@ test("a chat that finishes in the background asks to be read", { skip: blocked }
 
   const marked = `#tab-list .tab.unread[data-tab="${other}"]`;
   await page.waitForSelector(marked, { timeout: 12000 });
-  assert.equal(await page.locator(`#tab-list .tab[data-tab="${here[0]}"]`).evaluate((/** @type {any} */ row) => row.classList.contains("unread")), false);
+  assert.equal(
+    await page
+      .locator(`#tab-list .tab[data-tab="${here[0]}"]`)
+      .evaluate((/** @type {any} */ row) => row.classList.contains("unread")),
+    false,
+  );
 
   await page.click(`#tab-list .tab[data-tab="${other}"]`);
   await page.waitForSelector(`#tab-list .tab.unread[data-tab="${other}"]`, { state: "detached", timeout: 5000 });
@@ -860,8 +874,9 @@ test("the project picker completes a path and opens a chat in it", { skip: block
   assert.ok(opened.endsWith("/"), "a folder is offered as a folder");
 
   await page.waitForSelector("#dir-list .dir-row");
-  /** @type {string[]} */ const names = (await page.locator("#dir-list .dir-row").allInnerTexts())
-    .map((/** @type {string} */ text) => text.replace("\u25b8", "").trim());
+  /** @type {string[]} */ const names = (await page.locator("#dir-list .dir-row").allInnerTexts()).map(
+    (/** @type {string} */ text) => text.replace("\u25b8", "").trim(),
+  );
   assert.ok(names.includes("src"), "the folders under it are listed");
   assert.ok(!names.some((name) => name.startsWith(".")), "hidden folders stay out");
 
@@ -908,7 +923,9 @@ test("a chat taken from the session list goes back to its own project", { skip: 
   await openFreshChat();
   await page.waitForFunction(
     () =>
-      [...document.querySelectorAll("#session-list .session-title")].some((node) => node.textContent === "explain the pi wiring"),
+      [...document.querySelectorAll("#session-list .session-title")].some(
+        (node) => node.textContent === "explain the pi wiring",
+      ),
     undefined,
     { timeout: 30000 },
   );
@@ -984,7 +1001,9 @@ test("the diff tab reads like git status and opens a patch beside the chat", { s
   await page.locator("#diff-body .st-row", { hasText: "notes.md" }).click();
   await page.waitForFunction(() => !document.getElementById("file-view")?.hasAttribute("hidden"));
 
-  const tabs = (await page.locator("#view-tabs .view-tab").allInnerTexts()).map((/** @type {string} */ text) => text.trim());
+  const tabs = (await page.locator("#view-tabs .view-tab").allInnerTexts()).map((/** @type {string} */ text) =>
+    text.trim(),
+  );
   assert.equal(tabs.length, 2, "the patch sits next to the chat");
   assert.equal(tabs[1], "Δ notes.md");
   assert.ok(await page.locator("#composer").isHidden(), "a patch is not a place to send a message");
@@ -1050,7 +1069,9 @@ test("the files tab lists the folder and opens what is clicked", { skip: blocked
   await page.waitForSelector("#file-list .file-row");
 
   const names = async () =>
-    await page.evaluate(() => [...document.querySelectorAll("#file-list .file-row .file-name")].map((n) => n.textContent));
+    await page.evaluate(() =>
+      [...document.querySelectorAll("#file-list .file-row .file-name")].map((n) => n.textContent),
+    );
 
   assert.ok((await names()).includes("keep.txt"));
   assert.ok((await names()).includes("fresh.md"), "a file git never saw is listed too");
@@ -1062,7 +1083,9 @@ test("the files tab lists the folder and opens what is clicked", { skip: blocked
   assert.deepEqual(await names(), ["..", "nested.md"], "one folder deep, with a way back");
 
   await page.locator("#file-crumbs .crumb-up").click();
-  await page.waitForFunction(() => ![...document.querySelectorAll(".file-row .file-name")].some((n) => n.textContent === ".."));
+  await page.waitForFunction(
+    () => ![...document.querySelectorAll(".file-row .file-name")].some((n) => n.textContent === ".."),
+  );
 
   await page.fill("#file-filter", "ee");
   await page.waitForFunction(() => document.querySelectorAll("#file-list .file-row").length === 2);
@@ -1071,7 +1094,9 @@ test("the files tab lists the folder and opens what is clicked", { skip: blocked
   );
   assert.deepEqual(narrowed, ["keep.txt", "nested.md"], "typing searches the whole tree, near ones first");
   const dirs = await page.evaluate(() =>
-    [...document.querySelectorAll("#file-list .file-row")].map((row) => row.querySelector(".file-dir")?.textContent ?? ""),
+    [...document.querySelectorAll("#file-list .file-row")].map(
+      (row) => row.querySelector(".file-dir")?.textContent ?? "",
+    ),
   );
   assert.deepEqual(dirs, ["", "sub"], "a file says where it lives only when that is not here");
   assert.ok(
@@ -1120,7 +1145,11 @@ test("the files tab lists the folder and opens what is clicked", { skip: blocked
   });
 
   for (let at = await page.locator("#view-tabs .view").count(); at > 1; at -= 1) {
-    await page.locator("#view-tabs .view").nth(at - 1).locator(".view-close").click();
+    await page
+      .locator("#view-tabs .view")
+      .nth(at - 1)
+      .locator(".view-close")
+      .click();
   }
   await page.waitForFunction(() => document.querySelectorAll("#view-tabs .view").length === 1);
   await page.waitForFunction(() => !document.getElementById("composer")?.hasAttribute("hidden"));
@@ -1136,7 +1165,8 @@ test("the diff panel notices a turn that changed the folder", { skip: blocked ||
   await page.click("#panel-diff-tab");
   await page.waitForFunction(() => (document.getElementById("panel-diff-tab")?.getBoundingClientRect().width ?? 0) > 0);
   await page.waitForFunction(() => document.querySelectorAll("#diff-body .st-row").length > 0);
-  const listed = () => page.evaluate(() => [...document.querySelectorAll("#diff-body .st-row .st-path")].map((p) => p.textContent));
+  const listed = () =>
+    page.evaluate(() => [...document.querySelectorAll("#diff-body .st-row .st-path")].map((p) => p.textContent));
   assert.ok(!(await listed()).includes("log.txt"), "the note is not there yet");
 
   await runTurn("scrawl a note");
@@ -1178,7 +1208,8 @@ test("a picture joins the message from the folder or from a drag", { skip: block
   assert.ok(
     await page.evaluate(
       () =>
-        document.querySelector("#attachments .attachment img")?.getAttribute("src")?.startsWith("data:image/png") ?? false,
+        document.querySelector("#attachments .attachment img")?.getAttribute("src")?.startsWith("data:image/png") ??
+        false,
     ),
     "the picked picture is there to look at before it is sent",
   );
@@ -1260,7 +1291,11 @@ test("a finished tool wears the length it reported", { skip: blocked }, async ()
   await idle();
 
   const row = page.locator("#transcript .block.tool", { hasText: "piui-fake-write.txt" }).first();
-  assert.equal(await row.locator(".state").innerText(), "4.2s", "the tool's own number, not the gap between two frames");
+  assert.equal(
+    await row.locator(".state").innerText(),
+    "4.2s",
+    "the tool's own number, not the gap between two frames",
+  );
 });
 
 test("a turn that stops on a thought says there is nothing after it", { skip: blocked }, async () => {
@@ -1350,8 +1385,7 @@ test("opening a settled chat is not activity, so the list keeps its order", asyn
   assert.deepEqual(await pair(), before, "clicking back and forth moved nothing");
 });
 
-const onePixelPng =
-  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg==";
+const onePixelPng = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg==";
 
 test("a picture dragged into the composer shows the picture, not just a label", async () => {
   await openFreshChat();
@@ -1376,14 +1410,11 @@ test("a picture dragged into the composer shows the picture, not just a label", 
   const box = await thumb.boundingBox();
   assert.ok(box, "the chip has a box");
   assert.ok(box.width >= 40 && box.height >= 30, `the chip holds a ${box.width}x${box.height} picture`);
-  assert.ok(
-    await page.evaluate(
-      () =>
-        ((/** @type {HTMLImageElement | null} */ (document.querySelector("#attachments .attachment img"))
-        )?.naturalWidth ?? 0) > 0,
-    ),
-    "the dropped bytes decoded",
-  );
+  const decoded = await page.evaluate(() => {
+    const img = /** @type {HTMLImageElement | null} */ (document.querySelector("#attachments .attachment img"));
+    return (img?.naturalWidth ?? 0) > 0;
+  });
+  assert.ok(decoded, "the dropped bytes decoded");
 
   await page.locator("#attachments .attachment button").click();
   assert.equal(await page.locator("#attachments .attachment").count(), 0, "× drops it again");
@@ -1421,10 +1452,7 @@ test("a row's actions sit behind a ⋯, and right-click is inert", async () => {
   await row().locator(".row-menu").click();
   await page.waitForSelector(".row-actions", { state: "visible" });
   await menuHangsUnder(row());
-  assert.deepEqual(await page.locator(".row-action").allInnerTexts(), [
-    "Copy path",
-    "Archive into sessions",
-  ]);
+  assert.deepEqual(await page.locator(".row-action").allInnerTexts(), ["Copy path", "Archive into sessions"]);
   assert.equal(await activeTab(), chat, "opening the menu does not move anywhere");
 
   await page.locator(".row-action", { hasText: "Copy path" }).click();
@@ -1522,7 +1550,12 @@ test("a server that goes away is said out loud, and the page comes back by itsel
       // A document with no storage to count in is a document that did not reload.
     }
   });
-  const reloads = () => page.waitForFunction((/** @type {number} */ want) => Number(sessionStorage.getItem("piui-reloads") ?? 0) >= want, 1, { timeout: 15000 });
+  const reloads = () =>
+    page.waitForFunction(
+      (/** @type {number} */ want) => Number(sessionStorage.getItem("piui-reloads") ?? 0) >= want,
+      1,
+      { timeout: 15000 },
+    );
   await page.route("**/api/health", (/** @type {any} */ route) => {
     if (mood === "down") return route.abort("connectionrefused");
     return route.fulfill({
@@ -1701,7 +1734,11 @@ test("a terminal opens in the project and answers what you type", { skip: blocke
 
   await page.waitForFunction(
     /** @param {string} want */
-    (want) => [...document.querySelectorAll(".term-screen")].map((n) => n.textContent).join("\n").includes(want),
+    (want) =>
+      [...document.querySelectorAll(".term-screen")]
+        .map((n) => n.textContent)
+        .join("\n")
+        .includes(want),
     "piui7",
     { timeout: 15000 },
   );

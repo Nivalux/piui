@@ -163,7 +163,8 @@ test("the job header lines are only kept when there is no details object", () =>
 });
 
 test("a job result that is nothing but headers keeps them rather than going blank", () => {
-  const text = 'status: running — max wait reached\nelapsed 2.0s · pid 1 · job f7e1aa\njob_wait { "job": "f7e1aa" } to keep waiting\n';
+  const text =
+    'status: running — max wait reached\nelapsed 2.0s · pid 1 · job f7e1aa\njob_wait { "job": "f7e1aa" } to keep waiting\n';
   assert.equal(jobBody(text), text);
 });
 

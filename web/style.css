@@ -73,7 +73,7 @@ body {
 body {
   background: var(--bg);
   color: var(--fg);
-  font: 14px/1.55 var(--sans);
+  font: 14px / 1.55 var(--sans);
 }
 
 code,
@@ -678,7 +678,7 @@ pre,
   min-height: 0;
   overflow: auto;
   padding: 8px 0;
-  font: 12px/1.55 var(--mono);
+  font: 12px / 1.55 var(--mono);
 }
 
 .code-line {
@@ -838,7 +838,7 @@ pre,
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  font: 11px/1 var(--mono);
+  font: 11px / 1 var(--mono);
   color: var(--fg-dim);
 }
 
@@ -945,7 +945,7 @@ pre,
 }
 
 .md code {
-  font: 12px/1.45 var(--mono);
+  font: 12px / 1.45 var(--mono);
   background: var(--bg-raise);
   border: 1px solid var(--line);
   border-radius: 5px;
@@ -1024,7 +1024,7 @@ pre,
   display: flex;
   gap: 10px;
   align-items: baseline;
-  font: 11px/1.5 var(--mono);
+  font: 11px / 1.5 var(--mono);
 }
 
 .fold-body .arg .k {
@@ -1319,7 +1319,7 @@ pre,
 
 .thinking-body {
   color: var(--fg-soft);
-  font: 13px/1.6 var(--sans);
+  font: 13px / 1.6 var(--sans);
 }
 
 .block details.error {
@@ -1366,7 +1366,7 @@ pre,
 }
 
 .diff-body {
-  font: 12px/1.45 var(--mono);
+  font: 12px / 1.45 var(--mono);
 }
 
 .diff-empty {
@@ -1554,7 +1554,7 @@ pre,
   border: 1px solid var(--line);
   background: var(--bg-soft);
   color: var(--fg);
-  font: 14px/1.5 var(--sans);
+  font: 14px / 1.5 var(--sans);
 }
 
 .composer textarea:focus {
@@ -1663,7 +1663,6 @@ pre,
   opacity: 0.45;
   cursor: default;
 }
-
 
 .rate {
   font: 12px var(--mono);
@@ -1836,7 +1835,7 @@ pre,
   border-radius: 9px;
   background: var(--bg);
   color: var(--fg);
-  font: 12px/1.4 var(--mono);
+  font: 12px / 1.4 var(--mono);
 }
 
 .dir-field:focus {
@@ -1847,7 +1846,7 @@ pre,
 .dir-hint {
   margin: 8px 0 6px;
   color: var(--fg-dim);
-  font: 11px/1.4 var(--mono);
+  font: 11px / 1.4 var(--mono);
 }
 
 .dir-list {
@@ -1864,7 +1863,7 @@ pre,
   gap: 7px;
   padding: 5px 10px;
   border-bottom: 1px solid var(--line);
-  font: 12px/1.4 var(--mono);
+  font: 12px / 1.4 var(--mono);
   cursor: pointer;
 }
 
@@ -2046,8 +2045,6 @@ pre,
   font-family: var(--mono);
 }
 
-
-
 .row .code {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
@@ -2064,7 +2061,7 @@ pre,
   border-radius: 10px;
   background: var(--bg-soft);
   color: var(--del-text);
-  font: 12px/1.4 var(--mono);
+  font: 12px / 1.4 var(--mono);
   white-space: pre-wrap;
   z-index: 40;
 }
@@ -2238,7 +2235,7 @@ pre,
   flex-direction: column;
   background: var(--term-bg);
   color: var(--term-fg);
-  font: 12.5px/1.35 var(--mono);
+  font: 12.5px / 1.35 var(--mono);
 }
 
 .term-scroll {
@@ -2335,7 +2332,7 @@ pre,
 .chat-ended .ended-why {
   margin: 6px 0 9px;
   color: var(--fg-soft);
-  font: 12px/1.5 var(--mono);
+  font: 12px / 1.5 var(--mono);
   white-space: pre-wrap;
   word-break: break-word;
 }

@@ -34,7 +34,12 @@ test("a file opens beside the chat, once", () => {
 
 test("closing a view leaves the reader where they were looking", () => {
   /** @type {import("../panel.js").View[]} */
-  const views = [{ kind: "chat" }, { kind: "file", path: "a" }, { kind: "file", path: "b" }, { kind: "file", path: "c" }];
+  const views = [
+    { kind: "chat" },
+    { kind: "file", path: "a" },
+    { kind: "file", path: "b" },
+    { kind: "file", path: "c" },
+  ];
 
   assert.equal(closeFile(views, 3, 3).active, 2, "closing the last one steps back to its neighbour");
   assert.equal(closeFile(views, 1, 3).active, 1, "closing one behind does not move the reader");
@@ -113,7 +118,11 @@ test("status splits the way git tells it", () => {
   );
 
   const single = statusGroups([{ path: "b", display: "b", status: "M" }]);
-  assert.deepEqual(single.map((group) => group.title), [""], "one block needs no heading");
+  assert.deepEqual(
+    single.map((group) => group.title),
+    [""],
+    "one block needs no heading",
+  );
 
   const against = statusGroups([
     { path: "b", display: "b", status: "M", staged: true },
@@ -146,11 +155,7 @@ test("a glance takes the preview tab, a click on the tab keeps it", () => {
 });
 
 test("a folder shows what is directly in it", () => {
-  const files = [
-    { path: "web/app.js" },
-    { path: "web/test/app.test.js" },
-    { path: "README.md" },
-  ];
+  const files = [{ path: "web/app.js" }, { path: "web/test/app.test.js" }, { path: "README.md" }];
 
   const root = fileTree(files, "");
   assert.deepEqual(

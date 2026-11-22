@@ -112,7 +112,10 @@ async function ready(url) {
 async function stop() {
   if (server && server.exitCode === null && server.signalCode === null) {
     server.kill("SIGTERM");
-    await Promise.race([new Promise((resolve) => server?.once("exit", resolve)), new Promise((resolve) => setTimeout(resolve, 3000))]);
+    await Promise.race([
+      new Promise((resolve) => server?.once("exit", resolve)),
+      new Promise((resolve) => setTimeout(resolve, 3000)),
+    ]);
   }
   if (!options.keep) fs.rmSync(dir, { recursive: true, force: true });
 }
@@ -153,19 +156,25 @@ try {
     fail("the server did not answer on its new port");
   }
 
-  const browser = await chromium.launch({ executablePath: browserPath, args: ["--no-sandbox", "--disable-dev-shm-usage"] });
+  const browser = await chromium.launch({
+    executablePath: browserPath,
+    args: ["--no-sandbox", "--disable-dev-shm-usage"],
+  });
   try {
     const page = await browser.newPage({ viewport: { width: 1280, height: 1000 } });
     page.on("pageerror", (error) => console.error(`peek: page error — ${String(error).slice(0, 200)}`));
     await page.goto(base, { waitUntil: "domcontentloaded" });
     await page.evaluate(
-      async (sent) => fetch("/api/login", { method: "POST", headers: { "content-type": "application/json" }, body: sent }),
+      async (sent) =>
+        fetch("/api/login", { method: "POST", headers: { "content-type": "application/json" }, body: sent }),
       JSON.stringify({ token }),
     );
     await page.goto(base, { waitUntil: "domcontentloaded" });
     await page.waitForSelector("#session-list .session", { timeout: 20000 });
     await page.locator("#session-list .session").first().click();
-    await page.waitForFunction(() => document.querySelectorAll("#transcript .block").length > 0, null, { timeout: 30000 });
+    await page.waitForFunction(() => document.querySelectorAll("#transcript .block").length > 0, null, {
+      timeout: 30000,
+    });
     await page.waitForTimeout(700);
 
     if (options.shot) await page.screenshot({ path: path.resolve(String(options.shot)), fullPage: false });
@@ -192,7 +201,8 @@ try {
     );
 
     const needle = options.grep ? String(options.grep) : "";
-    const at = needle.length > 0 ? rows.findIndex((row) => row.body.includes(needle) || (row.label ?? "").includes(needle)) : -1;
+    const at =
+      needle.length > 0 ? rows.findIndex((row) => row.body.includes(needle) || (row.label ?? "").includes(needle)) : -1;
     if (needle.length > 0 && at < 0) fail(`nothing in the transcript holds "${needle}"`);
 
     const span = Number(options.lines ?? 8);
@@ -210,7 +220,12 @@ try {
     await browser.close();
   }
 } catch (error) {
-  console.error(`peek: ${String(error && error.stack ? error.stack : error).split("\n").slice(0, 6).join("\n")}`);
+  console.error(
+    `peek: ${String(error && error.stack ? error.stack : error)
+      .split("\n")
+      .slice(0, 6)
+      .join("\n")}`,
+  );
   exitCode = 1;
 } finally {
   await stop();

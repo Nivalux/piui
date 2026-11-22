@@ -59,8 +59,7 @@ let nextId = 0;
  * @param {Block} block
  */
 export function toolRun(block) {
-  const stamps =
-    block.doneAt !== undefined && block.startedAt !== undefined ? block.doneAt - block.startedAt : 0;
+  const stamps = block.doneAt !== undefined && block.startedAt !== undefined ? block.doneAt - block.startedAt : 0;
   return Math.max(block.durationMs ?? 0, stamps > 0 ? stamps : 0);
 }
 
@@ -229,7 +228,12 @@ export class Transcript {
         return true;
 
       case "compaction_start":
-        this.#push({ kind: "status", id: nextId++, level: "info", text: `compacting context (${frame.reason ?? "?"})` });
+        this.#push({
+          kind: "status",
+          id: nextId++,
+          level: "info",
+          text: `compacting context (${frame.reason ?? "?"})`,
+        });
         return true;
 
       case "compaction_end":
@@ -469,7 +473,8 @@ export class Transcript {
    */
   #compaction(frame) {
     const result = frame.result ?? null;
-    const summary = result && typeof result === "object" ? /** @type {{summary?: string}} */ (result).summary : undefined;
+    const summary =
+      result && typeof result === "object" ? /** @type {{summary?: string}} */ (result).summary : undefined;
     const before =
       result && typeof result === "object" ? /** @type {{tokensBefore?: number}} */ (result).tokensBefore : undefined;
 

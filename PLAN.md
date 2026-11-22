@@ -11,6 +11,7 @@ Multi-user/auth, editing files, terminal emulation, forks/trees/compaction UI, m
 |---|---|---|
 | Server | **Zig 0.17.1** (in nixpkgs) | Everything is in std: `std.http.Server` (keep-alive + chunked → SSE), `std.Thread`, `std.json.Scanner`, `std.process.Child`, `std.testing`. 0 deps, ~1 MB binary. |
 | Client | **JS + JSDoc, no framework, no bundler** | `tsc --noEmit --allowJs --checkJs --strict` checks the `.js` directly (TS 7.0.2, native). No transpile layer: the browser loads exactly the files that were checked. Tests: `node --test` on the same `.js`. |
+| Format | **Biome for js/mjs/css, `zig fmt` for zig** | One static binary out of nixpkgs, so the repo keeps its no-`node_modules` rule. `just fmt` writes, `just check` fails on anything unformatted. | 
 | Transport | **SSE (server→client) + POST (client→server)** | `std.http.Server` with `transfer_encoding = .chunked`; WebSocket only once it is actually needed. |
 | Markdown | vendored `marked.min.js` (1 file) or our own mini renderer | no build step. |
 

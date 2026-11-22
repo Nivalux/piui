@@ -30,15 +30,26 @@ test("a working chat holds its place while it streams", () => {
   ];
 
   const { working, settled } = splitTabs(shape);
-  assert.deepEqual(working.map((item) => item.id), ["quiet", "loud"], "the run that began most recently leads");
-  assert.deepEqual(settled.map((item) => item.id), ["done"]);
+  assert.deepEqual(
+    working.map((item) => item.id),
+    ["quiet", "loud"],
+    "the run that began most recently leads",
+  );
+  assert.deepEqual(
+    settled.map((item) => item.id),
+    ["done"],
+  );
 
   const later = splitTabs([
     tab({ id: "quiet", running: true, runStartedMs: 5_000, lastOutputMs: 99_000 }),
     tab({ id: "loud", running: true, runStartedMs: 4_000, lastOutputMs: 9_000 }),
     tab({ id: "done", running: false, lastOutputMs: 8_000 }),
   ]);
-  assert.deepEqual(later.working.map((item) => item.id), ["quiet", "loud"], "more output moves nobody");
+  assert.deepEqual(
+    later.working.map((item) => item.id),
+    ["quiet", "loud"],
+    "more output moves nobody",
+  );
 });
 
 test("a working chat with no run yet keeps the order it was opened in", () => {
@@ -47,8 +58,15 @@ test("a working chat with no run yet keeps the order it was opened in", () => {
     tab({ id: "new", running: true, createdMs: 2_000, lastOutputMs: 3_000 }),
   ];
 
-  assert.deepEqual(byRun(list).map((item) => item.id), ["new", "old"]);
-  assert.deepEqual(byRun(list).map((item) => item.id), ["new", "old"], "and again, identically");
+  assert.deepEqual(
+    byRun(list).map((item) => item.id),
+    ["new", "old"],
+  );
+  assert.deepEqual(
+    byRun(list).map((item) => item.id),
+    ["new", "old"],
+    "and again, identically",
+  );
 });
 
 test("a settled chat is sorted by what it did last", () => {
@@ -57,7 +75,10 @@ test("a settled chat is sorted by what it did last", () => {
     tab({ id: "newer", lastOutputMs: 3_000, finishedMs: 7_000 }),
   ]);
 
-  assert.deepEqual(settled.map((item) => item.id), ["newer", "older"]);
+  assert.deepEqual(
+    settled.map((item) => item.id),
+    ["newer", "older"],
+  );
 });
 
 test("a chat that never spoke still has a place", () => {

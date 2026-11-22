@@ -754,7 +754,7 @@ function attachShell(id) {
   // inside the json, the same way the chat stream does.
   source.onmessage = (event) => {
     const frame = parseFrame(String(event.data ?? ""));
-    if (!frame || frame.event !== "shellOut" && frame.event !== "shellExit") return;
+    if (!frame || (frame.event !== "shellOut" && frame.event !== "shellExit")) return;
 
     if (frame.event === "shellOut") {
       const view = shellViews.get(id);
@@ -1670,7 +1670,7 @@ const types = /** @type {Record<string, string>} */ ({
 /** @param {string} name */
 function guessType(name) {
   const at = name.lastIndexOf(".");
-  return at < 0 ? "" : types[name.slice(at + 1).toLowerCase()] ?? "";
+  return at < 0 ? "" : (types[name.slice(at + 1).toLowerCase()] ?? "");
 }
 
 /** @param {DragEvent} event */
@@ -1931,10 +1931,7 @@ function sessionRow(entry, ranges = []) {
     title.replaceChildren();
     title.append(highlight(sessionTitle(entry), ranges, "mark"));
   }
-  row.append(
-    title,
-    span(`${relativeTime(entry.updated, Date.now())} · ${entry.messages} msgs`, "session-meta"),
-  );
+  row.append(title, span(`${relativeTime(entry.updated, Date.now())} · ${entry.messages} msgs`, "session-meta"));
   row.onclick = () => void (already ? openTab(already.id) : createTab({ session: entry.path }));
   row.append(menuButton(() => [{ label: "Copy path", run: () => void copyPath(entry.cwd ?? "") }]));
   return row;
@@ -1972,7 +1969,13 @@ let projectKey = "";
 function paintProjectFilter() {
   const projects = folders(state.sessions.map((entry) => ({ item: entry, ranges: [] })))
     .map(([bucket]) => bucket)
-    .sort((a, b) => (a.length === 0 ? 1 : b.length === 0 ? -1 : projectLabel(a).localeCompare(projectLabel(b), undefined, { sensitivity: "base" })));
+    .sort((a, b) =>
+      a.length === 0
+        ? 1
+        : b.length === 0
+          ? -1
+          : projectLabel(a).localeCompare(projectLabel(b), undefined, { sensitivity: "base" }),
+    );
   const key = projects.join("\n");
   if (sessionProject !== "all" && !projects.includes(sessionProject)) sessionProject = "all";
 
@@ -2191,7 +2194,7 @@ async function copyPath(text) {
  */
 function tabFoot(tab) {
   const foot = element("div", "tab-foot");
-  const branch = tab.id === state.active ? status?.branch ?? "" : "";
+  const branch = tab.id === state.active ? (status?.branch ?? "") : "";
   foot.append(span(branch.length > 0 ? branch : shortPath(tab.cwd), "path"));
   if (tab.id === state.active && state.model.length > 0) foot.append(span(shortModel(state.model), "model"));
   return foot;
@@ -2521,7 +2524,8 @@ function foldFor(block, opened, open = false) {
  */
 function elapsed(block) {
   const measured =
-    block.durationMs ?? (block.doneAt !== undefined && block.startedAt !== undefined ? block.doneAt - block.startedAt : 0);
+    block.durationMs ??
+    (block.doneAt !== undefined && block.startedAt !== undefined ? block.doneAt - block.startedAt : 0);
   return measured > 1500 ? duration(measured) : "";
 }
 
@@ -2750,11 +2754,7 @@ function renderFooter() {
 
   const parts = [];
   if (meter.cost() > 0) parts.push(cost(meter.cost()));
-  el.status.textContent = state.active
-    ? state.connected
-      ? parts.join(" · ")
-      : "disconnected"
-    : "no chat open";
+  el.status.textContent = state.active ? (state.connected ? parts.join(" · ") : "disconnected") : "no chat open";
 
   // The pace of the last few answers, not of the last second: a run that is
   // only thinking, or a page that was reloaded mid-answer, has nothing honest
@@ -2768,7 +2768,9 @@ function renderFooter() {
 
   // The counters belong to a chat. A band that would hold nothing but a
   // hairline is better off gone, and a terminal never wears one at all.
-  el.meterBar.hidden = terminalInView() !== "" || (el.busy.hidden && el.context.hidden && parts.length === 0 && el.rate.textContent.length === 0);
+  el.meterBar.hidden =
+    terminalInView() !== "" ||
+    (el.busy.hidden && el.context.hidden && parts.length === 0 && el.rate.textContent.length === 0);
 }
 
 /**
@@ -3059,7 +3061,8 @@ function viewChip(view, index) {
   if (view.kind !== "chat") {
     const close = button("✕", () => closeView(index));
     close.className = "view-close";
-    close.title = view.kind === "file" ? "Close this file" : view.kind === "diff" ? "Close this diff" : "Close this terminal";
+    close.title =
+      view.kind === "file" ? "Close this file" : view.kind === "diff" ? "Close this diff" : "Close this terminal";
     node.append(close);
   }
   return node;
@@ -3328,7 +3331,8 @@ function renderFileList() {
     ];
   }
 
-  if (nodes.length === 0) nodes.push(element("div", "file-empty", query.length > 0 ? "nothing matches" : "nothing here"));
+  if (nodes.length === 0)
+    nodes.push(element("div", "file-empty", query.length > 0 ? "nothing matches" : "nothing here"));
   if (state.filesTruncated) nodes.push(element("div", "file-more", "the folder holds more — keep typing"));
   el.fileList.replaceChildren(...nodes);
 }
@@ -3414,12 +3418,8 @@ async function showSettings() {
           renderQueue();
         },
       ),
-      toggle("thinking", "Show thinking", state.ui.show_thinking === true, (on) =>
-        void saveUi({ show_thinking: on }),
-      ),
-      toggle("enter", "Enter sends", state.ui.send_on_enter !== false, (on) =>
-        void saveUi({ send_on_enter: on }),
-      ),
+      toggle("thinking", "Show thinking", state.ui.show_thinking === true, (on) => void saveUi({ show_thinking: on })),
+      toggle("enter", "Enter sends", state.ui.send_on_enter !== false, (on) => void saveUi({ send_on_enter: on })),
       toggle("sidebar", "Sidebar", state.ui.sidebar !== false, (on) => void saveUi({ sidebar: on })),
       actionsRow(),
     ),

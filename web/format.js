@@ -276,7 +276,10 @@ export function shortPath(cwd) {
  */
 export function badge(cwd, project = true) {
   if (!project) return "··";
-  const letters = basename(cwd).replace(/[^a-z0-9]/gi, "").slice(0, 2).toUpperCase();
+  const letters = basename(cwd)
+    .replace(/[^a-z0-9]/gi, "")
+    .slice(0, 2)
+    .toUpperCase();
   return letters.length > 0 ? letters : "··";
 }
 

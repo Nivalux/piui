@@ -36,7 +36,9 @@ const tableSplit = /^\s{0,3}\|?[ \t]*:?-{1,}:?[ \t]*(\|[ \t]*:?-{1,}:?[ \t]*)*\|
  * @returns {Block[]}
  */
 export function parseMarkdown(text) {
-  const lines = String(text ?? "").replace(/\r\n?/g, "\n").split("\n");
+  const lines = String(text ?? "")
+    .replace(/\r\n?/g, "\n")
+    .split("\n");
   return blocks(lines);
 }
 
@@ -178,7 +180,7 @@ function collect(lines, start) {
 
   while (index < lines.length) {
     const line = lines[index];
-    const open = bullet.exec(line) ?? numbered.test(line) ? numbered.exec(line) ?? bullet.exec(line) : null;
+    const open = (bullet.exec(line) ?? numbered.test(line)) ? (numbered.exec(line) ?? bullet.exec(line)) : null;
 
     if (open && open[1].length >= indent) {
       if (open[1].length > indent) break;
@@ -261,7 +263,7 @@ function pad(row, width) {
  */
 const inlineSource = [
   "(?<fence>`+)(?<codeBody>[\\s\\S]*?)\\k<fence>",
-  "!?\\[(?<linkText>[^\\]]*)\\]\\((?<linkHref>[^)\\s]+)(?:[ \\t]+\"[^\"]*\")?\\)",
+  '!?\\[(?<linkText>[^\\]]*)\\]\\((?<linkHref>[^)\\s]+)(?:[ \\t]+"[^"]*")?\\)',
   "(?<bold>\\*\\*|__)(?=\\S)(?<boldBody>[\\s\\S]*?\\S)\\k<bold>",
   "(?<slant>\\*|_)(?=\\S)(?<slantBody>[\\s\\S]*?\\S)\\k<slant>",
   "~~(?=\\S)(?<strikeBody>[\\s\\S]*?\\S)~~",

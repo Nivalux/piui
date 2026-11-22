@@ -44,7 +44,10 @@ test("every module app.js imports is a file in web/", () => {
   const imports = [...app.matchAll(/from "\.\/([\w.]+)"/g)].map((m) => m[1]);
   assert.ok(imports.length > 3, "found no imports");
   for (const name of imports) {
-    assert.ok(existsSync(new URL(`../${name}`, import.meta.url)), `app.js imports ./${name}, which web/ does not contain`);
+    assert.ok(
+      existsSync(new URL(`../${name}`, import.meta.url)),
+      `app.js imports ./${name}, which web/ does not contain`,
+    );
   }
 });
 

@@ -32,8 +32,7 @@ const shot = {
   id: "call_shot",
   name: "read",
   path: ".work/screenshot.png",
-  data:
-    "iVBORw0KGgoAAAANSUhEUgAAACAAAAAUCAYAAADskT9PAAAANUlEQVR4nGN4kOP1Hx8WEZXCiynVzzDqgFEHjDqA1hYQ0j/qgFEHjDph4MuBUQeMOmCgHQAARi3M/RQC5ogAAAAASUVORK5CYII=",
+  data: "iVBORw0KGgoAAAANSUhEUgAAACAAAAAUCAYAAADskT9PAAAANUlEQVR4nGN4kOP1Hx8WEZXCiynVzzDqgFEHjDqA1hYQ0j/qgFEHjDph4MuBUQeMOmCgHQAARi3M/RQC5ogAAAAASUVORK5CYII=",
 };
 
 const file = {
@@ -116,9 +115,7 @@ function deliver(kind) {
   }
 }
 
-readline
-  .createInterface({ input: process.stdin })
-  .on("line", (line) => void answer(line.trim()));
+readline.createInterface({ input: process.stdin }).on("line", (line) => void answer(line.trim()));
 
 /** @param {string} line */
 async function answer(line) {
@@ -300,7 +297,13 @@ async function turn(prompt) {
     timestamp: now(),
   });
 
-  send({ type: "tool_execution_start", toolCallId: shot.id, toolName: shot.name, args: { path: shot.path }, timestamp: now() });
+  send({
+    type: "tool_execution_start",
+    toolCallId: shot.id,
+    toolName: shot.name,
+    args: { path: shot.path },
+    timestamp: now(),
+  });
   await sleep(60);
   send({
     type: "tool_execution_end",

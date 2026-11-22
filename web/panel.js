@@ -54,7 +54,9 @@ export function fileRows(files, query, limit = 400) {
   return hits
     .sort(
       (left, right) =>
-        right.score - left.score || depth(left.item.path) - depth(right.item.path) || left.item.path.localeCompare(right.item.path),
+        right.score - left.score ||
+        depth(left.item.path) - depth(right.item.path) ||
+        left.item.path.localeCompare(right.item.path),
     )
     .slice(0, limit)
     .map(rowOf);

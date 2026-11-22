@@ -34,8 +34,16 @@ test("typing narrows the folders the way fzf does", () => {
     ["src", "tests", "docs"],
     "web has no s; the front of a name beats its middle",
   );
-  assert.deepEqual(suggestions(dirs, "ts").map((hit) => hit.item.name), ["tests"], "letters in order only");
-  assert.deepEqual(suggestions(dirs, "est").map((hit) => hit.item.name), ["tests"], "letters from the middle");
+  assert.deepEqual(
+    suggestions(dirs, "ts").map((hit) => hit.item.name),
+    ["tests"],
+    "letters in order only",
+  );
+  assert.deepEqual(
+    suggestions(dirs, "est").map((hit) => hit.item.name),
+    ["tests"],
+    "letters from the middle",
+  );
   assert.equal(suggestions(dirs, "zzz").length, 0);
   const hit = suggestions(dirs, "w")[0];
   assert.ok(hit && hit.ranges.length > 0, "a hit carries the ranges to highlight");

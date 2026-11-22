@@ -12,7 +12,12 @@ function open(rows = 5, cols = 20) {
 
 /** The screen as plain text, one entry per row, trailing blanks dropped. */
 function lines(/** @type {Terminal} */ term) {
-  return term.render().screen.map((runs) => runs.map((run) => run.text).join("").replace(/\s+$/, ""));
+  return term.render().screen.map((runs) =>
+    runs
+      .map((run) => run.text)
+      .join("")
+      .replace(/\s+$/, ""),
+  );
 }
 
 function row(/** @type {Terminal} */ term, /** @type {number} */ index) {

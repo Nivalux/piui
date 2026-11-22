@@ -19,9 +19,7 @@ test("a match is case insensitive and ignores surrounding space", () => {
 test("ranges cover runs as one span", () => {
   const hit = fuzzyMatch("bot", "scroll to the bottom");
   assert.ok(hit);
-  assert.deepEqual(hit.ranges, [
-    [14, 17],
-  ]);
+  assert.deepEqual(hit.ranges, [[14, 17]]);
 });
 
 test("word starts beat the middle of a word", () => {

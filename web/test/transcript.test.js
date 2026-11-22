@@ -154,7 +154,10 @@ test("a run that ended while the page was away still closes", () => {
 
   transcript.event({ type: "agent_start" });
   transcript.event({ type: "message_start", message: { role: "assistant", content: [] } });
-  transcript.event({ type: "message_update", assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: "half" } });
+  transcript.event({
+    type: "message_update",
+    assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: "half" },
+  });
   assert.equal(transcript.blocks[0].done, false);
 
   transcript.event({ type: "agent_settled" });
@@ -175,14 +178,23 @@ test("replaying stored messages needs no events at all", () => {
       ],
       usage: { input: 3, output: 2 },
     },
-    { role: "toolResult", toolCallId: "c1", toolName: "read", content: [{ type: "text", text: "file" }], isError: false },
+    {
+      role: "toolResult",
+      toolCallId: "c1",
+      toolName: "read",
+      content: [{ type: "text", text: "file" }],
+      isError: false,
+    },
   ]);
 
   assert.deepEqual(
     transcript.blocks.map((block) => block.kind),
     ["user", "thinking", "text", "tool"],
   );
-  assert.equal(transcript.blocks.every((block) => block.done), true);
+  assert.equal(
+    transcript.blocks.every((block) => block.done),
+    true,
+  );
 });
 
 test("tool details survive the live event and the replay", () => {
@@ -236,7 +248,10 @@ test("a picture a tool read stays a picture", () => {
 
   const replayed = new Transcript();
   replayed.replay([
-    { role: "assistant", content: [{ type: "toolCall", id: "c9", name: "read", arguments: { path: "/tmp/pick.png" } }] },
+    {
+      role: "assistant",
+      content: [{ type: "toolCall", id: "c9", name: "read", arguments: { path: "/tmp/pick.png" } }],
+    },
     {
       role: "toolResult",
       toolCallId: "c9",
@@ -407,8 +422,14 @@ test("a thought with a reply after it stays a note above the answer", () => {
   const transcript = new Transcript();
 
   transcript.event({ type: "message_start", message: { role: "assistant", content: [] } });
-  transcript.event({ type: "message_update", assistantMessageEvent: { type: "thinking_delta", contentIndex: 0, delta: "hm" } });
-  transcript.event({ type: "message_update", assistantMessageEvent: { type: "text_delta", contentIndex: 1, delta: "here you go" } });
+  transcript.event({
+    type: "message_update",
+    assistantMessageEvent: { type: "thinking_delta", contentIndex: 0, delta: "hm" },
+  });
+  transcript.event({
+    type: "message_update",
+    assistantMessageEvent: { type: "text_delta", contentIndex: 1, delta: "here you go" },
+  });
   transcript.event({
     type: "message_end",
     message: {
