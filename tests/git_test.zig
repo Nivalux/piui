@@ -57,6 +57,27 @@ test "a directory without a repository says so" {
     try testing.expectEqual(@as(usize, 0), status.files.len);
 
     try testing.expectError(error.NotRepository, git.diff(a, io, bare, .working, null));
+    try testing.expectEqual(@as(usize, 0), git.branches(a, io, bare).names.len);
+}
+
+test "the branches to compare against are the local ones, then the remotes' copies" {
+    var threaded: Io.Threaded = .init(testing.allocator, .{ .environ = testing.environ });
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    const repo = try buildRepo(io, a);
+    try run(io, a, repo, &.{ "branch", "release" });
+    try run(io, a, repo, &.{ "update-ref", "refs/remotes/origin/main", "HEAD" });
+    try run(io, a, repo, &.{ "update-ref", "refs/remotes/origin/HEAD", "HEAD" });
+
+    const want = [_][]const u8{ "master", "release", "origin/main" };
+    const names = git.branches(a, io, repo).names;
+    try testing.expectEqual(want.len, names.len);
+    for (want, names) |one, got| try testing.expectEqualStrings(one, got);
 }
 
 fn findFile(files: []const git.FileStatus, path: []const u8) ?git.FileStatus {

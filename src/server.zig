@@ -184,6 +184,13 @@ pub const Server = struct {
             return self.respond(request, .ok, "application/json", payload);
         }
 
+        if (std.mem.eql(u8, path, "/api/git/branches")) {
+            const tab = self.tabFor(request, a) orelse return self.text(request, .not_found, "no such tab");
+            const payload = json.encode(a, git.branches(a, io, tab.cwd)) catch
+                return self.text(request, .internal_server_error, "encode");
+            return self.respond(request, .ok, "application/json", payload);
+        }
+
         if (std.mem.eql(u8, path, "/api/git/diff")) {
             const tab = self.tabFor(request, a) orelse return self.text(request, .not_found, "no such tab");
             const body = git.diff(a, io, tab.cwd, self.baseFor(request, tab, a), query(a, target, "path")) catch |err| switch (err) {

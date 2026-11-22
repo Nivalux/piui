@@ -3,6 +3,7 @@ const Io = std.Io;
 
 pub const max_diff_bytes = 2 << 20;
 pub const max_status_files = 500;
+pub const max_branches = 300;
 
 pub const Base = union(enum) {
     working,
@@ -93,6 +94,41 @@ pub fn validRef(allocator: std.mem.Allocator, io: Io, cwd: []const u8, name: []c
     defer arena.deinit();
     _ = git(arena.allocator(), io, cwd, &.{ "rev-parse", "--verify", "--quiet", name }, .limited(1024)) catch return false;
     return true;
+}
+
+pub const Branches = struct {
+    names: []const []const u8 = &.{},
+};
+
+/// What the diff can be compared against: the branches of this repository, then the remotes'
+/// copies of them. A folder that is not a repository has none, which is an answer and not a
+/// failure, because the picker simply offers the two it always has.
+pub fn branches(allocator: std.mem.Allocator, io: Io, cwd: []const u8) Branches {
+    if (!isRepository(allocator, io, cwd)) return .{};
+
+    const out = git(allocator, io, cwd, &.{
+        "for-each-ref",
+        "--format=%(refname)",
+        "refs/heads",
+        "refs/remotes",
+    }, .limited(1 << 20)) catch return .{};
+
+    var list: std.ArrayList([]const u8) = .empty;
+    var lines = std.mem.tokenizeScalar(u8, out, '\n');
+    while (lines.next()) |name| {
+        const bare = if (std.mem.startsWith(u8, name, "refs/heads/"))
+            name["refs/heads/".len..]
+        else if (std.mem.startsWith(u8, name, "refs/remotes/"))
+            name["refs/remotes/".len..]
+        else
+            continue;
+        // Which branch a remote's name points at is the remote's own choice, and
+        // a comparison against it is a comparison against the branch below it.
+        if (std.mem.endsWith(u8, bare, "/HEAD")) continue;
+        if (list.items.len >= max_branches) break;
+        list.append(allocator, bare) catch break;
+    }
+    return .{ .names = list.items };
 }
 
 pub const Collector = struct {
