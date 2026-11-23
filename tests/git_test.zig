@@ -37,7 +37,7 @@ test "status and diff of a working tree" {
     try testing.expect(std.mem.indexOf(u8, one, "new.txt") != null);
 }
 
-test "a working tree with a remote says how far its branch stands from it" {
+test "a base of the working tree counts lines, a base of a branch counts commits" {
     var threaded: Io.Threaded = .init(testing.allocator, .{ .environ = testing.environ });
     defer threaded.deinit();
     const io = threaded.io();
@@ -61,11 +61,18 @@ test "a working tree with a remote says how far its branch stands from it" {
     try run(io, a, repo, &.{ "-c", "user.email=piui@test", "-c", "user.name=piui", "commit", "-qm", "ahead" });
 
     const working = git.status(a, io, repo, .working);
-    try testing.expectEqual(@as(u32, 1), working.ahead);
+    try testing.expectEqual(@as(u32, 0), working.ahead);
     try testing.expectEqual(@as(u32, 0), working.behind);
+    try testing.expectEqual(@as(u32, 1), working.insertions);
+    try testing.expectEqual(@as(u32, 1), working.deletions);
 
-    const alone = git.status(a, io, try buildRepo(io, a), .working);
-    try testing.expectEqual(@as(u32, 0), alone.ahead);
+    const staged = git.status(a, io, repo, .staged);
+    try testing.expectEqual(@as(u32, 0), staged.insertions);
+    try testing.expectEqual(@as(u32, 0), staged.deletions);
+
+    const remote = git.status(a, io, repo, .{ .branch = "refs/remotes/origin/master" });
+    try testing.expectEqual(@as(u32, 1), remote.ahead);
+    try testing.expectEqual(@as(u32, 0), remote.insertions);
 }
 
 test "a directory without a repository says so" {

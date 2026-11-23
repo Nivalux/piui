@@ -57,8 +57,18 @@ import {
  * | null, updated?: string | null, first_text?: string | null, messages: number, running:
  * boolean}} SessionEntry
  *
- * @typedef {{base: string, label: string, branch: string, ahead: number, behind: number, files:
- * import("./panel.js").Changed[], truncated: boolean, errorMessage?: string | null}} GitStatus
+ * @typedef {{
+ *   base: string;
+ *   label: string;
+ *   branch: string;
+ *   ahead: number;
+ *   behind: number;
+ *   insertions: number;
+ *   deletions: number;
+ *   files: import("./panel.js").Changed[];
+ *   truncated: boolean;
+ *   errorMessage?: string | null;
+ * }} GitStatus
  *
  * @typedef {import("./panel.js").View} View
  *
@@ -2975,16 +2985,23 @@ function statusClass(code) {
   return "mod";
 }
 
-/** The branch of the chat in view, and the distance to the base the panel compares against. */
+/**
+ * The branch of the chat in view, and what the base in the panel adds up to: commits when it is
+ * another branch, lines when it is the working tree or the index.
+ */
 function renderBranch() {
   const name = status?.branch ?? "";
   el.branch.hidden = name.length === 0;
+  const lines = status?.base === "working" || status?.base === "staged";
+  const up = (lines ? status?.insertions : status?.ahead) ?? 0;
+  const down = (lines ? status?.deletions : status?.behind) ?? 0;
   el.branch.replaceChildren(
     span(name),
-    ...(status?.ahead ? [span(`+${status.ahead}`, "branch-up")] : []),
-    ...(status?.behind ? [span(`−${status.behind}`, "branch-down")] : []),
+    ...(up ? [span(`+${up}`, "branch-up")] : []),
+    ...(down ? [span(`−${down}`, "branch-down")] : []),
   );
-  el.branch.title = `${status?.label ?? state.base} · click to compare with something else`;
+  const distance = lines ? `${up} added, ${down} removed` : `${up} ahead, ${down} behind`;
+  el.branch.title = `${status?.label ?? state.base} · ${distance} · click to compare with something else`;
 }
 
 /** The two things a diff can be compared against in any folder, git or not. */

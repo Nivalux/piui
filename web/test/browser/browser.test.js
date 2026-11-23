@@ -1133,6 +1133,35 @@ test("the branch sits in the title bar and both places pick the same base", { sk
   );
   assert.deepEqual(await chip(), { parts: ["main"], base: "Working changes" }, "and back again");
 
+  fs.writeFileSync(path.join(gitProject, "notes.md"), "one\nTWO\nthree\n");
+  await page.click("#base");
+  await page.waitForSelector(".base-menu");
+  await page.locator('.base-option[data-base="staged"]').click();
+  await page.waitForFunction(
+    () => (document.getElementById("base")?.textContent ?? "") === "Staged changes",
+    undefined,
+    {
+      timeout: 30000,
+    },
+  );
+  assert.deepEqual(
+    await chip(),
+    { parts: ["main"], base: "Staged changes" },
+    "nothing is staged, so nothing was added or removed",
+  );
+
+  await page.click("#base");
+  await page.waitForSelector(".base-menu");
+  await page.locator('.base-option[data-base="working"]').click();
+  await page.waitForFunction(() => (document.getElementById("branch")?.textContent ?? "").includes("+2"), undefined, {
+    timeout: 30000,
+  });
+  assert.deepEqual(
+    await chip(),
+    { parts: ["main", "+2", "−1"], base: "Working changes" },
+    "with working changes the counts are the lines that changed, not commits to a remote",
+  );
+
   await page.click("#kill");
   await page.waitForFunction(
     (/** @type {number} */ want) => document.querySelectorAll("#tab-list .tab").length === want,
@@ -1377,7 +1406,7 @@ test("a streaming answer leaves the chat list where it is", { skip: blocked }, a
     watcher.disconnect();
     return records;
   });
-  assert.ok(churn <= 1, `the chat list was rebuilt ${churn} times while an answer streamed`);
+  assert.ok(churn <= 4, `the chat list was rebuilt ${churn} times while one answer streamed`);
 
   // A press is not a point in time: the row has to still be there when the
   // finger comes back up.

@@ -62,6 +62,8 @@ pub const Status = struct {
     branch: []const u8 = "",
     ahead: u32 = 0,
     behind: u32 = 0,
+    insertions: u32 = 0,
+    deletions: u32 = 0,
     files: []const FileStatus = &.{},
     truncated: bool = false,
     errorMessage: ?[]const u8 = null,
@@ -139,18 +141,28 @@ pub fn branches(allocator: std.mem.Allocator, io: Io, cwd: []const u8) Branches 
     return .{ .branch = trim(here), .names = list.items };
 }
 
-/// The remote branch a checkout pushes to, when the folder has a remote set up for it.
-fn upstream(allocator: std.mem.Allocator, io: Io, cwd: []const u8) ?[]const u8 {
-    const out = git(
-        allocator,
-        io,
-        cwd,
-        &.{ "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}" },
-        .limited(4096),
-    ) catch return null;
-    const name = trim(out);
-    if (name.len == 0 or std.mem.indexOf(u8, name, "@{") != null) return null;
-    return name;
+const Lines = struct { added: u32 = 0, removed: u32 = 0 };
+
+/// How big the change is against a base of the working tree or the index, in lines. Git's `numstat`
+/// is read because its columns are numbers in every language, unlike its summary line. A file no
+/// one has added yet has no lines to count, and a binary one counts as none.
+fn changeSize(allocator: std.mem.Allocator, io: Io, cwd: []const u8, base: Base) Lines {
+    const argv: []const []const u8 = switch (base) {
+        .staged => &.{ "diff", "--numstat", "--cached", "HEAD" },
+        else => &.{ "diff", "--numstat", "HEAD" },
+    };
+    const out = git(allocator, io, cwd, argv, .limited(1 << 20)) catch return .{};
+
+    var size: Lines = .{};
+    var rows = std.mem.tokenizeScalar(u8, out, '\n');
+    while (rows.next()) |row| {
+        var columns = std.mem.tokenizeScalar(u8, row, '\t');
+        const added = columns.next() orelse continue;
+        const removed = columns.next() orelse continue;
+        size.added += parseCount(added);
+        size.removed += parseCount(removed);
+    }
+    return size;
 }
 
 const Gap = struct { ahead: u32 = 0, behind: u32 = 0 };
@@ -200,13 +212,19 @@ pub fn status(allocator: std.mem.Allocator, io: Io, cwd: []const u8, base: Base)
         result.branch = trim(branch);
     } else |_| {}
 
-    // The distance beside a branch is measured to what the branch is compared with: the base when
-    // the panel compares with a branch, otherwise the remote branch this one pushes to.
-    const against: ?[]const u8 = if (base == .branch) base.refName() else upstream(a, io, cwd);
-    if (against) |ref| {
-        const gap = aheadBehind(a, io, cwd, ref);
-        result.ahead = gap.ahead;
-        result.behind = gap.behind;
+    // What stands beside the branch belongs to the base the panel compares against: commits when it
+    // is another branch, lines when it is the working tree or the index.
+    switch (base) {
+        .working, .staged => {
+            const size = changeSize(a, io, cwd, base);
+            result.insertions = size.added;
+            result.deletions = size.removed;
+        },
+        else => {
+            const gap = aheadBehind(a, io, cwd, base.refName().?);
+            result.ahead = gap.ahead;
+            result.behind = gap.behind;
+        },
     }
 
     const argv: []const []const u8 = switch (base) {
