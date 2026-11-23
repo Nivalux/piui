@@ -28,11 +28,16 @@ run ADDR=addr:
 dev ADDR=addr:
     zig build run -- --web web --addr {{ADDR}}
 
-# zig tests only
+# zig units and the fuzz replay, nothing else
 test-zig:
-    zig build test --summary all
+    zig build test-zig --summary all
 
-# browser-free js logic only (reducer, filter, rate, commands, format, diff, protocol)
+# one zig test, by part of its name
+test-zig-one PATTERN:
+    zig build test-zig --summary all -Donly="{{PATTERN}}"
+
+# js logic (reducer, filter, rate, commands, format, diff, protocol). The browser
+# file is in the same folder and skips itself where there is no chromium.
 test-js:
     node --test "web/test/**/*.test.js"
 
@@ -45,7 +50,7 @@ test-browser: build
     PIUI_BINARY="$PWD/zig-out/bin/piui" node --test --test-reporter=spec web/test/browser.test.js
 
 # one browser test, by part of its name
-test-one PATTERN: build
+test-browser-one PATTERN: build
     PIUI_BINARY="$PWD/zig-out/bin/piui" node --test --test-reporter=spec --test-name-pattern="{{PATTERN}}" web/test/browser.test.js
 
 # typecheck the js against its own jsdoc types

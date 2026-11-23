@@ -35,7 +35,10 @@ pub fn build(b: *std.Build) void {
     const options = b.addOptions();
     options.addOption(u64, "fuzz_steps", b.option(u64, "fuzz", "steps of the random fuzz test") orelse 3000);
 
+    const only = b.option([]const u8, "only", "run only the tests whose name contains this");
+
     const suite = b.addTest(.{
+        .filters = if (only) |name| &.{name} else &.{},
         .root_module = b.createModule(.{
             .root_source_file = b.path("tests.zig"),
             .target = target,
@@ -48,9 +51,12 @@ pub fn build(b: *std.Build) void {
         }),
     });
 
-    const test_step = b.step("test", "Run all tests: zig units, fuzz corpus, js logic, tsc");
+    const zig_step = b.step("test-zig", "Run the zig units and the fuzz replay, and nothing else");
     const run_suite = b.addRunArtifact(suite);
     run_suite.addPassthruArgs();
+    zig_step.dependOn(&run_suite.step);
+
+    const test_step = b.step("test", "Run all tests: zig units, fuzz corpus, js logic, tsc");
     test_step.dependOn(&run_suite.step);
 
     const js = b.addSystemCommand(&.{ "node", "--test", "web/test/**/*.test.js" });
