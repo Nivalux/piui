@@ -2744,16 +2744,18 @@ let runTicker = null;
  *
  * The count starts where the run started, which the server knows: switching to
  * a chat that has been working for three minutes has to read three minutes, not
- * one second since the click.
+ * one second since the click. The same chat asked again has moved that start, so
+ * the count goes back to the top for it too.
  *
  * @param {import("./protocol.js").TabInfo | null} tab
  * @param {boolean} running
  */
 function trackRun(tab, running) {
   const tabId = tab?.id ?? "";
-  if (running && runTab !== tabId) {
+  const started = Number(tab?.runStartedMs) || 0;
+  if (running && (runTab !== tabId || (started > 0 && started !== runSince))) {
     runTab = tabId;
-    runSince = Number(tab?.runStartedMs) || Date.now();
+    runSince = started || Date.now();
   }
   if (!running) {
     // An answer just ended in this chat. If the reader is watching the panel,
