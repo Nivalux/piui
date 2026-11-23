@@ -20,6 +20,25 @@ import {
   toastSays,
 } from "./harness.mjs";
 
+/** The box of a visible line carrying `needle`, measured in one task so a repaint cannot slip between. */
+async function lineBox(needle) {
+  const deadline = Date.now() + 3000;
+  for (;;) {
+    const seen = await page.evaluate((want) => {
+      const rows = [...document.querySelectorAll("#terminal .term-row")].filter(
+        (row) => row.offsetParent !== null && (row.textContent ?? "").includes(want),
+      );
+      const last = /** @type {HTMLElement | undefined} */ (rows.at(-1));
+      if (!last) return null;
+      const rect = last.getBoundingClientRect();
+      return { x: rect.x, y: rect.y, width: rect.width, height: rect.height };
+    }, needle);
+    if (seen) return seen;
+    if (Date.now() > deadline) return null;
+    await new Promise((done) => setTimeout(done, 50));
+  }
+}
+
 async function shellSays(/** @type {string} */ command, /** @type {string} */ want) {
   await page.locator("#terminal .term-screen:visible").first().click();
   await page.keyboard.type(command);
@@ -224,8 +243,7 @@ test("a drag over the terminal copies what it covered", { skip: blocked }, async
   await openShell();
   await shellSays("printf 'piui-copy-target\\n'", "piui-copy-target");
 
-  const row = page.locator("#terminal .term-row:visible", { hasText: "piui-copy-target" }).last();
-  const box = await row.boundingBox();
+  const box = await lineBox("piui-copy-target");
   assert.ok(box, "the line the shell printed is on the screen");
 
   await page.evaluate(() => {

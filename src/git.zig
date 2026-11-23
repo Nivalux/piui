@@ -358,9 +358,11 @@ fn gitOutput(allocator: std.mem.Allocator, io: Io, cwd: []const u8, argv: []cons
     return invoke(allocator, io, cwd, argv, limit, true);
 }
 
+/// Reads only, so git is told to leave the index alone and a commit somewhere else never meets a lock held here.
 fn invoke(allocator: std.mem.Allocator, io: Io, cwd: []const u8, argv: []const []const u8, limit: Io.Limit, allow_diff_exit: bool) Error![]u8 {
     var full: std.ArrayList([]const u8) = .empty;
     try full.append(allocator, "git");
+    try full.append(allocator, "--no-optional-locks");
     for (argv) |item| try full.append(allocator, item);
 
     const result = std.process.run(allocator, io, .{

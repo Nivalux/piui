@@ -64,8 +64,9 @@ export class TermView {
     document.addEventListener("mouseup", (event) => {
       if (!this.dragged) return;
       this.dragged = false;
-      if (event.button !== 0) return;
       const text = this.selected();
+      this.paint();
+      if (event.button !== 0) return;
       if (text.length > 0) return void this.copy(text);
       this.flushCopy();
       this.focus();
@@ -202,7 +203,12 @@ export class TermView {
     return { rows, cols };
   }
 
+  /** Paints the grid, but holds while the pointer is down so a selection keeps the rows it began on. */
   paint() {
+    if (this.dragged) {
+      this.lastPaint = "";
+      return;
+    }
     const out = this.term.render();
     const painted = signature(out);
     if (painted === this.lastPaint) return;
