@@ -1077,6 +1077,28 @@ async function createTab(body) {
 }
 
 /**
+ * Start pi again for a chat that has no pi behind it any more: one the server let go after it was
+ * quiet for a while, or one whose pi exited. The chat still knows its folder and its session file,
+ * so the reopened chat reads back the same conversation.
+ *
+ * @param {string} id the chat that is gone
+ * @returns {Promise<string>} the chat to write to, "" when pi did not come back
+ */
+async function wake(id) {
+  const gone = state.tabs.find((item) => item.id === id);
+  const again = await createTab(
+    gone?.sessionPath ? { cwd: gone.cwd, session: gone.sessionPath } : { cwd: gone?.cwd ?? "" },
+  );
+  if (again) toast(gone?.sessionPath ? "pi started again in this chat" : "this chat had no session to read back");
+  return again;
+}
+
+/** @param {unknown} error @returns {boolean} whether the server said this chat is not there */
+function isGone(error) {
+  return error instanceof Error && error.message.startsWith("404");
+}
+
+/**
  * Look at one chat: its transcript, its files, its terminals.
  *
  * @param {string} id
@@ -1159,6 +1181,16 @@ function connect(id) {
         const tabs = Array.isArray(list) ? list : [];
         if (tabs.some((tab) => tab.id === id)) return void setTimeout(() => connect(id), 2000);
 
+        // A chat that is not on the server any more was reaped for idleness or closed somewhere
+        // else. Reading it is still worth doing and typing into it starts pi again, so it stays on
+        // screen and says so rather than the page jumping off to another chat.
+        const gone = state.tabs.find((tab) => tab.id === id);
+        if (gone) {
+          gone.closed = true;
+          render();
+          return;
+        }
+
         state.tabs = tabs;
         state.active = null;
         const next = tabs[0];
@@ -1221,10 +1253,15 @@ function ask(type) {
 /** @param {Record<string, unknown>} command */
 async function sendCommand(command) {
   if (!state.active) return;
+  const id = state.active;
   try {
-    await postJSON(`/api/cmd?id=${encodeURIComponent(state.active)}`, command);
+    await postJSON(`/api/cmd?id=${encodeURIComponent(id)}`, command);
   } catch (error) {
-    toast(error instanceof Error ? error.message : "command failed");
+    if (!isGone(error)) return void toast(error instanceof Error ? error.message : "command failed");
+
+    const again = await wake(id);
+    if (!again) return;
+    await postJSON(`/api/cmd?id=${encodeURIComponent(again)}`, command).catch(() => toast("command failed"));
   }
 }
 
@@ -1251,7 +1288,7 @@ function handle(frame) {
       stream?.close();
       stream = null;
       renderFooter();
-      renderSidebar();
+      render();
     }
     return;
   }
@@ -1664,6 +1701,11 @@ async function send() {
   if (!state.active) await createTab({});
   if (!state.active) return;
 
+  // Typing into a chat whose pi is gone wakes it, so that coming back to an old chat after the
+  // server let it go is the same gesture as typing anywhere else.
+  if (active()?.closed) await wake(state.active);
+  if (!state.active) return;
+
   const running = active()?.running === true;
   const type = running ? (state.ui.send_mode === "queue" ? "follow_up" : "steer") : "prompt";
 
@@ -1683,6 +1725,18 @@ async function send() {
   try {
     await postJSON(`/api/cmd?id=${encodeURIComponent(tabId)}`, command);
   } catch (error) {
+    if (isGone(error)) {
+      release(tabId, text);
+      const again = await wake(tabId);
+      if (again) {
+        hold(again, text);
+        await postJSON(`/api/cmd?id=${encodeURIComponent(again)}`, command).catch(() => {
+          release(again, text);
+          toast("send failed");
+        });
+        return;
+      }
+    }
     release(tabId, text);
     el.input.value = el.input.value.length === 0 ? text : el.input.value;
     grow();
