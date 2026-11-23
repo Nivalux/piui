@@ -29,13 +29,13 @@ test "response carries the command, the outcome and the session file" {
     defer parse.deinit();
 
     const record = try parse.line(
-        \\{"id":"req-1","type":"response","command":"get_state","success":true,"data":{"sessionId":"6f2c","sessionFile":"/home/pi/.pi/sessions/a.jsonl"}}
+        \\{"id":"req-1","type":"response","command":"get_state","success":true,"data":{"sessionId":"6f2c","sessionFile":"/home/dev/.pi/sessions/a.jsonl"}}
     );
     try testing.expectEqual(protocol.Kind.response, record.kind);
     try testing.expectEqualStrings("req-1", record.id.?);
     try testing.expectEqualStrings("get_state", record.response.command);
     try testing.expect(record.response.success);
-    try testing.expectEqualStrings("/home/pi/.pi/sessions/a.jsonl", record.response.session_file.?);
+    try testing.expectEqualStrings("/home/dev/.pi/sessions/a.jsonl", record.response.session_file.?);
     try testing.expectEqualStrings("6f2c", record.response.session_id.?);
 }
 
