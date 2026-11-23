@@ -237,6 +237,19 @@ function markSeen(id) {
   seen[id] = Date.now();
   localStorage.setItem("piui:seen", JSON.stringify(seen));
 }
+
+/**
+ * An answer that arrived with its own chat on the screen was read the moment it landed, so the row
+ * of a chat nobody has to click back to is not marked. Only what finished out of sight is waiting.
+ */
+function markOpenChatRead() {
+  const tab = active();
+  if (!tab || document.visibilityState !== "visible") return;
+  const ended = Number(tab.finishedMs) || 0;
+  if (ended <= (Number(seen[tab.id]) || 0)) return;
+  seen[tab.id] = ended;
+  localStorage.setItem("piui:seen", JSON.stringify(seen));
+}
 /** Folder the session list is narrowed to, `all` for everything. */
 let sessionProject = "all";
 /** Folders whose full session list the reader asked for. */
@@ -1850,6 +1863,7 @@ function render() {
  */
 function renderSidebar() {
   if (rowMenu && !rowMenu.anchor.isConnected) closeMenuButton();
+  markOpenChatRead();
   const filter = String(el.filter.value).trim().toLowerCase();
   const hits = rank(filter, state.tabs, (tab) => [labelOf(tab), tab.cwd]);
   const visible = hits.map((hit) => hit.item);

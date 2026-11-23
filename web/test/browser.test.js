@@ -1503,6 +1503,48 @@ test("opening a settled chat is not activity, so the list keeps its order", asyn
   assert.deepEqual(await pair(), before, "clicking back and forth moved nothing");
 });
 
+test("only what finished out of sight waits to be read", { skip: blocked }, async () => {
+  /** The server's own word that a chat has run and settled, not the page's stale copy of it. */
+  const finished = async (/** @type {string} */ id) =>
+    page.waitForFunction(
+      async (/** @type {string} */ chat) => {
+        const found = await (await fetch("/api/tabs")).json();
+        const tabs = /** @type {{id: string, running: boolean, finishedMs: number}[]} */ (found);
+        const tab = tabs.find((row) => row.id === chat);
+        return tab !== undefined && !tab.running && tab.finishedMs > 0;
+      },
+      id,
+      { timeout: 30000 },
+    );
+
+  /** A chat nobody is watching is only heard about when the list is next read. */
+  const marked = async (/** @type {string} */ id, /** @type {boolean} */ want) => {
+    const looking_for = want ? "unread" : "read";
+    const deadline = Date.now() + 20_000;
+    while (Date.now() < deadline) {
+      const now = await page
+        .locator(`#tab-list .tab[data-tab="${id}"]`)
+        .evaluate((/** @type {HTMLElement} */ row) => (row.classList.contains("unread") ? "unread" : "read"));
+      if (now === looking_for) return true;
+      await page.waitForTimeout(200);
+    }
+    return false;
+  };
+
+  const watched = await openFreshChat();
+  await runTurn("answer briefly");
+  await finished(watched);
+
+  const other = await openFreshChat();
+  await idle();
+  await page.fill("#input", "a steady stream");
+  await page.click("#send");
+  await switchTo(watched);
+
+  assert.ok(await marked(other, true), "the chat that ended after the reader left it waits to be read");
+  assert.ok(await marked(watched, false), "this one answered while it was on the screen");
+});
+
 const onePixelPng = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg==";
 
 test("a picture dragged into the composer shows the picture, not just a label", async () => {
