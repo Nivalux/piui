@@ -467,7 +467,7 @@ function wire() {
     holdTimer = setTimeout(releaseTabs, 5000);
   });
   for (const done of ["click", "pointercancel"]) {
-    window.addEventListener(done, () => releaseTabs());
+    window.addEventListener(done, () => setTimeout(releaseTabs, 0), true);
   }
   // Anywhere else on the page dismisses an open row menu; the ⋯ and its items
   // stop their own clicks, so this only ever sees a click outside of it.
