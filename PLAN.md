@@ -81,7 +81,7 @@ Merged in `~/.piui/config.json` per repository path plus a global default, writt
 - Zig (`zig build test`): framing (LF-only, U+2028/29, CRLF), response correlation, session index scan including cache invalidation via (mtime,size), diff base → command builder, porcelain parser, path guard. Fake-pi as a test binary with canned JSONL.
 - JS (`node --test`): pure reducer `reduce(state, event) -> state` without DOM (streaming reconstruction from `message_update`, tool status, image blocks), `formatRelativeTime`, tool summary, diff classification.
 - JSDoc boundary: `transcript.js` (the reducer) and `protocol.js` fully annotated and strict; the DOM building blocks deliberately loose, because `checkJs` is weaker than TS at DOM narrowing. `tsconfig.json` with `strict`, `checkJs`, `noEmit`, `allowJs`.
-- Browser (`web/test/browser.test.js`): the real page in chromium against the real server, with `web/test/fake-pi.mjs` replaying a canned turn — no model, no key, no network. Covers what only a browser sees: a fold opening under the click while its row is rewritten, the counts and the failure mark of a closed tool row, where the page scrolls. Needs the nix shell (chromium + playwright-core); outside it the file skips itself.
+- Browser (`web/test/browser/browser.test.js`): the real page in chromium against the real server, with `web/test/fake-pi.mjs` replaying a canned turn — no model, no key, no network. Covers what only a browser sees: a fold opening under the click while its row is rewritten, the counts and the failure mark of a closed tool row, where the page scrolls. Needs the nix shell (chromium + playwright-core); outside it the file skips itself.
 
 ## Milestones
 

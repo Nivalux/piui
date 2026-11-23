@@ -13,9 +13,9 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const root = path.resolve(here, "..", "..");
+const root = path.resolve(here, "..", "..", "..");
 const binary = path.join(root, "zig-out", "bin", "piui");
-const fakePi = path.join(here, "fake-pi.mjs");
+const fakePi = path.join(here, "..", "fake-pi.mjs");
 const token = "f".repeat(40);
 
 const require = createRequire(import.meta.url);
