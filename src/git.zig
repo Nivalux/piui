@@ -139,6 +139,20 @@ pub fn branches(allocator: std.mem.Allocator, io: Io, cwd: []const u8) Branches 
     return .{ .branch = trim(here), .names = list.items };
 }
 
+/// The remote branch a checkout pushes to, when the folder has a remote set up for it.
+fn upstream(allocator: std.mem.Allocator, io: Io, cwd: []const u8) ?[]const u8 {
+    const out = git(
+        allocator,
+        io,
+        cwd,
+        &.{ "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}" },
+        .limited(4096),
+    ) catch return null;
+    const name = trim(out);
+    if (name.len == 0 or std.mem.indexOf(u8, name, "@{") != null) return null;
+    return name;
+}
+
 const Gap = struct { ahead: u32 = 0, behind: u32 = 0 };
 
 /// How far this checkout stands from a ref: how far ahead of it, and how far behind it.
@@ -186,8 +200,11 @@ pub fn status(allocator: std.mem.Allocator, io: Io, cwd: []const u8, base: Base)
         result.branch = trim(branch);
     } else |_| {}
 
-    if (base == .branch) {
-        const gap = aheadBehind(a, io, cwd, base.refName().?);
+    // The distance beside a branch is measured to what the branch is compared with: the base when
+    // the panel compares with a branch, otherwise the remote branch this one pushes to.
+    const against: ?[]const u8 = if (base == .branch) base.refName() else upstream(a, io, cwd);
+    if (against) |ref| {
+        const gap = aheadBehind(a, io, cwd, ref);
         result.ahead = gap.ahead;
         result.behind = gap.behind;
     }

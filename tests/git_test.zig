@@ -37,6 +37,37 @@ test "status and diff of a working tree" {
     try testing.expect(std.mem.indexOf(u8, one, "new.txt") != null);
 }
 
+test "a working tree with a remote says how far its branch stands from it" {
+    var threaded: Io.Threaded = .init(testing.allocator, .{ .environ = testing.environ });
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    const repo = try buildRepo(io, a);
+
+    const seed = try join(a, &.{ try root(a), "seed" });
+    try Io.Dir.cwd().deleteTree(io, seed);
+    try Io.Dir.cwd().createDirPath(io, seed);
+    try run(io, a, seed, &.{ "init", "-q", "--bare", "." });
+
+    try run(io, a, repo, &.{ "remote", "add", "origin", seed });
+    try run(io, a, repo, &.{ "push", "-q", "-u", "origin", "master" });
+
+    try write(io, a, repo, "g.txt", "more\n");
+    try run(io, a, repo, &.{ "add", "g.txt" });
+    try run(io, a, repo, &.{ "-c", "user.email=piui@test", "-c", "user.name=piui", "commit", "-qm", "ahead" });
+
+    const working = git.status(a, io, repo, .working);
+    try testing.expectEqual(@as(u32, 1), working.ahead);
+    try testing.expectEqual(@as(u32, 0), working.behind);
+
+    const alone = git.status(a, io, try buildRepo(io, a), .working);
+    try testing.expectEqual(@as(u32, 0), alone.ahead);
+}
+
 test "a directory without a repository says so" {
     var threaded: Io.Threaded = .init(testing.allocator, .{ .environ = testing.environ });
     defer threaded.deinit();
