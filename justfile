@@ -4,8 +4,7 @@
 # touching a recipe is its summary and a longer note goes above a blank line.
 addr := "127.0.0.1:7788"
 
-# A suite that cannot hang: a minute to a test, and the runner leaves when the run is over even if
-# a browser child forgot to.
+# A suite that cannot hang: a minute to a test, and the runner leaves whatever child forgot to.
 node_flags := "--test-timeout=60000 --test-force-exit"
 
 # what a reviewer runs before pushing: format, every test, and the binary
@@ -17,9 +16,7 @@ build:
 
 # every test: zig units + fuzz replay, js logic, jsdoc types, browser
 #
-# `zig build test` runs the js tests and tsc too, and the browser file is in the
-# same glob, so this is everything the machine can test. It needs the nix shell
-# for chromium and playwright; without them the browser file skips itself.
+# Needs the nix shell; without chromium and playwright the browser files skip themselves.
 
 # all of it: zig, js, types, browser
 test:
@@ -52,10 +49,9 @@ test-zig:
 test-zig-one PATTERN:
     zig build test-zig --summary all -Donly="{{PATTERN}}"
 
-# the js logic tests, browser file aside
+# the js logic tests, browser files aside
 #
-# Reducer, filter, rate, commands, format, diff, protocol, tabs, dom. The browser
-# file lives in web/test/browser so that this one stays a few seconds long.
+# The browser files live in web/test/browser so this lot stays a few seconds long.
 
 # js logic only, no browser
 test-js:
@@ -63,18 +59,16 @@ test-js:
 
 # the browser tests on their own
 #
-# Both chromium and playwright come from this shell: PIUI_CHROMIUM is the browser
-# to drive, PLAYWRIGHT_CORE the library that drives it, and the file skips itself
-# when either is missing. Built first, because the server under test carries web/
-# inside it, so a binary from before an edit would answer for that edit.
+# One file, one server, one page: the files run at the same time, so the suite is
+# as long as its slowest file. Built first, because web/ lives inside the binary.
 
 # the browser tests, against a fresh build
 test-browser: build
-    PIUI_BINARY="$PWD/zig-out/bin/piui" node --test {{node_flags}} --test-reporter=spec web/test/browser/browser.test.js
+    PIUI_BINARY="$PWD/zig-out/bin/piui" node --test {{node_flags}} --test-reporter=spec web/test/browser/*.test.js
 
 # one browser test, by part of its name
 test-browser-one PATTERN: build
-    PIUI_BINARY="$PWD/zig-out/bin/piui" node --test {{node_flags}} --test-reporter=spec --test-name-pattern="{{PATTERN}}" web/test/browser/browser.test.js
+    PIUI_BINARY="$PWD/zig-out/bin/piui" node --test {{node_flags}} --test-reporter=spec --test-name-pattern="{{PATTERN}}" web/test/browser/*.test.js
 
 # typecheck the js against its own jsdoc types
 typecheck:
