@@ -76,10 +76,7 @@ test("something that only starts like a command is still a prompt", { skip: bloc
 });
 
 test("reload reopens the chat on the file it was opened from", { skip: blocked }, async () => {
-  await page
-    .locator("#session-list", { hasText: "explain the pi wiring" })
-    .locator("text=explain the pi wiring")
-    .click();
+  await page.locator("#session-list .session-title", { hasText: "explain the pi wiring" }).first().click();
   await page.waitForFunction(
     /** @param {string} want */
     (want) => document.getElementById("tab-cwd")?.textContent === want,

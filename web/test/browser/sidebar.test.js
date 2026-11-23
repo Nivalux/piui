@@ -29,7 +29,37 @@ test("the session list is ordered by its newest line", { skip: blocked }, async 
   await page.waitForSelector("#session-list .session");
   const titles = await page.locator("#session-list .session .session-title").allInnerTexts();
   assert.equal(titles[0], "explain the pi wiring", "the session with the newest last line comes first");
-  assert.equal(titles.length, 3);
+  assert.equal(titles.length, 5);
+});
+
+test("a fork says it is one, and says which chat it came from", { skip: blocked }, async () => {
+  await page.waitForSelector("#session-list .session");
+  /** @type {{title: string, glyph: number, meta: string, tip: string}[]} */
+  const rows = await page.evaluate(() =>
+    [...document.querySelectorAll("#session-list .session")].map((row) => ({
+      title: row.querySelector(".session-title")?.textContent ?? "",
+      glyph: row.querySelectorAll(".fork-mark svg").length,
+      meta: row.querySelector(".session-meta")?.textContent ?? "",
+      tip: row.getAttribute("title") ?? "",
+    })),
+  );
+
+  const forks = rows.filter((row) => row.glyph > 0);
+  assert.deepEqual(
+    forks.map((row) => row.title),
+    ["#2 explain the pi wiring", "#1 explain the pi wiring"],
+    "the two forks of one chat are numbered, newest first in the list",
+  );
+  assert.ok(
+    forks.every((row) => row.meta.includes("· fork of explain the pi wiring")),
+    "the line under a fork names the chat it was copied from",
+  );
+  assert.ok(forks[0].meta.startsWith("1d ago · 2 msgs"), "and still leaves time and count readable");
+  assert.ok(forks[0].tip.includes("explain the pi wiring"), "hovering says it too");
+
+  const plain = rows.find((row) => row.title === "nothing else at all");
+  assert.equal(plain?.glyph, 0, "a chat nobody forked wears nothing");
+  assert.ok(plain !== undefined && !plain.meta.includes("fork of"), "and its line stays time and count");
 });
 
 test("typing in the sidebar filters it the way fzf does", { skip: blocked }, async () => {
@@ -39,7 +69,11 @@ test("typing in the sidebar filters it the way fzf does", { skip: blocked }, asy
 
   await page.fill("#filter", "xplw");
   const titles = await page.locator("#session-list .session .session-title").allInnerTexts();
-  assert.deepEqual(titles, ["explain the pi wiring"], "letters in order, gaps allowed");
+  assert.equal(titles.length, 3, "a fork is found by the line it copied");
+  assert.ok(
+    titles.every((text) => text.endsWith("explain the pi wiring")),
+    "letters in order, gaps allowed, one chat and its two forks",
+  );
   assert.ok((await page.locator("#session-list .session-title mark").count()) > 0, "the matched letters are marked");
 
   await page.fill("#filter", "qqqq");
@@ -47,7 +81,7 @@ test("typing in the sidebar filters it the way fzf does", { skip: blocked }, asy
 
   await page.keyboard.press("Escape");
   assert.equal(await page.inputValue("#filter"), "");
-  assert.equal(await page.locator("#session-list .session").count(), 3);
+  assert.equal(await page.locator("#session-list .session").count(), 5);
 });
 
 test("the project picker completes a path and opens a chat in it", { skip: blocked }, async () => {

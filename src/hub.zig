@@ -5,6 +5,7 @@ const framing = @import("framing.zig");
 const protocol = @import("protocol.zig");
 const json = @import("json.zig");
 const log = @import("log.zig");
+const sessions = @import("sessions.zig");
 const settings = @import("settings.zig");
 
 pub const idle_check_seconds = 30;
@@ -213,8 +214,11 @@ pub const Hub = struct {
             args.append(self.allocator, path) catch return error.OutOfMemory;
         }
         if (self.sessions_root.len > 0) {
+            const store = sessions.projectDir(self.allocator, self.sessions_root, resolved) catch
+                return error.OutOfMemory;
+            Io.Dir.cwd().createDirPath(self.io, store) catch {};
             args.append(self.allocator, "--session-dir") catch return error.OutOfMemory;
-            args.append(self.allocator, self.sessions_root) catch return error.OutOfMemory;
+            args.append(self.allocator, store) catch return error.OutOfMemory;
         }
 
         const process = child.Child.spawn(self.allocator, self.io, .{

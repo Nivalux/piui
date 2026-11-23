@@ -310,11 +310,26 @@ export async function start() {
   wiredProject = path.join(dir, "wired-project");
   fs.mkdirSync(wiredProject, { recursive: true });
   // Old header, young last line: the sidebar has to sort on the latter.
-  writeSession(path.join(sessions, "2026-11-01T00-00-00-000Z_wired.jsonl"), {
+  const wired = path.join(sessions, "2026-11-01T00-00-00-000Z_wired.jsonl");
+  writeSession(wired, {
     cwd: wiredProject,
     first: "explain the pi wiring",
     header: "2026-11-01T00:00:00.000Z",
     last: "2026-12-01T09:00:00.000Z",
+  });
+  writeSession(path.join(sessions, "2026-11-04T00-00-00-000Z_branch-one.jsonl"), {
+    cwd: wiredProject,
+    first: "explain the pi wiring",
+    header: "2026-11-04T00:00:00.000Z",
+    last: "2026-11-21T09:00:00.000Z",
+    parent: wired,
+  });
+  writeSession(path.join(sessions, "2026-11-05T00-00-00-000Z_branch-two.jsonl"), {
+    cwd: wiredProject,
+    first: "explain the pi wiring",
+    header: "2026-11-05T00:00:00.000Z",
+    last: "2026-11-22T09:00:00.000Z",
+    parent: wired,
   });
   writeSession(path.join(sessions, "2026-11-02T00-00-00-000Z_other.jsonl"), {
     cwd: "/srv/web",
@@ -441,11 +456,13 @@ function settled(work, ms) {
  * sidebar has to sort on.
  *
  * @param {string} file
- * @param {{cwd: string, first: string, header: string, last: string}} spec
+ * @param {{cwd: string, first: string, header: string, last: string, parent?: string}} spec
  */
 function writeSession(file, spec) {
+  const header = { type: "session", cwd: spec.cwd, timestamp: spec.header };
+  if (spec.parent) header.parentSession = spec.parent;
   const lines = [
-    JSON.stringify({ type: "session", cwd: spec.cwd, timestamp: spec.header }),
+    JSON.stringify(header),
     JSON.stringify({
       type: "message",
       timestamp: spec.header,

@@ -22,6 +22,7 @@ import {
   truncate,
 } from "./format.js";
 import { isUnread, splitTabs } from "./tabs.js";
+import { lineage } from "./forks.js";
 import { Meter } from "./rate.js";
 import { parseDiff } from "./diff.js";
 import { toolView } from "./toolview.js";
@@ -54,9 +55,9 @@ import {
  * @typedef {import("./protocol.js").PiModel} PiModel
  * @typedef {import("./transcript.js").Block} Block
  *
- * @typedef {{id: string, path: string, name?: string | null, cwd?: string | null, created?: string
- * | null, updated?: string | null, first_text?: string | null, messages: number, running:
- * boolean}} SessionEntry
+ * @typedef {{id: string, path: string, name?: string | null, cwd?: string | null, parent?: string
+ * | null, created?: string | null, updated?: string | null, first_text?: string | null, messages:
+ * number, running: boolean}} SessionEntry
  *
  * @typedef {{
  *   base: string;
@@ -864,6 +865,7 @@ function showShell(id) {
 async function loadSessions() {
   const list = await getJSON("/api/sessions").catch(() => null);
   state.sessions = Array.isArray(list) ? list : [];
+  lineageOf = lineage(state.sessions.map((entry) => ({ ...entry, title: sessionTitle(entry) })));
   renderSidebar();
 }
 
@@ -2195,7 +2197,11 @@ function renderSessions(filter) {
   paintProjectFilter();
 
   const inProject = state.sessions.filter((entry) => sessionProject === "all" || bucketOf(entry) === sessionProject);
-  const hits = rank(filter, inProject, (entry) => [sessionTitle(entry), entry.cwd ?? ""]);
+  const hits = rank(filter, inProject, (entry) => [
+    sessionLabel(entry),
+    entry.cwd ?? "",
+    lineageOf.get(entry.path)?.of ?? "",
+  ]);
 
   /** @type {HTMLElement[]} */
   const rows = [];
@@ -2212,6 +2218,13 @@ function renderSessions(filter) {
 }
 
 /**
+ * Where each stored chat came from, rebuilt whenever the list is refetched.
+ *
+ * @type {Map<string, {of: string, mark: string}>}
+ */
+let lineageOf = new Map();
+
+/**
  * What a session is called in the list: its first line, else its pi-given
  * name, else the bare id.
  *
@@ -2222,18 +2235,38 @@ function sessionTitle(entry) {
 }
 
 /**
+ * The same title with the fork number in front, so the three chats that all
+ * open with the same first line can still be named one at a time.
+ *
+ * @param {SessionEntry} entry
+ */
+function sessionLabel(entry) {
+  const mark = lineageOf.get(entry.path)?.mark ?? "";
+  return mark.length > 0 ? `${mark} ${sessionTitle(entry)}` : sessionTitle(entry);
+}
+
+/**
  * @param {SessionEntry} entry
  * @param {[number, number][]} ranges
  */
 function sessionRow(entry, ranges = []) {
   const already = state.tabs.find((tab) => tab.sessionPath === entry.path);
+  const from = lineageOf.get(entry.path);
+  const label = sessionLabel(entry);
   const row = element("div", `session${already ? " open" : ""}${entry.running ? " running" : ""}`);
-  const title = span(sessionTitle(entry), "session-title");
+  const title = span(label, "session-title");
   if (ranges.length > 0) {
     title.replaceChildren();
-    title.append(highlight(sessionTitle(entry), ranges, "mark"));
+    title.append(highlight(label, ranges, "mark"));
   }
-  row.append(title, span(`${relativeTime(entry.updated, Date.now())} · ${entry.messages} msgs`, "session-meta"));
+  if (from) {
+    title.prepend(forkMark(from.of));
+    row.title = `forked from ${from.of}\n${entry.parent ?? ""}`;
+  }
+  const meta = from
+    ? `${relativeTime(entry.updated, Date.now())} · ${entry.messages} msgs · fork of ${from.of}`
+    : `${relativeTime(entry.updated, Date.now())} · ${entry.messages} msgs`;
+  row.append(title, span(meta, "session-meta"));
   row.onclick = () => void (already ? openTab(already.id) : createTab({ session: entry.path }));
   row.append(menuButton(() => [{ label: "Copy path", run: () => void copyPath(entry.cwd ?? "") }]));
   return row;
@@ -2358,7 +2391,12 @@ function tabRow(tab, ranges = []) {
     title.replaceChildren();
     title.append(highlight(labelOf(tab), ranges, "mark"));
   }
-  row.append(top, title, tabFoot(tab));
+  const from = tab.sessionPath ? lineageOf.get(tab.sessionPath) : undefined;
+  if (from) {
+    title.prepend(forkMark(from.of));
+    row.title = `forked from ${from.of}\n${tab.sessionPath ?? ""}`;
+  }
+  row.append(top, title, tabFoot(tab, from));
   row.onclick = () => void openTab(tab.id);
   row.append(
     menuButton(() => [
@@ -2493,11 +2531,13 @@ async function copyPath(text) {
 
 /**
  * @param {TabInfo} tab
+ * @param {{of: string, mark: string} | undefined} [from]
  */
-function tabFoot(tab) {
+function tabFoot(tab, from) {
   const foot = element("div", "tab-foot");
   const branch = tab.id === state.active ? (status?.branch ?? "") : "";
   foot.append(span(branch.length > 0 ? branch : shortPath(tab.cwd), "path"));
+  if (from) foot.append(span(`fork of ${from.of}`, "fork-of"));
   if (tab.id === state.active && state.model.length > 0) foot.append(span(shortModel(state.model), "model"));
   return foot;
 }
@@ -4023,7 +4063,7 @@ function active() {
 function labelOf(tab) {
   if (tab.sessionName && tab.sessionName.length > 0) return tab.sessionName;
   const resume = state.sessions.find((entry) => entry.path === tab.sessionPath);
-  if (resume?.first_text) return firstLine(resume.first_text);
+  if (resume?.first_text || resume?.name) return sessionLabel(resume);
   if (!isProjectCwd(tab.cwd)) return "Chat";
   return basename(tab.cwd);
 }
@@ -4094,6 +4134,19 @@ const ICONS = {
   copy: '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M15 5.5A1.5 1.5 0 0 0 13.5 4H5.5A1.5 1.5 0 0 0 4 5.5V13"/></svg>',
   fork: '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><circle cx="7" cy="5.5" r="2.2"/><circle cx="17" cy="5.5" r="2.2"/><circle cx="12" cy="18.5" r="2.2"/><path d="M7 7.7v1.8a2.2 2.2 0 0 0 2.2 2.2h5.6a2.2 2.2 0 0 0 2.2-2.2V7.7"/><path d="M12 11.7v4.6"/></svg>',
 };
+
+/**
+ * The glyph in front of a chat that was forked, carrying the chat it came from on hover.
+ *
+ * @param {string} of
+ * @returns {HTMLElement}
+ */
+function forkMark(of) {
+  const mark = element("span", "fork-mark");
+  mark.innerHTML = ICONS.fork;
+  mark.title = `forked from ${of}`;
+  return mark;
+}
 
 /**
  * @param {"copy" | "fork"} name

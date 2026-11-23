@@ -15,6 +15,8 @@ pub const Entry = struct {
     path: []const u8,
     name: ?[]const u8 = null,
     cwd: ?[]const u8 = null,
+    /// The chat this one was forked from, straight out of the header Pi writes.
+    parent: ?[]const u8 = null,
     created: ?[]const u8 = null,
     updated: ?[]const u8 = null,
     first_text: ?[]const u8 = null,
@@ -126,6 +128,7 @@ pub const Index = struct {
             if (std.mem.eql(u8, kind, "session")) {
                 entry.cwd = own(self.allocator, protocol.string(object, "cwd"));
                 entry.created = own(self.allocator, protocol.string(object, "timestamp"));
+                entry.parent = own(self.allocator, protocol.string(object, "parentSession"));
             } else if (std.mem.eql(u8, kind, "session_info")) {
                 entry.name = own(self.allocator, protocol.string(object, "name"));
             } else if (std.mem.eql(u8, kind, "message")) {
@@ -218,6 +221,26 @@ fn clip(allocator: std.mem.Allocator, text: []const u8) ?[]const u8 {
 fn own(allocator: std.mem.Allocator, value: ?[]const u8) ?[]const u8 {
     const text = value orelse return null;
     return allocator.dupe(u8, text) catch null;
+}
+
+/// The folder Pi keeps one project's chats in: the store plus the working directory with every
+/// separator turned into a dash and the whole wrapped in double dashes.
+pub fn projectDir(allocator: std.mem.Allocator, root: []const u8, cwd: []const u8) ![]u8 {
+    var name: std.ArrayList(u8) = .empty;
+    errdefer name.deinit(allocator);
+    defer name.deinit(allocator);
+
+    var rest = cwd;
+    while (std.mem.startsWith(u8, rest, "/") or std.mem.startsWith(u8, rest, "\\")) rest = rest[1..];
+    if (rest.len == 0) return allocator.dupe(u8, root);
+
+    name.appendSlice(allocator, "--") catch return error.OutOfMemory;
+    for (rest) |byte| {
+        name.append(allocator, if (byte == '/' or byte == '\\' or byte == ':') '-' else byte) catch return error.OutOfMemory;
+    }
+    name.appendSlice(allocator, "--") catch return error.OutOfMemory;
+
+    return std.fs.path.join(allocator, &.{ root, name.items });
 }
 
 /// `<timestamp>_<id>.jsonl` → `<id>`; Pi also accepts a bare `<id>.jsonl`.

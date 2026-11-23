@@ -19,6 +19,12 @@ const other_session =
     \\
 ;
 
+const forked_session =
+    \\{"type":"session","version":3,"id":"cccccccc-0000-0000-0000-000000000000","timestamp":"2026-11-23T16:00:00.000Z","cwd":"/cache/projects/piui","parentSession":"/store/--cache-projects-piui--/2026-11-21T10-00-00-000Z_aaaaaaaa.jsonl"}
+    \\{"type":"message","id":"c1","parentId":null,"timestamp":"2026-11-23T16:00:01.000Z","message":{"role":"user","content":"start the same chat over"}}
+    \\
+;
+
 /// The store lives under the cache so a test run cannot touch a real Pi session, and each test gets
 /// its own directory because the runner may run tests side by side.
 fn build(comptime store: []const u8, io: Io) !void {
@@ -136,6 +142,46 @@ test "a flat store, the way Pi writes today, is listed and resolvable" {
 
     const path = try index.resolve("bbbbbbbb");
     try testing.expect(std.mem.endsWith(u8, path, "2026-11-19T08-00-00-000Z_bbbbbbbb.jsonl"));
+}
+
+test "a fork names the chat it was started from" {
+    var threaded: Io.Threaded = .init(testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const store = ".zig-cache/piui-sessions-fork";
+    Io.Dir.cwd().deleteTree(io, store) catch {};
+    try Io.Dir.cwd().createDirPath(io, store ++ "/--cache-projects-piui--");
+    defer Io.Dir.cwd().deleteTree(io, store) catch {};
+
+    try Io.Dir.cwd().writeFile(io, .{ .sub_path = store ++ "/2026-11-23T16-00-00-000Z_cccccccc.jsonl", .data = forked_session });
+    try Io.Dir.cwd().writeFile(io, .{ .sub_path = store ++ "/2026-11-21T10-00-00-000Z_aaaaaaaa.jsonl", .data = newer_session });
+
+    const found = try sessions.Index.init(arena, io, store).list("/cache/projects/piui");
+    try testing.expectEqual(@as(usize, 2), found.len);
+
+    try testing.expectEqualStrings(
+        "/store/--cache-projects-piui--/2026-11-21T10-00-00-000Z_aaaaaaaa.jsonl",
+        found[0].parent.?,
+    );
+    try testing.expectEqual(@as(?[]const u8, null), found[1].parent);
+}
+
+test "the folder of a project is named the way Pi names it" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    try testing.expectEqualStrings(
+        "/home/pi/.pi/agent/sessions/--cache-projects-piui--",
+        try sessions.projectDir(arena, "/home/pi/.pi/agent/sessions", "/cache/projects/piui"),
+    );
+    try testing.expectEqualStrings("/store/--C--work-app--", try sessions.projectDir(arena, "/store", "C:/work/app"));
+    try testing.expectEqualStrings("/store", try sessions.projectDir(arena, "/store", "/"));
 }
 
 test "resolve finds a session by id in any project directory" {

@@ -361,6 +361,30 @@ pre,
   opacity: 0.75;
 }
 
+.tab-foot .fork-of {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--accent);
+  opacity: 0.85;
+}
+
+.fork-mark {
+  display: inline-flex;
+  align-items: center;
+  vertical-align: -2px;
+  margin-right: 4px;
+  color: var(--accent);
+  opacity: 0.85;
+}
+
+.fork-mark svg {
+  width: 11px;
+  height: 11px;
+}
+
 .dot {
   width: 7px;
   height: 7px;
@@ -2154,6 +2178,9 @@ pre,
   font: 11px var(--mono);
   color: var(--fg-soft);
   opacity: 0.8;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .more {
