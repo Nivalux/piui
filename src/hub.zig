@@ -124,6 +124,13 @@ pub const TabInfo = struct {
     goneFolder: ?[]const u8 = null,
 };
 
+/// Whether a tab now points at another session file than the one already remembered. Forking moves
+/// a live tab onto a new file, and only a restart that writes that down puts the fork back.
+pub fn sessionMoved(before: ?[]const u8, after: []const u8) bool {
+    const known = before orelse return true;
+    return !std.mem.eql(u8, known, after);
+}
+
 const Aged = struct { ms: i64, saved: Saved };
 
 fn byAge(_: void, left: Aged, right: Aged) bool {
@@ -399,16 +406,16 @@ pub const Hub = struct {
                 tab.lock.unlock(self.io);
             },
             .response => if (parsed.response.session_file) |path| {
-                var fresh = false;
+                var moved = false;
                 tab.lock.lockUncancelable(self.io);
-                const known = tab.session_path != null;
-                self.allocator.free(tab.session_path orelse "");
+                const before = tab.session_path;
+                moved = sessionMoved(before, path);
+                self.allocator.free(before orelse "");
                 tab.session_path = path;
                 parsed.response.session_file = null;
                 tab.lock.unlock(self.io);
 
-                fresh = !known;
-                if (fresh) self.persist();
+                if (moved) self.persist();
             },
             else => {},
         }

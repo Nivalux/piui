@@ -27,6 +27,12 @@ fn opened(comptime dir: []const u8, io: Io, a: std.mem.Allocator) !hub.Hub {
     };
 }
 
+test "a tab that lands on another session file is remembered again" {
+    try testing.expect(hub.sessionMoved(null, "/store/fork.jsonl"));
+    try testing.expect(hub.sessionMoved("/store/parent.jsonl", "/store/fork.jsonl"));
+    try testing.expect(!hub.sessionMoved("/store/fork.jsonl", "/store/fork.jsonl"));
+}
+
 test "the copy keeps every line and moves only the folder" {
     var threaded: Io.Threaded = .init(testing.allocator, .{});
     defer threaded.deinit();
