@@ -4,7 +4,7 @@
 
 import { Transcript } from "./transcript.js";
 import { toClipboard } from "./clip.js";
-import { filterCommands, parseCommands } from "./commands.js";
+import { filterCommands, knownCommands, parseCommands, parseSlash, slashRun } from "./commands.js";
 import {
   ago,
   badge,
@@ -1343,6 +1343,29 @@ function response(frame) {
     return;
   }
 
+  if (frame.command === "new_session" || frame.command === "clone") {
+    if (data.cancelled === true) {
+      toast("pi kept this chat where it was", 4000);
+      return;
+    }
+    toast(frame.command === "clone" ? "Cloned: this chat is a copy of where it stood" : "A fresh session", 4000);
+    transcript.clear();
+    painted.clear();
+    signatures.clear();
+    el.transcript.replaceChildren();
+    ask("get_state");
+    ask("get_messages");
+    ask("get_fork_messages");
+    void loadSessions();
+    return;
+  }
+
+  if (frame.command === "export_html") {
+    const path = typeof data.path === "string" ? data.path : "";
+    toast(path.length > 0 ? `Exported to ${path}` : "Exported", 6000);
+    return;
+  }
+
   if (frame.command === "clear_queue") {
     const waiter = queueWaiter;
     queueWaiter = null;
@@ -1423,12 +1446,25 @@ async function closeTab() {
     });
     if (!yes) return;
   }
+  await closeTabById(id);
+}
+
+/**
+ * End one chat by id; only the one on screen gives up the pipe this page is reading.
+ *
+ * @param {string} id
+ */
+async function closeTabById(id) {
   await request(`/api/tab?id=${encodeURIComponent(id)}`, { method: "DELETE" }).catch(() => {});
   state.tabs = state.tabs.filter((tab) => tab.id !== id);
   // The server ends the terminals that were opened for a chat with the chat, so
   // this page forgets them at the same moment rather than showing shells that
   // are already gone.
   for (const shell of state.shells.filter((item) => item.tab === id)) dropShell(shell.id);
+  if (state.active !== id) {
+    renderSidebar();
+    return;
+  }
   state.active = null;
   stream?.close();
   stream = null;
@@ -1440,11 +1476,179 @@ async function closeTab() {
   await loadSessions();
 }
 
+/**
+ * Run a `/command` this page answers itself; false leaves the line in the field to be fixed.
+ *
+ * @param {{name: string, run: string, argument: string}} route
+ * @returns {Promise<boolean>}
+ */
+async function runCommand(route) {
+  if (route.run === "") {
+    toast(`/${route.name} opens a screen of pi's own, which this page cannot show`, 5000);
+    return false;
+  }
+
+  const tab = active();
+  const busy = tab?.running === true;
+
+  switch (route.run) {
+    case "new_session":
+    case "clone": {
+      if (busy) return busyNote(route.name);
+      if (route.argument.length > 0) toast(`/${route.name} takes no argument`);
+      void sendCommand({ type: route.run });
+      return true;
+    }
+
+    case "compact": {
+      void sendCommand(
+        route.argument.length > 0 ? { type: "compact", customInstructions: route.argument } : { type: "compact" },
+      );
+      return true;
+    }
+
+    case "set_session_name": {
+      if (route.argument.length === 0) return needsNote(route.name, "a name");
+      void sendCommand({ type: "set_session_name", name: route.argument });
+      return true;
+    }
+
+    case "export_html": {
+      void sendCommand(
+        route.argument.length > 0 ? { type: "export_html", outputPath: route.argument } : { type: "export_html" },
+      );
+      return true;
+    }
+
+    case "model": {
+      const model = modelNamed(route.argument);
+      if (model === null) {
+        el.model.focus();
+        if (route.argument.length > 0) toast(`no model here is called ${route.argument}`, 5000);
+        return route.argument.length === 0;
+      }
+      el.model.value = modelKey(model);
+      await pickModel();
+      return true;
+    }
+
+    case "thinking": {
+      if (route.argument.length === 0) {
+        el.thinking.focus();
+        return true;
+      }
+      const level = route.argument.toLowerCase();
+      if (!state.thinkingLevels.includes(level)) {
+        toast(`pi offers ${state.thinkingLevels.join(", ")}`, 5000);
+        return false;
+      }
+      void sendCommand({ type: "set_thinking_level", level });
+      return true;
+    }
+
+    case "copy": {
+      const answer = lastAnswer();
+      if (answer.length === 0) return needsNote(route.name, "an answer to copy");
+      if (await toClipboard(answer)) toast("Copied!", 1200);
+      return true;
+    }
+
+    case "session": {
+      const { used, size } = state.context;
+      toast(size > 0 ? `${tokens(used)} of ${tokens(size)} in context` : "pi has not counted this context yet", 5000);
+      ask("get_session_stats");
+      return true;
+    }
+
+    case "resume": {
+      el.filter.focus();
+      return true;
+    }
+
+    case "fork": {
+      toast("the fork mark sits under the message a chat should start over from", 5000);
+      return false;
+    }
+
+    case "reload": {
+      if (busy) return busyNote(route.name);
+      if (!tab) return false;
+      const fresh = await createTab(tab.sessionPath ? { cwd: tab.cwd, session: tab.sessionPath } : { cwd: tab.cwd });
+      if (fresh.length === 0) return false;
+      await closeTabById(tab.id);
+      toast("Reopened: pi reads its extensions, skills, prompts and files again", 5000);
+      return true;
+    }
+
+    case "quit": {
+      await closeTab();
+      return true;
+    }
+
+    default:
+      return false;
+  }
+}
+
+/** @param {string} name */
+function busyNote(name) {
+  toast(`/${name} would end the answer pi is writing. Stop it first.`, 5000);
+  return false;
+}
+
+/**
+ * @param {string} name
+ * @param {string} what
+ */
+function needsNote(name, what) {
+  toast(`/${name} needs ${what}`, 4000);
+  return false;
+}
+
+/**
+ * The model a `/model` argument names, by `provider/id`, by id, or by the one name a list holds.
+ *
+ * @param {string} argument
+ * @returns {PiModel | null}
+ */
+
+function modelNamed(argument) {
+  if (argument.length === 0) return null;
+  const needle = argument.toLowerCase();
+  const direct = state.models.find((model) => modelKey(model).toLowerCase() === needle);
+  if (direct) return direct;
+  const byId = state.models.filter(
+    (model) => model.id.toLowerCase() === needle || modelLabel(model).toLowerCase() === needle,
+  );
+  return byId.length === 1 ? byId[0] : null;
+}
+
+/** The text of the last answer this chat has on screen. */
+function lastAnswer() {
+  const blocks = transcript.blocks;
+  for (let index = blocks.length - 1; index >= 0; index -= 1) {
+    const text = blocks[index].kind === "text" ? (blocks[index].text ?? "") : "";
+    if (text.trim().length > 0) return text;
+  }
+  return "";
+}
+
 // ----------------------------------------------------------------- sending
 
 async function send() {
   const text = String(el.input.value);
   if (text.trim().length === 0 && attachments.length === 0) return;
+
+  const call = attachments.length === 0 ? parseSlash(text) : null;
+  const route = call === null ? null : slashRun(call, state.commands);
+  if (route !== null && route.run !== "pi") {
+    if (await runCommand(route)) {
+      el.input.value = "";
+      grow();
+      hidePalette();
+    }
+    return;
+  }
 
   // Typing into a page with no tab is a wish to start a chat, not a mistake.
   if (!state.active) await createTab({});
@@ -1813,14 +2017,21 @@ function syncPalette() {
   const parsed = parseCommands(String(el.input.value));
   if (!parsed) return hidePalette();
 
-  const matches = filterCommands(state.commands, parsed.query);
+  const matches = filterCommands(knownCommands(state.commands), parsed.query);
   if (matches.length === 0) return hidePalette();
 
   paletteIndex = Math.min(paletteIndex, matches.length - 1);
   el.palette.replaceChildren(
-    ...matches.map((/** @type {Command} */ command, /** @type {number} */ index) => {
+    ...matches.map((/** @type {import("./commands.js").Known} */ command, /** @type {number} */ index) => {
       const row = element("div", `palette-item${index === paletteIndex ? " active" : ""}`);
-      row.append(span(`/${command.name}`, "cmd"), span(command.description ?? ""), span(command.argumentHint ?? ""));
+      row.append(
+        span(`/${command.name}`, "cmd"),
+        span(command.description ?? ""),
+        span(
+          command.run === "" ? "in pi's terminal" : (command.argumentHint ?? ""),
+          command.run === "" ? "elsewhere" : "",
+        ),
+      );
       row.onclick = () => {
         paletteIndex = index;
         acceptPalette();
@@ -1848,7 +2059,7 @@ function acceptPalette(event) {
   event?.preventDefault();
 
   const parsed = parseCommands(String(el.input.value));
-  const matches = filterCommands(state.commands, parsed?.query ?? "");
+  const matches = filterCommands(knownCommands(state.commands), parsed?.query ?? "");
   const chosen = matches[paletteIndex];
   if (!chosen) return hidePalette();
 

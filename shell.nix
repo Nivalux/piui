@@ -24,5 +24,6 @@ pkgs.mkShellNoCC {
     # downloading a private copy of a browser at test time.
     export PLAYWRIGHT_CORE="${pkgs.playwright}"
     export PIUI_CHROMIUM="${pkgs.chromium}/bin/chromium"
+    export PI_MONOREPO="${pkgs.pi-coding-agent}/lib/node_modules/pi-monorepo"
   '';
 }
