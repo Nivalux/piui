@@ -745,6 +745,10 @@ fn mime(name: []const u8) []const u8 {
     if (std.mem.endsWith(u8, name, ".css")) return "text/css; charset=utf-8";
     if (std.mem.endsWith(u8, name, ".js")) return "text/javascript; charset=utf-8";
     if (std.mem.endsWith(u8, name, ".json")) return "application/json";
+    if (std.mem.endsWith(u8, name, ".ttf")) return "font/ttf";
+    if (std.mem.endsWith(u8, name, ".woff2")) return "font/woff2";
+    if (std.mem.endsWith(u8, name, ".svg")) return "image/svg+xml";
+    if (std.mem.endsWith(u8, name, ".png")) return "image/png";
     return "application/octet-stream";
 }
 

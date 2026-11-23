@@ -18,6 +18,11 @@ export class TermView {
     this.dirty = false;
     this.follow = true;
     this.cell = { width: 8, height: 16 };
+    /** How wide one character is in the font on screen, once per character. */
+    /** @type {Map<string, number>} */
+    this.advances = new Map();
+    this.probe = document.createElement("span");
+    this.probe.className = "term-probe term-row";
     /** @type {string} */
     this.lastPaint = "";
 
@@ -60,6 +65,37 @@ export class TermView {
     };
 
     this.wireKeys();
+
+    // A webfont that arrives after the first paint changes every metric the grid stands on.
+    document.fonts?.ready.then(() => {
+      this.advances.clear();
+      this.fit();
+      this.paint();
+    });
+  }
+
+  /** @param {string} ch */
+  advance(ch) {
+    const known = this.advances.get(ch);
+    if (known !== undefined) return known;
+    this.probe.textContent = ch.repeat(8);
+    this.screen.append(this.probe);
+    const width = this.probe.getBoundingClientRect().width / 8;
+    this.probe.remove();
+    this.probe.textContent = "";
+    this.advances.set(ch, width);
+    return width;
+  }
+
+  /**
+   * The space to add after a character so that it fills exactly one cell. A glyph from a fallback
+   * font — braille, an emoji, a character this font has never seen — is as wide as it is, and the
+   * row would slide out of step with its neighbours behind it.
+   *
+   * @param {string} ch
+   */
+  pitch(ch) {
+    return this.cell.width - this.advance(ch);
   }
 
   focus() {
@@ -92,15 +128,15 @@ export class TermView {
 
   /** Measure the font and give the shell the window it now has. */
   fit() {
-    const probe = document.createElement("span");
-    probe.className = "term-probe term-row";
-    probe.textContent = "W".repeat(50);
-    this.screen.append(probe);
-    const width = probe.getBoundingClientRect().width / 50;
-    const height = probe.getBoundingClientRect().height;
-    probe.remove();
+    this.probe.textContent = "W".repeat(50);
+    this.screen.append(this.probe);
+    const width = this.probe.getBoundingClientRect().width / 50;
+    const height = this.probe.getBoundingClientRect().height;
+    this.probe.remove();
+    this.probe.textContent = "";
     if (!(width > 0) || !(height > 0)) return null;
     this.cell = { width, height };
+    this.advances.clear();
 
     // The window a shell gets is the room the text has, which is neither the border box (its
     // scrollbar would be counted twice) nor the padding (no glyph stands there).
@@ -123,9 +159,10 @@ export class TermView {
     if (painted === this.lastPaint) return;
     this.lastPaint = painted;
 
+    const step = (/** @type {string} */ ch) => this.pitch(ch);
     const rows = [];
-    for (const line of out.history) rows.push(rowNode(line, "term-row past"));
-    for (const line of out.screen) rows.push(rowNode(line, "term-row"));
+    for (const line of out.history) rows.push(rowNode(line, "term-row past", step));
+    for (const line of out.screen) rows.push(rowNode(line, "term-row", step));
     this.screen.replaceChildren(this.caret, ...rows);
 
     this.caret.hidden = !out.cursor.visible;
@@ -169,16 +206,25 @@ export class TermView {
 /**
  * @param {{text: string, cls: string, style: string}[]} line
  * @param {string} cls
+ * @param {(ch: string) => number} pitch
  */
-function rowNode(line, cls) {
+function rowNode(line, cls, pitch) {
   const row = document.createElement("div");
   row.className = cls;
   for (const run of line) {
-    const span = document.createElement("span");
-    if (run.cls) span.className = run.cls;
-    if (run.style) span.setAttribute("style", run.style);
-    span.textContent = run.text;
-    row.append(span);
+    let start = 0;
+    while (start < run.text.length) {
+      const slack = pitch(run.text.charAt(start));
+      let end = start + 1;
+      while (end < run.text.length && pitch(run.text.charAt(end)) === slack) end += 1;
+      const span = document.createElement("span");
+      if (run.cls) span.className = run.cls;
+      if (run.style) span.setAttribute("style", run.style);
+      if (Math.abs(slack) > 0.01) span.style.letterSpacing = `${slack}px`;
+      span.textContent = run.text.slice(start, end);
+      row.append(span);
+      start = end;
+    }
   }
   return row;
 }

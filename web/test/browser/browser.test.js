@@ -933,8 +933,10 @@ test("the project picker completes a path and opens a chat in it", { skip: block
     return String(field?.value ?? "").endsWith("/web/");
   });
   await page.waitForFunction(() => {
-    const rows = [...document.querySelectorAll("#dir-list .dir-row")].map((row) => String(row.textContent).trim());
-    return rows.length === 1 && rows[0].replace("\u25b8", "").trim() === "test";
+    const paths = [...document.querySelectorAll("#dir-list .dir-row")].map((row) =>
+      String(row.getAttribute("data-path") ?? ""),
+    );
+    return paths.some((one) => one.endsWith("/web/test"));
   });
 
   await page.keyboard.press("Enter");
@@ -2019,6 +2021,47 @@ test("the terminal window stops at the edge of its panel", { skip: blocked }, as
   assert.ok(full.fullest > 40, `the screen is drawn to its last column: ${full.fullest}`);
   assert.ok(full.widest <= full.wide, `no line reaches past the panel: ${full.widest} of ${full.wide}`);
   assert.equal(full.sideways, 0, "and nothing to scroll sideways to");
+
+  await closeTerminalView();
+});
+
+test("a character the terminal font has never seen still takes one cell", { skip: blocked }, async () => {
+  await openTerminalTab();
+  await page.waitForFunction(() => document.getElementById("terminal")?.hidden === false, null, { timeout: 5000 });
+
+  // btop draws its graphs in braille, and no monospace font on this machine has those glyphs, so
+  // they come from a fallback face with a width of their own. Left alone they push the rest of the
+  // row out of step, which is what made btop's boxes lean.
+  await page.locator("#terminal .term-screen").first().click();
+  await page.keyboard.type("printf '%s\\n' '│⣿⣿⣿⣿│' '│AAAA│'; printf '⣿%.0s' {1..120}; printf '\\npiui8\\n'");
+  await page.waitForFunction(
+    () =>
+      [...document.querySelectorAll("#terminal .term-row")].some((row) => (row.textContent ?? "").includes("piui8")),
+    undefined,
+    { timeout: 15000 },
+  );
+
+  const widths = await page.evaluate(() => {
+    /** @param {string} needle */
+    const room = (needle) => {
+      const row = [...document.querySelectorAll("#terminal .term-row")].find((one) =>
+        (one.textContent ?? "").includes(needle),
+      );
+      if (!row) return -1;
+      const range = document.createRange();
+      range.selectNodeContents(row);
+      return range.getBoundingClientRect().width;
+    };
+    const scroll = /** @type {HTMLElement} */ (document.querySelector("#terminal .term-scroll"));
+    return { braille: room("⣿⣿⣿⣿"), letters: room("│AAAA│"), sideways: scroll.scrollWidth - scroll.clientWidth };
+  });
+
+  assert.ok(widths.braille > 0 && widths.letters > 0, "both lines are on the screen");
+  assert.ok(
+    Math.abs(widths.braille - widths.letters) < 0.5,
+    `braille takes the same room as letters: ${widths.braille} against ${widths.letters}`,
+  );
+  assert.equal(widths.sideways, 0, "and a screenful of it does not reach past the panel");
 
   await closeTerminalView();
 });

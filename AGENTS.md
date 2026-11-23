@@ -3,6 +3,8 @@
 Small web front end for pi. Zig server (`src/`), framework-free JS client (`web/`),
 no node_modules, no bundler. `nix-shell` provides the toolchain; `just --list` the commands.
 
+Use the job tool for all longer running tasks.
+
 ## Comments
 
 Write none. No file headers, no narration of what the next lines do, no notes about

@@ -1,3 +1,17 @@
+@font-face {
+  font-family: "piui mono";
+  src: url("/fonts/dejavu-sans-mono.ttf") format("truetype");
+  font-weight: 400;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "piui mono";
+  src: url("/fonts/dejavu-sans-mono-bold.ttf") format("truetype");
+  font-weight: 700;
+  font-display: swap;
+}
+
 :root,
 :root[data-theme="dark"] {
   color-scheme: dark;
@@ -2395,7 +2409,9 @@ pre,
   flex-direction: column;
   background: var(--term-bg);
   color: var(--term-fg);
-  font: 12.5px / 1.35 var(--mono);
+  font:
+    12.5px / 1.35 "piui mono",
+    var(--mono);
 }
 
 .term-scroll {
@@ -2415,6 +2431,8 @@ pre,
   white-space: pre;
   height: 1.35em;
   min-height: 1.35em;
+  font-kerning: none;
+  font-variant-ligatures: none;
 }
 
 .term-row.past {

@@ -31,6 +31,8 @@ pub fn mime(name: []const u8) []const u8 {
     if (std.mem.endsWith(u8, name, ".css")) return "text/css; charset=utf-8";
     if (std.mem.endsWith(u8, name, ".js")) return "text/javascript; charset=utf-8";
     if (std.mem.endsWith(u8, name, ".json")) return "application/json";
+    if (std.mem.endsWith(u8, name, ".ttf")) return "font/ttf";
+    if (std.mem.endsWith(u8, name, ".woff2")) return "font/woff2";
     if (std.mem.endsWith(u8, name, ".svg")) return "image/svg+xml";
     if (std.mem.endsWith(u8, name, ".png")) return "image/png";
     if (std.mem.endsWith(u8, name, ".ico")) return "image/x-icon";
@@ -65,4 +67,12 @@ test "a file the page does not name is still served" {
     try std.testing.expect(lookup("/style.css") != null);
     try std.testing.expectEqualStrings("text/javascript; charset=utf-8", (lookup("/rate.js") orelse return error.TestMissing).mime);
     try std.testing.expect(lookup("/nope.js") == null);
+}
+
+test "the font is baked whole, bytes and all" {
+    const font = lookup("/fonts/dejavu-sans-mono.ttf") orelse return error.TestMissingFont;
+    try std.testing.expectEqualStrings("font/ttf", font.mime);
+    try std.testing.expectEqual(@as(u8, 0), font.body[0]);
+    try std.testing.expectEqual(@as(u8, 1), font.body[1]);
+    try std.testing.expect(font.body.len > 300_000);
 }
