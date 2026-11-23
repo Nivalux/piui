@@ -33,6 +33,9 @@ const heartbeat = Io.Timeout{ .duration = .{
 
 pub const Server = struct {
     options: Options,
+    /// Event streams held open right now, one per browser view watching something. A number that
+    /// only ever climbs is the log saying a stream was never let go of.
+    streams: std.atomic.Value(i32) = .init(0),
 
     pub fn serve(self: *Server, connection: std.Io.net.Stream) void {
         const io = self.options.io;
@@ -416,7 +419,6 @@ pub const Server = struct {
     fn events(self: *Server, request: *std.http.Server.Request, tab: *hub.Tab) !void {
         const a = self.options.allocator;
         const io = self.options.io;
-        defer log.info("sse closed {s} after {d} ms", .{ tab.id, log.elapsed() });
 
         const sub = self.options.hub.subscribe(tab) orelse return self.text(request, .internal_server_error, "oom");
         defer self.options.hub.unsubscribe(tab, sub);
@@ -424,7 +426,7 @@ pub const Server = struct {
         var scratch: std.heap.ArenaAllocator = .init(a);
         defer scratch.deinit();
         const snapshot = json.encode(scratch.allocator(), hub.infoOf(tab, io)) catch return;
-        return self.stream(request, sub, snapshot);
+        return self.stream(request, sub, snapshot, tab.id);
     }
 
     /// The loop behind both event streams: say what is already there, then whatever arrives, then a
@@ -434,9 +436,17 @@ pub const Server = struct {
         request: *std.http.Server.Request,
         sub: *hub.Subscriber,
         opening: ?[]const u8,
+        what: []const u8,
     ) !void {
         const a = self.options.allocator;
         const io = self.options.io;
+
+        var why: []const u8 = "the write failed";
+        log.info("stream open {s} live={d}", .{ what, self.streams.fetchAdd(1, .monotonic) + 1 });
+        defer log.info(
+            "stream closed {s} after {d} ms live={d}: {s}",
+            .{ what, log.elapsed(), self.streams.fetchSub(1, .monotonic) - 1, why },
+        );
 
         var body_buffer: [16 * 1024]u8 = undefined;
         var body = request.respondStreaming(&body_buffer, .{
@@ -449,7 +459,6 @@ pub const Server = struct {
             },
         }) catch return;
 
-        log.info("sse open", .{});
         body.writer.writeAll("retry: 1500\n\n") catch return;
 
         if (opening) |first| {
@@ -473,6 +482,14 @@ pub const Server = struct {
             for (batch.items) |item| a.free(item);
             batch.clearRetainingCapacity();
             sub.take(&batch, io) catch return;
+
+            // Nothing to say, and the source is finished: this is the last turn of the loop. A
+            // closed subscription answers `waitForData` at once, so a stream that kept spinning
+            // here would burn a core for a page that is not listening anymore.
+            if (batch.items.len == 0) {
+                why = "nothing more to say";
+                return;
+            }
 
             for (batch.items) |item| {
                 writeFrame(&body.writer, item) catch return;
@@ -554,7 +571,6 @@ pub const Server = struct {
 
     fn shellEvents(self: *Server, request: *std.http.Server.Request, shell: *shells.Shell) !void {
         const a = self.options.allocator;
-        defer log.info("shell stream closed after {d} ms", .{log.elapsed()});
 
         const sub = self.options.shells.subscribe(shell) orelse
             return self.text(request, .internal_server_error, "oom");
@@ -570,7 +586,7 @@ pub const Server = struct {
                 null;
         };
 
-        return self.stream(request, sub, opening);
+        return self.stream(request, sub, opening, shell.id);
     }
 
     fn tabFor(self: *Server, request: *std.http.Server.Request, a: std.mem.Allocator) ?*hub.Tab {

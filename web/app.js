@@ -782,6 +782,8 @@ function attachShell(id) {
     view?.note(Number.isInteger(code) && code === 0 ? "the shell closed" : `the shell closed · code ${code}`);
     const known = state.shells.find((shell) => shell.id === id);
     if (known) known.closed = true;
+    source.close();
+    shellStreams.delete(id);
     renderViews();
   };
 }
@@ -1205,6 +1207,10 @@ function handle(frame) {
       endings.set(state.active ?? "", frame.stderr ? String(frame.stderr).slice(-600) : why);
       const tab = state.tabs.find((item) => item.id === state.active);
       if (tab) tab.closed = true;
+      // Nothing follows an ending. Left open, the browser would reconnect to a chat that has said
+      // its last word and be told the same thing forever.
+      stream?.close();
+      stream = null;
       renderFooter();
       renderSidebar();
     }
