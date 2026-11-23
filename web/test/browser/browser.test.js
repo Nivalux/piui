@@ -351,9 +351,14 @@ before(async () => {
 
   runner = await chromium.launch({
     executablePath: process.env.PIUI_CHROMIUM,
+    timeout: 30000,
     args: ["--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage"],
   });
   page = await runner.newPage({ viewport: { width: 1280, height: 800 } });
+  // Nothing in this file may wait on a browser that stopped answering: playwright's own default
+  // is thirty seconds a call, and a call left without one waits forever.
+  page.setDefaultNavigationTimeout(20000);
+  page.setDefaultTimeout(20000);
   page.on("pageerror", (/** @type {unknown} */ error) => crashes.push(String(error)));
 
   await page.goto(`${base}/`);
@@ -371,9 +376,23 @@ before(async () => {
 });
 
 after(async () => {
-  if (runner) await runner.close().catch(() => {});
-  if (server) server.kill();
+  if (runner) {
+    await settled(runner.close(), 5000);
+  }
+  if (server) server.kill("SIGKILL");
 });
+
+/** Wait for a shutdown to finish, but never longer than the clock it is given. */
+/** @param {Promise<unknown>} work @param {number} ms */
+function settled(work, ms) {
+  return Promise.race([
+    work.catch(() => {}),
+    new Promise((resolve) => {
+      const timer = setTimeout(resolve, ms);
+      timer.unref();
+    }),
+  ]);
+}
 
 test("the session list is ordered by its newest line", { skip: blocked }, async () => {
   await page.waitForSelector("#session-list .session");

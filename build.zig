@@ -59,7 +59,13 @@ pub fn build(b: *std.Build) void {
     const test_step = b.step("test", "Run all tests: zig units, fuzz corpus, js logic, tsc");
     test_step.dependOn(&run_suite.step);
 
-    const js = b.addSystemCommand(&.{ "node", "--test", "web/test/**/*.test.js" });
+    const js = b.addSystemCommand(&.{
+        "node",
+        "--test",
+        "--test-timeout=60000",
+        "--test-force-exit",
+        "web/test/**/*.test.js",
+    });
     js.step.dependOn(b.getInstallStep());
     test_step.dependOn(&js.step);
 

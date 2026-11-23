@@ -4,6 +4,10 @@
 # touching a recipe is its summary and a longer note goes above a blank line.
 addr := "127.0.0.1:7788"
 
+# A suite that cannot hang: a minute to a test, and the runner leaves when the run is over even if
+# a browser child forgot to.
+node_flags := "--test-timeout=60000 --test-force-exit"
+
 # what a reviewer runs before pushing: format, every test, and the binary
 check: fmt-check lint test build
 
@@ -55,7 +59,7 @@ test-zig-one PATTERN:
 
 # js logic only, no browser
 test-js:
-    node --test "web/test/*.test.js"
+    node --test {{node_flags}} "web/test/*.test.js"
 
 # the browser tests on their own
 #
@@ -66,11 +70,11 @@ test-js:
 
 # the browser tests, against a fresh build
 test-browser: build
-    PIUI_BINARY="$PWD/zig-out/bin/piui" node --test --test-reporter=spec web/test/browser/browser.test.js
+    PIUI_BINARY="$PWD/zig-out/bin/piui" node --test {{node_flags}} --test-reporter=spec web/test/browser/browser.test.js
 
 # one browser test, by part of its name
 test-browser-one PATTERN: build
-    PIUI_BINARY="$PWD/zig-out/bin/piui" node --test --test-reporter=spec --test-name-pattern="{{PATTERN}}" web/test/browser/browser.test.js
+    PIUI_BINARY="$PWD/zig-out/bin/piui" node --test {{node_flags}} --test-reporter=spec --test-name-pattern="{{PATTERN}}" web/test/browser/browser.test.js
 
 # typecheck the js against its own jsdoc types
 typecheck:
