@@ -2971,6 +2971,16 @@ function statusRow(file) {
   const node = element("button", "st-row");
   node.append(span(file.status, `st-code st-${statusClass(file.status)}`));
   node.append(span(file.display, "st-path"));
+
+  const added = file.insertions ?? 0;
+  const gone = file.deletions ?? 0;
+  if (added > 0 || gone > 0) {
+    const lines = element("span", "st-lines");
+    if (added > 0) lines.append(span(`+${added}`, "st-plus"));
+    if (gone > 0) lines.append(span(`−${gone}`, "st-minus"));
+    node.append(lines);
+  }
+
   node.onclick = () => openDiffView(file.path);
   node.title = "What changed here";
   return node;

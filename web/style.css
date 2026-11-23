@@ -601,6 +601,21 @@ pre,
   white-space: nowrap;
 }
 
+.st-lines {
+  margin-left: auto;
+  display: inline-flex;
+  gap: 6px;
+  font-size: 11px;
+}
+
+.st-plus {
+  color: var(--add-text);
+}
+
+.st-minus {
+  color: var(--del-text);
+}
+
 .file-row {
   display: flex;
   align-items: baseline;

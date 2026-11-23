@@ -18,7 +18,7 @@ import { rank } from "./filter.js";
  * @typedef {{name: string, path: string, count: number}} DirRow
  *
  * @typedef {{path: string, display: string, status: string, staged?: boolean, untracked?:
- * boolean}} Changed
+ * boolean, insertions?: number, deletions?: number}} Changed
  *
  * @param {string} path @returns {string}
  */

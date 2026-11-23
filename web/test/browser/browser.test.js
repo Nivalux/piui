@@ -1021,10 +1021,12 @@ test("the diff tab reads like git status and opens a patch beside the chat", { s
   const rows = await page.evaluate(() =>
     [...document.querySelectorAll("#diff-body .st-row")].map((row) => {
       const code = /** @type {HTMLElement} */ (row.querySelector(".st-code"));
-      return `${code?.textContent} ${code?.className.replace("st-code st-", "")} ${row.querySelector(".st-path")?.textContent}`;
+      const marks = [...row.querySelectorAll(".st-lines span")].map((mark) => mark.textContent).join(" ");
+      const path = row.querySelector(".st-path")?.textContent;
+      return `${code?.textContent} ${code?.className.replace("st-code st-", "")} ${path}${marks.length > 0 ? ` ${marks}` : ""}`;
     }),
   );
-  assert.ok(rows.includes("M mod notes.md"), `the edit is listed as modified: ${rows.join(", ")}`);
+  assert.ok(rows.includes("M mod notes.md +1"), `the edit carries the lines it changed: ${rows.join(", ")}`);
   assert.ok(rows.includes("? new fresh.md"), `what git never saw is listed as new: ${rows.join(", ")}`);
 
   const groups = (await page.locator("#diff-body .status-group").allInnerTexts())

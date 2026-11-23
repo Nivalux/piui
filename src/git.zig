@@ -54,6 +54,8 @@ pub const FileStatus = struct {
     status: []const u8,
     staged: bool,
     untracked: bool,
+    insertions: u32 = 0,
+    deletions: u32 = 0,
 };
 
 pub const Status = struct {
@@ -143,26 +145,36 @@ pub fn branches(allocator: std.mem.Allocator, io: Io, cwd: []const u8) Branches 
 
 const Lines = struct { added: u32 = 0, removed: u32 = 0 };
 
-/// How big the change is against a base of the working tree or the index, in lines. Git's `numstat`
-/// is read because its columns are numbers in every language, unlike its summary line. A file no
-/// one has added yet has no lines to count, and a binary one counts as none.
-fn changeSize(allocator: std.mem.Allocator, io: Io, cwd: []const u8, base: Base) Lines {
+/// Lines added and lines removed, one entry per path, for the diff a base describes. Git's
+/// `numstat` is read because its columns are numbers in every language, unlike its summary line.
+/// A file no one has added yet has no entry, and a binary one counts as none.
+fn lineCounts(allocator: std.mem.Allocator, io: Io, cwd: []const u8, base: Base) std.StringHashMap(Lines) {
     const argv: []const []const u8 = switch (base) {
-        .staged => &.{ "diff", "--numstat", "--cached", "HEAD" },
-        else => &.{ "diff", "--numstat", "HEAD" },
+        .working => &.{ "diff", "--numstat", "-z", "HEAD" },
+        .staged => &.{ "diff", "--numstat", "-z", "--cached", "HEAD" },
+        else => &.{ "diff", "--numstat", "-z", base.refName().? },
     };
-    const out = git(allocator, io, cwd, argv, .limited(1 << 20)) catch return .{};
+    var counts = std.StringHashMap(Lines).init(allocator);
+    const out = git(allocator, io, cwd, argv, .limited(8 << 20)) catch return counts;
 
-    var size: Lines = .{};
-    var rows = std.mem.tokenizeScalar(u8, out, '\n');
-    while (rows.next()) |row| {
-        var columns = std.mem.tokenizeScalar(u8, row, '\t');
+    var fields = std.mem.splitScalar(u8, out, 0);
+    while (fields.next()) |field| {
+        if (field.len == 0) continue;
+        var columns = std.mem.tokenizeScalar(u8, field, '\t');
         const added = columns.next() orelse continue;
         const removed = columns.next() orelse continue;
-        size.added += parseCount(added);
-        size.removed += parseCount(removed);
+        const size = Lines{ .added = parseCount(added), .removed = parseCount(removed) };
+
+        // A rename leaves the path out of the counts and names the two paths in fields of their
+        // own; the list shows the file the change ended in, so that is the one to mark.
+        const path = columns.next();
+        if (path == null) {
+            _ = fields.next() orelse break;
+        }
+        const name = path orelse fields.next() orelse break;
+        counts.put(name, size) catch return counts;
     }
-    return size;
+    return counts;
 }
 
 const Gap = struct { ahead: u32 = 0, behind: u32 = 0 };
@@ -212,13 +224,17 @@ pub fn status(allocator: std.mem.Allocator, io: Io, cwd: []const u8, base: Base)
         result.branch = trim(branch);
     } else |_| {}
 
+    const counts = lineCounts(a, io, cwd, base);
+
     // What stands beside the branch belongs to the base the panel compares against: commits when it
     // is another branch, lines when it is the working tree or the index.
     switch (base) {
         .working, .staged => {
-            const size = changeSize(a, io, cwd, base);
-            result.insertions = size.added;
-            result.deletions = size.removed;
+            var values = counts.valueIterator();
+            while (values.next()) |size| {
+                result.insertions += size.added;
+                result.deletions += size.removed;
+            }
         },
         else => {
             const gap = aheadBehind(a, io, cwd, base.refName().?);
@@ -242,6 +258,13 @@ pub fn status(allocator: std.mem.Allocator, io: Io, cwd: []const u8, base: Base)
     } else |err| {
         result.errorMessage = @errorName(err);
         return result;
+    }
+
+    for (collector.files.items) |*file| {
+        if (counts.get(file.path)) |size| {
+            file.insertions = size.added;
+            file.deletions = size.removed;
+        }
     }
 
     result.files = collector.files.items;

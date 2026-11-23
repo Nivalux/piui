@@ -66,6 +66,13 @@ test "a base of the working tree counts lines, a base of a branch counts commits
     try testing.expectEqual(@as(u32, 1), working.insertions);
     try testing.expectEqual(@as(u32, 1), working.deletions);
 
+    const edit = findFile(working.files, "f.txt") orelse return error.TestUnexpectedResult;
+    try testing.expectEqual(@as(u32, 1), edit.insertions);
+    try testing.expectEqual(@as(u32, 1), edit.deletions);
+
+    const fresh = findFile(working.files, "new.txt") orelse return error.TestUnexpectedResult;
+    try testing.expectEqual(@as(u32, 0), fresh.insertions);
+
     const staged = git.status(a, io, repo, .staged);
     try testing.expectEqual(@as(u32, 0), staged.insertions);
     try testing.expectEqual(@as(u32, 0), staged.deletions);
@@ -73,6 +80,10 @@ test "a base of the working tree counts lines, a base of a branch counts commits
     const remote = git.status(a, io, repo, .{ .branch = "refs/remotes/origin/master" });
     try testing.expectEqual(@as(u32, 1), remote.ahead);
     try testing.expectEqual(@as(u32, 0), remote.insertions);
+
+    const pushed = findFile(remote.files, "g.txt") orelse return error.TestUnexpectedResult;
+    try testing.expectEqual(@as(u32, 1), pushed.insertions);
+    try testing.expectEqual(@as(u32, 0), pushed.deletions);
 }
 
 test "a directory without a repository says so" {
