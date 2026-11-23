@@ -5,7 +5,7 @@
 addr := "127.0.0.1:7788"
 
 # A suite that cannot hang: a minute to a test, and the runner leaves whatever child forgot to.
-node_flags := "--test-timeout=60000 --test-force-exit"
+node_flags := "--test-timeout=15000 --test-force-exit"
 
 # what a reviewer runs before pushing: format, every test, and the binary
 check: fmt-check lint test build

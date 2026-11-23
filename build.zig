@@ -62,7 +62,7 @@ pub fn build(b: *std.Build) void {
     const js = b.addSystemCommand(&.{
         "node",
         "--test",
-        "--test-timeout=60000",
+        "--test-timeout=15000",
         "--test-force-exit",
         "web/test/**/*.test.js",
     });

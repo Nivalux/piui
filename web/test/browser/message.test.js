@@ -6,8 +6,10 @@ import { after, before, test } from "node:test";
 import assert from "node:assert/strict";
 import {
   blocked,
+  clipboardHolds,
   crashes,
   gitProject,
+  hold,
   idle,
   openProjectChat,
   page,
@@ -20,11 +22,6 @@ import {
 
 before(start);
 after(stop);
-
-const clipboard = () => page.evaluate(() => navigator.clipboard.readText());
-
-/** @param {string} text */
-const hold = (text) => page.evaluate((want) => navigator.clipboard.writeText(want), text);
 
 async function actionsOf(/** @type {import("playwright").Locator} */ block) {
   return await block
@@ -47,7 +44,7 @@ test("a message hands its text to the clipboard", { skip: blocked }, async () =>
 
   await hold("");
   await copyRow(asked).click();
-  assert.equal(await clipboard(), "please remember piui-copy-1");
+  await clipboardHolds("please remember piui-copy-1");
   await toastSays(/Copied/);
 });
 
@@ -57,9 +54,8 @@ test("an answer hands over the text as it was written", { skip: blocked }, async
 
   await hold("");
   await copyRow(answer).click();
-  const held = await clipboard();
-  assert.match(held, /\*\*Beide Tools\*\*/, "the markdown, not what it was rendered to");
-  assert.match(held, /piui-fake-write\.txt/);
+  await clipboardHolds("**Beide Tools**");
+  await clipboardHolds("piui-fake-write.txt");
 });
 
 test("a folded line keeps its buttons inside the fold", { skip: blocked }, async () => {
@@ -75,7 +71,7 @@ test("a folded line keeps its buttons inside the fold", { skip: blocked }, async
 
   await hold("");
   await copyRow(inside).click();
-  assert.match(await clipboard(), /sleep 2 && echo done/, "the command the tool ran");
+  await clipboardHolds("sleep 2 && echo done");
 });
 
 test("forking a message cuts the chat back to where it was asked", { skip: blocked }, async () => {

@@ -130,7 +130,6 @@ function idle() {
   );
 }
 
-/** The chat the sidebar has highlighted. */
 /** Wait for a toast that says this, not for whatever toast is already up. */
 const toastSays = async (/** @type {RegExp} */ pattern) =>
   page.waitForFunction(
@@ -139,11 +138,53 @@ const toastSays = async (/** @type {RegExp} */ pattern) =>
     { timeout: 10000 },
   );
 
+/** What the machine's clipboard holds right now. */
+function clipboard() {
+  return page.evaluate(() => navigator.clipboard.readText());
+}
+
+/** @param {string} text */
+function hold(text) {
+  return page.evaluate((want) => navigator.clipboard.writeText(want), text);
+}
+
+/**
+ * Wait for a copy to land. A button, an OSC 52 escape and a paste all reach the
+ * clipboard through a round trip the test cannot see, so one read is too early.
+ *
+ * @param {string} needle
+ */
+async function clipboardHolds(needle) {
+  const landed = await page
+    .waitForFunction(
+      /** @param {string} want */
+      async (want) => (await navigator.clipboard.readText()).includes(want),
+      needle,
+      { timeout: 3000 },
+    )
+    .then(
+      () => true,
+      () => false,
+    );
+  assert.ok(landed, `the clipboard held "${await clipboard()}", not "${needle}"`);
+}
+
 function activeTab() {
   return page.evaluate(() => {
     const row = /** @type {HTMLElement | null} */ (document.querySelector("#tab-list .tab.active"));
     return row ? String(row.dataset.tab) : "";
   });
+}
+
+/**
+ * Assert a selector is already in the page, so a wait that could never succeed
+ * fails at once instead of running out its timeout.
+ *
+ * @param {string} selector
+ */
+async function present(selector) {
+  const found = await page.evaluate((sel) => !!document.querySelector(sel), selector);
+  assert.ok(found, `${selector} is not in the page`);
 }
 
 /** The chats in the sidebar, top to bottom. */
@@ -460,6 +501,8 @@ export {
   base,
   binary,
   blocked,
+  clipboard,
+  clipboardHolds,
   chatId,
   closeTerminalView,
   commandsFile,
@@ -469,6 +512,7 @@ export {
   gap,
   git,
   gitProject,
+  hold,
   goneProject,
   here,
   idle,
@@ -480,6 +524,7 @@ export {
   openTerminalTab,
   overflow,
   page,
+  present,
   readCommands,
   root,
   runTurn,

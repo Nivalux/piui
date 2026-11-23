@@ -15,6 +15,7 @@ import {
   openProjectChat,
   overflow,
   page,
+  present,
   readCommands,
   runTurn,
   start,
@@ -344,6 +345,7 @@ test("a streaming answer leaves the chat list where it is", { skip: blocked }, a
   await page.waitForTimeout(300);
   await page.mouse.up();
 
+  await present(`#tab-list .tab[data-tab="${second}"]`);
   await page.waitForFunction(
     /** @param {string} want */
     (want) => document.querySelector("#tab-list .tab.active")?.getAttribute("data-tab") === want,

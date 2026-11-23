@@ -461,6 +461,15 @@ function wire() {
     if (event.target === el.settingsModal) el.settingsModal.hidden = true;
   };
   el.lightbox.onclick = () => hideShot();
+  el.tabs.addEventListener("pointerdown", () => {
+    pressingTabs = true;
+    clearTimeout(holdTimer);
+    holdTimer = setTimeout(releaseTabs, 5000);
+  });
+  for (const done of ["click", "pointercancel"]) {
+    window.addEventListener(done, () => releaseTabs());
+  }
+  window.addEventListener("pointerup", () => setTimeout(releaseTabs, 0));
   // Anywhere else on the page dismisses an open row menu; the ⋯ and its items
   // stop their own clicks, so this only ever sees a click outside of it.
   document.addEventListener("click", () => {
@@ -2129,11 +2138,26 @@ function renderSidebar() {
   if (groups.Settled) rows.push(...settled.map(row));
   if (visible.length === 0) rows.push(element("div", "empty", "no open chats"));
 
-  repaint(el.tabs, rows, tabsMemo);
+  if (!pressingTabs) repaint(el.tabs, rows, tabsMemo);
   renderSessions(filter);
 }
 
 /** @type {{paint: string}} */ const tabsMemo = { paint: "" };
+
+/** A chat list rebuilt under a held pointer loses the press, so it waits for the release. */
+let pressingTabs = false;
+
+/** @type {ReturnType<typeof setTimeout> | undefined} */
+let holdTimer;
+
+/** Let the chat list repaint again once a press is over, and show what it missed. */
+function releaseTabs() {
+  if (!pressingTabs) return;
+  pressingTabs = false;
+  clearTimeout(holdTimer);
+  renderSidebar();
+}
+
 /** @type {{paint: string}} */ const sessionsMemo = { paint: "" };
 
 /**
@@ -2148,9 +2172,6 @@ function renderSidebar() {
  * @returns {boolean} whether the box changed
  */
 function repaint(box, rows, memo) {
-  // A row replaced between the press and the release never sees the click, and
-  // an open row menu has nothing to hang from once its row is gone. The list
-  // catches up the moment the menu closes.
   if (rowMenu) return false;
 
   const draft = element("div");

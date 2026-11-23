@@ -7,9 +7,11 @@ import assert from "node:assert/strict";
 import {
   blocked,
   chatId,
+  clipboardHolds,
   closeTerminalView,
   crashes,
   gitProject,
+  hold,
   openProjectChat,
   openTerminalTab,
   page,
@@ -31,10 +33,6 @@ async function shellSays(/** @type {string} */ command, /** @type {string} */ wa
     want,
     { timeout: 15000 },
   );
-}
-
-function clipboard() {
-  return page.evaluate(() => navigator.clipboard.readText());
 }
 
 async function openShell() {
@@ -239,7 +237,7 @@ test("a drag over the terminal copies what it covered", { skip: blocked }, async
   await page.mouse.move(box.x + box.width - 3, box.y + box.height / 2, { steps: 8 });
   await page.mouse.up();
 
-  assert.match(await clipboard(), /piui-copy-target/, "what the mouse covered is on the clipboard");
+  await clipboardHolds("piui-copy-target");
   await toastSays(/Copied/);
 
   await closeTerminalView();
@@ -248,7 +246,7 @@ test("a drag over the terminal copies what it covered", { skip: blocked }, async
 test("what the clipboard holds reaches the shell without a key going missing", { skip: blocked }, async () => {
   await openShell();
 
-  await page.evaluate(() => navigator.clipboard.writeText("pasted by piui"));
+  await hold("pasted by piui");
   await page.locator("#terminal .term-screen:visible").first().click();
   await page.keyboard.press("Control+v");
 
@@ -268,10 +266,10 @@ test("a program in the terminal can put the clipboard there itself", { skip: blo
   await openShell();
 
   const coded = Buffer.from("yanked in the shell").toString("base64");
-  await page.evaluate(() => navigator.clipboard.writeText(""));
+  await hold("");
   await shellSays(`printf '\\033]52;c;${coded}\\a'; printf yanked-done\\n`, "yanked-done");
 
-  assert.equal(await clipboard(), "yanked in the shell");
+  await clipboardHolds("yanked in the shell");
   await toastSays(/Copied/);
 
   await closeTerminalView();
