@@ -78,6 +78,7 @@ fn webAssets(b: *std.Build) std.Build.LazyPath {
     const alloc = b.allocator;
 
     var names: std.ArrayList([]const u8) = .empty;
+    watchEntries(b, "web");
     collect(b, "web", "", &names) catch @panic("web/ cannot be read");
     std.mem.sort([]const u8, names.items, {}, lessByName);
 
@@ -128,9 +129,17 @@ fn collect(b: *std.Build, path: []const u8, prefix: []const u8, out: *std.ArrayL
             try std.fs.path.join(alloc, &.{ prefix, entry.name });
 
         switch (entry.kind) {
-            .directory => try collect(b, try std.fs.path.join(alloc, &.{ path, entry.name }), name, out),
+            .directory => {
+                const inner = try std.fs.path.join(alloc, &.{ path, entry.name });
+                watchEntries(b, inner);
+                try collect(b, inner, name, out);
+            },
             .file => try out.append(alloc, name),
             else => {},
         }
     }
+}
+
+fn watchEntries(b: *std.Build, path: []const u8) void {
+    b.dependOnDirectoryContents(b.path(path));
 }

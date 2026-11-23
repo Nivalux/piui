@@ -2,6 +2,7 @@
 
 /** The terminal on the page: a {@link Terminal} plus the DOM that shows it. */
 
+import { toClipboard } from "./clip.js";
 import { Terminal } from "./term.js";
 
 /** @typedef {(bytes: string) => void} Sink */
@@ -9,7 +10,7 @@ import { Terminal } from "./term.js";
 export class TermView {
   /**
    * @param {{write: Sink, resize?: (rows: number, cols: number) => void, title?: (text: string) =>
-   * void}} hooks
+   * void, copied?: (text: string) => void}} hooks
    * @param {{rows?: number, cols?: number}} [start]
    */
   constructor(hooks, start = { rows: 24, cols: 80 }) {
@@ -25,6 +26,8 @@ export class TermView {
     this.probe.className = "term-probe term-row";
     /** @type {string} */
     this.lastPaint = "";
+    this.pending = "";
+    this.dragged = false;
 
     this.root = document.createElement("div");
     this.root.className = "term";
@@ -53,13 +56,23 @@ export class TermView {
     this.input.setAttribute("aria-label", "Type in the terminal");
 
     this.root.append(this.scroll, this.input);
+
     this.root.addEventListener("mousedown", (event) => {
-      if (window.getSelection()?.toString()) return;
-      event.preventDefault();
+      this.dragged = event.button === 0;
+    });
+
+    document.addEventListener("mouseup", (event) => {
+      if (!this.dragged) return;
+      this.dragged = false;
+      if (event.button !== 0) return;
+      const text = this.selected();
+      if (text.length > 0) return void this.copy(text);
+      this.flushCopy();
       this.focus();
     });
 
     this.term.onReport = (text) => this.hooks.write(text);
+    this.term.onClipboard = (text) => void this.copy(text);
     this.term.onTitle = (text) => {
       this.hooks.title?.(text);
     };
@@ -100,6 +113,42 @@ export class TermView {
 
   focus() {
     this.input.focus({ preventScroll: true });
+  }
+
+  selected() {
+    const selection = window.getSelection();
+    if (!selection || selection.isCollapsed || selection.rangeCount === 0) return "";
+    if (!this.root.contains(selection.anchorNode)) return "";
+    return selection
+      .toString()
+      .split("\n")
+      .map((line) => line.replace(/\s+$/, ""))
+      .join("\n");
+  }
+
+  /** @param {string} text */
+  async copy(text) {
+    if (text.length === 0) return;
+    if (!(await toClipboard(text))) {
+      this.pending = text;
+      return;
+    }
+    this.pending = "";
+    this.hooks.copied?.(text);
+  }
+
+  flushCopy() {
+    const held = this.pending;
+    if (held.length === 0) return;
+    this.pending = "";
+    void this.copy(held);
+  }
+
+  /** @param {string} text */
+  paste(text) {
+    const body = text.replace(/\r\n|\r|\n/g, "\r");
+    if (!this.term.bracketedPaste) return this.hooks.write(body);
+    this.hooks.write(`\x1b[200~${body}\x1b[201~`);
   }
 
   /** @param {string} text */
@@ -187,6 +236,7 @@ export class TermView {
 
   wireKeys() {
     this.input.addEventListener("keydown", (event) => {
+      this.flushCopy();
       const bytes = keyBytes(event);
       if (bytes === null) return;
       // The shell is the point of this window: while the caret is in it, keys
@@ -199,6 +249,13 @@ export class TermView {
       const text = this.input.value;
       this.input.value = "";
       if (text.length > 0) this.hooks.write(text);
+    });
+
+    this.input.addEventListener("paste", (event) => {
+      const text = event.clipboardData?.getData("text/plain") ?? "";
+      if (text.length === 0) return;
+      event.preventDefault();
+      this.paste(text);
     });
   }
 }
@@ -266,6 +323,7 @@ export function keyBytes(event) {
     if (event.key === " ") return "\x00";
     if (event.key.length === 1) {
       const letter = event.key.toLowerCase();
+      if (letter === "v") return null;
       if (letter >= "a" && letter <= "z") return String.fromCharCode(letter.charCodeAt(0) - 96);
       if (letter === "[") return "\x1b";
       if (letter === "\\") return "\x1c";

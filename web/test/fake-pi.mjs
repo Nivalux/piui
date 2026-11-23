@@ -51,6 +51,30 @@ const file = {
  */
 const history = replay(process.argv);
 
+/** @type {{entryId: string, text: string}[]} */
+const forks = history
+  .filter((message) => message.role === "user")
+  .map((message, index) => ({ entryId: `e${index + 1}`, text: textOf(message) }));
+
+let forkSeq = forks.length;
+
+/** @param {any} message */
+function textOf(message) {
+  const parts = Array.isArray(message.content) ? message.content : [];
+  return parts
+    .filter((part) => part.type === "text")
+    .map((part) => part.text ?? "")
+    .join("\n");
+}
+
+/** @param {string} text */
+function asked(text) {
+  const message = { role: "user", content: [{ type: "text", text }] };
+  history.push(message);
+  forks.push({ entryId: `e${++forkSeq}`, text });
+  return message;
+}
+
 /**
  * @param {string[]} argv
  * @returns {any[]}
@@ -108,8 +132,7 @@ function deliver(kind) {
   queue[kind] = [];
   announceQueue();
   for (const text of texts) {
-    const message = { role: "user", content: [{ type: "text", text }] };
-    history.push(message);
+    const message = asked(text);
     send({ type: "message_start", message, timestamp: now() });
     send({ type: "message_end", message, timestamp: now() });
   }
@@ -120,7 +143,7 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => void ans
 /** @param {string} line */
 async function answer(line) {
   /** @type {{type?: string, message?: string}} */
-  /** @type {{type?: string, mode?: string, message?: string}} */
+  /** @type {{type?: string, mode?: string, message?: string, entryId?: string}} */
   let command;
   try {
     command = JSON.parse(line);
@@ -167,6 +190,31 @@ async function answer(line) {
     case "get_messages":
       return reply("get_messages", { messages: history });
 
+    case "get_fork_messages":
+      return reply("get_fork_messages", { messages: forks.map((item) => ({ ...item })) });
+
+    case "fork": {
+      const at = forks.findIndex((item) => item.entryId === command.entryId);
+      if (at < 0) return reply("fork", { cancelled: true });
+      const text = forks[at]?.text ?? "";
+
+      let seen = 0;
+      for (let index = 0; index < history.length; index += 1) {
+        if (history[index]?.role !== "user") continue;
+        if (seen === at) {
+          history.length = index;
+          break;
+        }
+        seen += 1;
+      }
+      forks.length = at;
+
+      const again = asked(text);
+      send({ type: "message_start", message: again, timestamp: now() });
+      send({ type: "message_end", message: again, timestamp: now() });
+      return reply("fork", { text, cancelled: false });
+    }
+
     case "get_state":
       return reply("get_state", {
         isStreaming,
@@ -202,7 +250,7 @@ async function answer(line) {
     }
 
     case "prompt":
-      history.push({ role: "user", content: [{ type: "text", text: command.message ?? "" }] });
+      asked(String(command.message ?? ""));
       send({ type: "response", command: "prompt", success: true, data: {} });
       return turn(command.message ?? "");
 
@@ -247,6 +295,11 @@ async function turn(prompt) {
   send({ type: "agent_start", timestamp: now() });
   send({ type: "turn_start", timestamp: now() });
   isStreaming = true;
+
+  const opening = { role: "user", content: [{ type: "text", text: prompt }] };
+  send({ type: "message_start", message: opening, timestamp: now() });
+  send({ type: "message_end", message: opening, timestamp: now() });
+
   send({ type: "message_start", message: { role: "assistant" }, timestamp: now() });
 
   if (/dumbstruck/i.test(prompt)) return dumbstruck();

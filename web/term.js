@@ -33,6 +33,9 @@ export class Terminal {
     this.onReport = () => {};
     /** @type {(text: string) => void} */
     this.onTitle = () => {};
+    /** @type {(text: string) => void} */
+    this.onClipboard = () => {};
+    this.bracketedPaste = false;
     this.state = "ground";
     this.params = "";
     this.intermediate = "";
@@ -193,14 +196,23 @@ export class Terminal {
     if (ch === esc) {
       return this.#endOsc("st");
     }
-    if (this.fallback.length < 512) this.fallback += ch;
+    if (this.fallback.length < 65536) this.fallback += ch;
   }
 
   /** @param {string} state */
   #endOsc(state) {
-    this.title = this.fallback.replace(/^\d+;/, "");
-    this.onTitle(this.title);
+    const body = this.fallback;
     this.state = state;
+
+    const clipboard = /^52;[^;]*;(.*)$/.exec(body);
+    if (clipboard) {
+      const text = fromBase64(clipboard[1] ?? "");
+      if (text.length > 0) this.onClipboard(text);
+      return;
+    }
+
+    this.title = body.replace(/^\d+;/, "");
+    this.onTitle(this.title);
   }
 
   /**
@@ -244,6 +256,10 @@ export class Terminal {
         return;
       }
       if (priv && (first === 1049 || first === 1047 || first === 47)) return this.useAlternate(on, first === 1049);
+      if (priv && first === 2004) {
+        this.bracketedPaste = on;
+        return;
+      }
       return;
     }
 
@@ -526,6 +542,17 @@ export class Terminal {
     this.cursorStyle = "block";
     this.cursorBlinks = true;
     this.wrapPending = false;
+    this.bracketedPaste = false;
+  }
+}
+
+/** @param {string} text */
+function fromBase64(text) {
+  try {
+    const bytes = Uint8Array.from(atob(text), (ch) => ch.charCodeAt(0));
+    return new TextDecoder().decode(bytes);
+  } catch {
+    return "";
   }
 }
 

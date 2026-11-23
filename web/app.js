@@ -3,6 +3,7 @@
 /** The page. */
 
 import { Transcript } from "./transcript.js";
+import { toClipboard } from "./clip.js";
 import { filterCommands, parseCommands } from "./commands.js";
 import {
   ago,
@@ -220,6 +221,9 @@ const signatures = new Map();
 const folds = new Map();
 /** @type {HTMLElement | null} the transcript row the pointer is currently down on */
 let pressed = null;
+/** @type {{entryId: string, text: string}[]} */
+let forkMessages = [];
+let forkStamp = 0;
 /** Which sidebar chat groups are unfolded. */
 const groups = /** @type {Record<string, boolean>} */ ({ Working: true, Settled: true });
 
@@ -756,6 +760,7 @@ function shellViewFor(id) {
       shellTitles.set(id, text);
       renderViews();
     },
+    copied: () => toast("Copied!", 1200),
   });
   el.terminal.append(view.root);
   shellViews.set(id, view);
@@ -1122,6 +1127,7 @@ function connect(id) {
     ask("get_state");
     ask("get_commands");
     ask("get_messages");
+    ask("get_fork_messages");
     ask("get_available_models");
     ask("get_available_thinking_levels");
     ask("get_session_stats");
@@ -1285,6 +1291,8 @@ function handle(frame) {
     renderSidebar();
   }
 
+  if (frame.type === "message_start" && frame.message?.role === "user") ask("get_fork_messages");
+
   retirePending(frame);
   if (transcript.event(frame)) markDirty();
   // Pi only knows what the next request will cost once a turn is through, and one
@@ -1313,6 +1321,23 @@ function response(frame) {
     return;
   }
 
+  if (frame.command === "get_fork_messages") {
+    forkMessages = Array.isArray(data.messages) ? data.messages : [];
+    forkStamp += 1;
+    markDirty();
+    return;
+  }
+
+  if (frame.command === "fork") {
+    if (data.cancelled === true) return;
+    ask("get_messages");
+    ask("get_state");
+    ask("get_fork_messages");
+    void loadSessions();
+    toast("Forked: this chat carries on from that message", 5000);
+    return;
+  }
+
   if (frame.command === "get_commands") {
     state.commands = Array.isArray(data.commands) ? data.commands : [];
     return;
@@ -1326,6 +1351,10 @@ function response(frame) {
   }
 
   if (frame.command === "get_state") {
+    const file = typeof data.sessionFile === "string" ? data.sessionFile : "";
+    const tab = active();
+    if (tab && file.length > 0) tab.sessionPath = file;
+
     const model = /** @type {PiModel | undefined} */ (data.model);
     state.model = model ? modelLabel(model) : "";
     state.modelKey = model ? modelKey(model) : "";
@@ -2293,7 +2322,7 @@ function renderTranscript() {
 
   for (const block of transcript.blocks) {
     seen.add(block.id);
-    const signature = thoughts + JSON.stringify(block);
+    const signature = `${thoughts}${forkStamp} ${JSON.stringify(block)}`;
     if (signatures.get(block.id) === signature) continue;
 
     let node = painted.get(block.id);
@@ -2435,6 +2464,7 @@ function paint(node, block, before = null) {
       for (const image of /** @type {import("./transcript.js").Image[]} */ (block.images ?? [])) {
         node.append(shot(image));
       }
+      node.append(messageActions(block, block.text ?? ""));
       return;
     }
 
@@ -2447,7 +2477,7 @@ function paint(node, block, before = null) {
         summary.append(span(truncate(block.done ? firstLine(text) : lastLine(text), 90), "title"));
       }
       if (block.lastWord) summary.append(span("nothing after", "state"));
-      body.append(markdownBox(text, "thinking-body"));
+      body.append(markdownBox(text, "thinking-body"), messageActions(block, text));
       node.append(fold);
       break;
     }
@@ -2459,6 +2489,7 @@ function paint(node, block, before = null) {
       if (block.stopReason === "aborted") foot.append(span("aborted", "warn"));
       if (block.error) foot.append(span(block.error, "warn"));
       if ((block.usage || block.error) && foot.childNodes.length > 0) node.append(foot);
+      node.append(messageActions(block, block.text ?? ""));
       return;
     }
 
@@ -2495,6 +2526,8 @@ function paint(node, block, before = null) {
       }
       if (view.chips.length > 0) body.append(chipRow(view.chips));
       if (body.childNodes.length === 0) body.append(span(block.done ? "no output" : "nothing back yet", "muted"));
+      const told = view.command.length > 0 ? view.command : String(block.args?.command ?? "");
+      body.append(messageActions(block, told.length > 0 ? told : view.text));
       node.append(fold);
 
       // A picture goes outside the fold. Reading it is usually why the file was
@@ -2504,7 +2537,11 @@ function paint(node, block, before = null) {
     }
 
     case "bash": {
-      node.append(span("shell", "who"), element("pre", "pre", block.text ?? ""));
+      node.append(
+        span("shell", "who"),
+        element("pre", "pre", block.text ?? ""),
+        messageActions(block, block.text ?? ""),
+      );
       return;
     }
 
@@ -2512,6 +2549,7 @@ function paint(node, block, before = null) {
       const { fold, summary, body } = foldFor(block, false);
       summary.append(span(block.text ?? "compacted", "name"));
       if (block.summary) body.append(boxed(block.summary, "body"));
+      body.append(messageActions(block, block.summary ?? block.text ?? ""));
       node.append(fold);
       break;
     }
@@ -2528,6 +2566,61 @@ function paint(node, block, before = null) {
 
   for (const empty of node.querySelectorAll(".fold-body:empty")) empty.remove();
   restoreScroll(node, kept);
+}
+
+/**
+ * @param {Block} block
+ * @param {string} text
+ */
+function messageActions(block, text) {
+  const row = element("div", "msg-actions");
+
+  if (text.trim().length > 0) {
+    const copy = button("copy", () => void copyMessage(text));
+    copy.title = "Copy this to the clipboard";
+    row.append(copy);
+  }
+
+  const prompt = turnPrompt(block);
+  const entryId = prompt === null ? "" : entryOf(prompt);
+  if (entryId.length > 0) {
+    const fork = button("fork", () => void forkAt(entryId));
+    fork.title = `Start this chat over from: ${truncate(prompt?.text ?? "", 70)}`;
+    row.append(fork);
+  }
+
+  return row;
+}
+
+/** @param {string} text */
+async function copyMessage(text) {
+  if (await toClipboard(text)) toast("Copied!", 1200);
+}
+
+/**
+ * @param {Block} block
+ * @returns {Block | null}
+ */
+function turnPrompt(block) {
+  const all = transcript.blocks;
+  for (let index = all.indexOf(block); index >= 0; index -= 1) {
+    if (all[index]?.kind === "user") return all[index] ?? null;
+  }
+  return null;
+}
+
+/** @param {Block} block */
+function entryOf(block) {
+  const text = block.text ?? "";
+  for (let index = forkMessages.length - 1; index >= 0; index -= 1) {
+    if (forkMessages[index]?.text === text) return forkMessages[index]?.entryId ?? "";
+  }
+  return "";
+}
+
+/** @param {string} entryId */
+async function forkAt(entryId) {
+  await sendCommand({ type: "fork", entryId });
 }
 
 /**

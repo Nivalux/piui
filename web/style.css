@@ -861,6 +861,34 @@ pre,
   overflow-wrap: anywhere;
 }
 
+.msg-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.msg-actions:empty {
+  display: none;
+}
+
+.msg-actions .button {
+  padding: 1px 8px;
+  border-color: transparent;
+  background: transparent;
+  color: var(--fg-soft);
+  font: 11px var(--mono);
+  opacity: 0.4;
+}
+
+.block:hover .msg-actions .button,
+.msg-actions .button:focus-visible {
+  opacity: 1;
+}
+
+.msg-actions .button:hover {
+  border-color: var(--line);
+}
+
 /* --------------------------------------------------------------------------
    Markdown
 
@@ -2484,6 +2512,15 @@ pre,
   top: 0;
   white-space: pre;
   visibility: hidden;
+}
+
+.copy-holder {
+  position: fixed;
+  left: -9999px;
+  top: 0;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
 }
 
 .term-note {

@@ -15,7 +15,33 @@ import {
   page,
   start,
   stop,
+  toastSays,
 } from "./harness.mjs";
+
+async function shellSays(/** @type {string} */ command, /** @type {string} */ want) {
+  await page.locator("#terminal .term-screen:visible").first().click();
+  await page.keyboard.type(command);
+  await page.keyboard.press("Enter");
+  await page.waitForFunction(
+    /** @param {string} needle */
+    (needle) =>
+      [...document.querySelectorAll("#terminal .term-row")].some(
+        (row) => row.offsetParent !== null && (row.textContent ?? "").includes(needle),
+      ),
+    want,
+    { timeout: 15000 },
+  );
+}
+
+function clipboard() {
+  return page.evaluate(() => navigator.clipboard.readText());
+}
+
+async function openShell() {
+  await openProjectChat(gitProject);
+  await openTerminalTab();
+  await page.waitForFunction(() => document.getElementById("terminal")?.hidden === false, null, { timeout: 5000 });
+}
 
 before(start);
 after(stop);
@@ -192,6 +218,61 @@ test("a character the terminal font has never seen still takes one cell", { skip
     `braille takes the same room as letters: ${widths.braille} against ${widths.letters}`,
   );
   assert.equal(widths.sideways, 0, "and a screenful of it does not reach past the panel");
+
+  await closeTerminalView();
+});
+
+test("a drag over the terminal copies what it covered", { skip: blocked }, async () => {
+  await openShell();
+  await shellSays("printf 'piui-copy-target\\n'", "piui-copy-target");
+
+  const row = page.locator("#terminal .term-row:visible", { hasText: "piui-copy-target" }).last();
+  const box = await row.boundingBox();
+  assert.ok(box, "the line the shell printed is on the screen");
+
+  await page.evaluate(() => {
+    const toast = /** @type {HTMLElement | null} */ (document.getElementById("toast"));
+    if (toast) toast.textContent = "";
+  });
+  await page.mouse.move(box.x + 3, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width - 3, box.y + box.height / 2, { steps: 8 });
+  await page.mouse.up();
+
+  assert.match(await clipboard(), /piui-copy-target/, "what the mouse covered is on the clipboard");
+  await toastSays(/Copied/);
+
+  await closeTerminalView();
+});
+
+test("what the clipboard holds reaches the shell without a key going missing", { skip: blocked }, async () => {
+  await openShell();
+
+  await page.evaluate(() => navigator.clipboard.writeText("pasted by piui"));
+  await page.locator("#terminal .term-screen:visible").first().click();
+  await page.keyboard.press("Control+v");
+
+  await page.waitForFunction(
+    () =>
+      [...document.querySelectorAll("#terminal .term-row")].some(
+        (row) => row.offsetParent !== null && (row.textContent ?? "").includes("pasted by piui"),
+      ),
+    undefined,
+    { timeout: 15000 },
+  );
+
+  await closeTerminalView();
+});
+
+test("a program in the terminal can put the clipboard there itself", { skip: blocked }, async () => {
+  await openShell();
+
+  const coded = Buffer.from("yanked in the shell").toString("base64");
+  await page.evaluate(() => navigator.clipboard.writeText(""));
+  await shellSays(`printf '\\033]52;c;${coded}\\a'; printf yanked-done\\n`, "yanked-done");
+
+  assert.equal(await clipboard(), "yanked in the shell");
+  await toastSays(/Copied/);
 
   await closeTerminalView();
 });

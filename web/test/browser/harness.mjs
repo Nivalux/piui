@@ -357,6 +357,7 @@ export async function start() {
   page.setDefaultNavigationTimeout(20000);
   page.setDefaultTimeout(20000);
   page.on("pageerror", (/** @type {unknown} */ error) => crashes.push(String(error)));
+  await page.context().grantPermissions(["clipboard-read", "clipboard-write"], { origin: base });
 
   await page.goto(`${base}/`);
   await page.evaluate(

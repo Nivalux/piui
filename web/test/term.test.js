@@ -198,6 +198,59 @@ test("the window title is read out and nothing else", () => {
   assert.equal(row(term, 0), "hi");
 });
 
+test("a program putting text on the clipboard is heard", () => {
+  const term = open();
+  /** @type {string[]} */
+  const seen = [];
+  term.onClipboard = (text) => {
+    seen.push(text);
+  };
+  term.write("\x1b]52;c;dGhlIHlhbmsgb2YgYSBoZWxpeA==\x07");
+  assert.deepEqual(seen, ["the yank of a helix"]);
+});
+
+test("a clipboard request in utf-8 arrives as the words it stood for", () => {
+  const term = open();
+  /** @type {string[]} */
+  const seen = [];
+  term.onClipboard = (text) => {
+    seen.push(text);
+  };
+  term.write("\x1b]52;cp;zrEgzrIg4oCUIG9r\x1b\\");
+  assert.deepEqual(seen, ["α β — ok"]);
+});
+
+test("a clipboard request is not a window title", () => {
+  const term = open();
+  /** @type {string[]} */
+  const seen = [];
+  term.onTitle = (title) => {
+    seen.push(title);
+  };
+  term.write("\x1b]52;c;eA==\x07");
+  assert.deepEqual(seen, []);
+});
+
+test("a clipboard request that asks for something stays quiet", () => {
+  const term = open();
+  /** @type {string[]} */
+  const seen = [];
+  term.onClipboard = (text) => {
+    seen.push(text);
+  };
+  term.write("\x1b]52;c;?\x07");
+  assert.deepEqual(seen, []);
+});
+
+test("an app that wants to know where a paste ends is remembered", () => {
+  const term = open();
+  assert.equal(term.bracketedPaste, false);
+  term.write("\x1b[?2004h");
+  assert.equal(term.bracketedPaste, true);
+  term.write("\x1b[?2004l");
+  assert.equal(term.bracketedPaste, false);
+});
+
 test("a program asking where the cursor is gets an answer", () => {
   const term = open();
   /** @type {string[]} */
