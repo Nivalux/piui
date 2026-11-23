@@ -456,7 +456,9 @@ export class Transcript {
         thought = { kind: "thinking", id: nextId++, text: part.thinking ?? "", done: true };
         this.#push(thought);
       } else if (part.type === "text") {
-        this.#push({ kind: "text", id: nextId++, text: part.text ?? "", done: true, usage: message.usage ?? null });
+        const text = part.text ?? "";
+        if (text.trim().length === 0 && !message.usage) continue;
+        this.#push({ kind: "text", id: nextId++, text, done: true, usage: message.usage ?? null });
       } else if (part.type === "toolCall") {
         const block = this.#tool(part.id ?? `call-${nextId++}`, part.name);
         block.args = /** @type {Record<string, unknown>} */ (part.arguments ?? null);
@@ -600,6 +602,11 @@ export class Transcript {
 
   #closeMessage() {
     for (const block of [...compact(this.#current.text), ...compact(this.#current.thinking)]) block.done = true;
+    for (const block of compact(this.#current.text)) {
+      if ((block.text ?? "").trim().length > 0 || block.usage || block.error) continue;
+      const at = this.#blocks.indexOf(block);
+      if (at >= 0) this.#blocks.splice(at, 1);
+    }
     this.#current = { text: [], thinking: [] };
   }
 }

@@ -462,3 +462,43 @@ test("a restored chat knows which thought was the last word", () => {
 
   assert.equal(transcript.blocks[0].lastWord, true);
 });
+
+test("a message that opened a text part and never filled it leaves nothing", () => {
+  const transcript = new Transcript();
+  transcript.event({ type: "message_start", message: { role: "user", content: [{ type: "text", text: "run it" }] } });
+  transcript.event({ type: "message_end", message: { role: "user", content: [{ type: "text", text: "run it" }] } });
+  transcript.event({ type: "message_start", message: { role: "assistant", content: [] } });
+  transcript.event({ type: "message_update", assistantMessageEvent: { type: "text_start", contentIndex: 0 } });
+  transcript.event({
+    type: "message_end",
+    message: {
+      role: "assistant",
+      content: [{ type: "thinking", thinking: "the calls said it all" }],
+      stopReason: "toolUse",
+    },
+  });
+
+  assert.deepEqual(
+    transcript.blocks.map((block) => block.kind),
+    ["user", "thinking"],
+  );
+});
+
+test("a stored blank is dropped unless it carries the count of its turn", () => {
+  const transcript = new Transcript();
+  transcript.replay([
+    { role: "assistant", content: [{ type: "text", text: "   " }], timestamp: 1_700_000_000_000 },
+    {
+      role: "assistant",
+      content: [{ type: "text", text: "" }],
+      usage: { input: 3, output: 9 },
+      timestamp: 1_700_000_001_000,
+    },
+  ]);
+
+  assert.deepEqual(
+    transcript.blocks.map((block) => block.kind),
+    ["text"],
+  );
+  assert.equal(transcript.blocks[0].usage?.output, 9);
+});

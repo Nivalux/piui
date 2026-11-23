@@ -27,28 +27,36 @@ const clipboard = () => page.evaluate(() => navigator.clipboard.readText());
 const hold = (text) => page.evaluate((want) => navigator.clipboard.writeText(want), text);
 
 async function actionsOf(/** @type {import("playwright").Locator} */ block) {
-  return (await block.locator(".msg-actions button").allTextContents()).map((label) => label.trim());
+  return await block
+    .locator(".msg-actions button")
+    .evaluateAll((nodes) => nodes.map((node) => node.getAttribute("aria-label") ?? ""));
 }
+
+/** @param {import("playwright").Locator} row */
+const copyRow = (row) => row.locator('[aria-label="copy message"]');
+
+/** @param {import("playwright").Locator} row */
+const forkRow = (row) => row.locator('[aria-label="fork here"]');
 
 test("a message hands its text to the clipboard", { skip: blocked }, async () => {
   await openProjectChat(gitProject);
   await runTurn("please remember piui-copy-1");
 
   const asked = page.locator("#transcript .block.user", { hasText: "piui-copy-1" }).last();
-  assert.deepEqual(await actionsOf(asked), ["copy", "fork"]);
+  assert.deepEqual(await actionsOf(asked), ["copy message", "fork here"]);
 
   await hold("");
-  await asked.locator(".msg-actions button", { hasText: "copy" }).click();
+  await copyRow(asked).click();
   assert.equal(await clipboard(), "please remember piui-copy-1");
   await toastSays(/Copied/);
 });
 
 test("an answer hands over the text as it was written", { skip: blocked }, async () => {
   const answer = page.locator("#transcript .block.text").last();
-  assert.deepEqual(await actionsOf(answer), ["copy", "fork"]);
+  assert.deepEqual(await actionsOf(answer), ["copy message", "fork here"]);
 
   await hold("");
-  await answer.locator(".msg-actions button", { hasText: "copy" }).click();
+  await copyRow(answer).click();
   const held = await clipboard();
   assert.match(held, /\*\*Beide Tools\*\*/, "the markdown, not what it was rendered to");
   assert.match(held, /piui-fake-write\.txt/);
@@ -66,14 +74,14 @@ test("a folded line keeps its buttons inside the fold", { skip: blocked }, async
   assert.equal(await inside.isVisible(), true, "open with it");
 
   await hold("");
-  await inside.locator("button", { hasText: "copy" }).click();
+  await copyRow(inside).click();
   assert.match(await clipboard(), /sleep 2 && echo done/, "the command the tool ran");
 });
 
 test("forking a message cuts the chat back to where it was asked", { skip: blocked }, async () => {
   await idle();
   const asked = page.locator("#transcript .block.user", { hasText: "piui-copy-1" }).first();
-  await asked.locator(".msg-actions button", { hasText: "fork" }).click();
+  await forkRow(asked).click();
 
   await page.waitForFunction(
     () =>

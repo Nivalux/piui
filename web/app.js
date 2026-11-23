@@ -2576,7 +2576,7 @@ function messageActions(block, text) {
   const row = element("div", "msg-actions");
 
   if (text.trim().length > 0) {
-    const copy = button("copy", () => void copyMessage(text));
+    const copy = iconButton("copy", "copy message", () => void copyMessage(text));
     copy.title = "Copy this to the clipboard";
     row.append(copy);
   }
@@ -2584,7 +2584,7 @@ function messageActions(block, text) {
   const prompt = turnPrompt(block);
   const entryId = prompt === null ? "" : entryOf(prompt);
   if (entryId.length > 0) {
-    const fork = button("fork", () => void forkAt(entryId));
+    const fork = iconButton("fork", "fork here", () => void forkAt(entryId));
     fork.title = `Start this chat over from: ${truncate(prompt?.text ?? "", 70)}`;
     row.append(fork);
   }
@@ -3855,6 +3855,25 @@ function span(value, className) {
  */
 function button(label, onclick) {
   const node = /** @type {HTMLButtonElement} */ (element("button", "button", label));
+  node.onclick = onclick;
+  return node;
+}
+
+const ICONS = {
+  copy: '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M15 5.5A1.5 1.5 0 0 0 13.5 4H5.5A1.5 1.5 0 0 0 4 5.5V13"/></svg>',
+  fork: '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><circle cx="7" cy="5.5" r="2.2"/><circle cx="17" cy="5.5" r="2.2"/><circle cx="12" cy="18.5" r="2.2"/><path d="M7 7.7v1.8a2.2 2.2 0 0 0 2.2 2.2h5.6a2.2 2.2 0 0 0 2.2-2.2V7.7"/><path d="M12 11.7v4.6"/></svg>',
+};
+
+/**
+ * @param {"copy" | "fork"} name
+ * @param {string} label
+ * @param {() => void} onclick
+ * @returns {HTMLButtonElement}
+ */
+function iconButton(name, label, onclick) {
+  const node = /** @type {HTMLButtonElement} */ (element("button", "button icon"));
+  node.innerHTML = ICONS[name];
+  node.setAttribute("aria-label", label);
   node.onclick = onclick;
   return node;
 }

@@ -880,6 +880,16 @@ pre,
   opacity: 0.4;
 }
 
+.msg-actions .button.icon {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 5px;
+}
+
+.msg-actions .button.icon svg {
+  display: block;
+}
+
 .block:hover .msg-actions .button,
 .msg-actions .button:focus-visible {
   opacity: 1;
@@ -1133,9 +1143,22 @@ pre,
   font: inherit;
 }
 
+.block.user {
+  width: fit-content;
+  max-width: 900px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--bg-soft);
+  padding: 7px 11px 4px;
+}
+
 .block.user .body {
-  border-left: 2px solid var(--line);
-  padding: 1px 0 1px 11px;
+  color: var(--fg);
+}
+
+.block.user .msg-actions {
+  justify-content: flex-end;
+  margin-top: 2px;
 }
 
 .block .foot {
