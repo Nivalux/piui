@@ -2895,9 +2895,12 @@ function pickThinking() {
 
 // -------------------------------------------------------------------- diff
 
+let refreshGeneration = 0;
+
 async function refreshGit() {
   if (!state.active) return;
   const id = state.active;
+  const generation = ++refreshGeneration;
 
   try {
     status = /** @type {GitStatus} */ (
@@ -2906,7 +2909,7 @@ async function refreshGit() {
   } catch {
     status = null;
   }
-  if (id !== state.active) return;
+  if (id !== state.active || generation !== refreshGeneration) return;
 
   el.base.textContent = status?.label ?? state.base;
   renderBranch();
