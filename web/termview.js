@@ -93,18 +93,22 @@ export class TermView {
   /** Measure the font and give the shell the window it now has. */
   fit() {
     const probe = document.createElement("span");
-    probe.className = "term-probe";
-    probe.textContent = "W".repeat(10);
+    probe.className = "term-probe term-row";
+    probe.textContent = "W".repeat(50);
     this.screen.append(probe);
-    const width = probe.getBoundingClientRect().width / 10;
+    const width = probe.getBoundingClientRect().width / 50;
     const height = probe.getBoundingClientRect().height;
     probe.remove();
     if (!(width > 0) || !(height > 0)) return null;
     this.cell = { width, height };
 
-    const box = this.scroll.getBoundingClientRect();
-    const cols = Math.max(2, Math.floor(box.width / width));
-    const rows = Math.max(3, Math.floor(box.height / height));
+    // The window a shell gets is the room the text has, which is neither the border box (its
+    // scrollbar would be counted twice) nor the padding (no glyph stands there).
+    const inset = window.getComputedStyle(this.scroll);
+    const wide = this.scroll.clientWidth - parseFloat(inset.paddingLeft) - parseFloat(inset.paddingRight);
+    const tall = this.scroll.clientHeight - parseFloat(inset.paddingTop) - parseFloat(inset.paddingBottom);
+    const cols = Math.max(2, Math.floor(wide / width));
+    const rows = Math.max(3, Math.floor(tall / height));
     if (rows === this.term.rows && cols === this.term.cols) return null;
 
     this.term.resize(rows, cols);
@@ -115,9 +119,9 @@ export class TermView {
 
   paint() {
     const out = this.term.render();
-    const signature = `${out.cursor.row}:${out.cursor.col}:${out.cursor.visible}:${out.screen.length}:${out.history.length}:${hash(out)}`;
-    if (signature === this.lastPaint) return;
-    this.lastPaint = signature;
+    const painted = signature(out);
+    if (painted === this.lastPaint) return;
+    this.lastPaint = painted;
 
     const rows = [];
     for (const line of out.history) rows.push(rowNode(line, "term-row past"));
@@ -125,10 +129,16 @@ export class TermView {
     this.screen.replaceChildren(this.caret, ...rows);
 
     this.caret.hidden = !out.cursor.visible;
+    this.caret.classList.toggle("term-underline", out.cursor.style === "underline");
+    this.caret.classList.toggle("term-bar", out.cursor.style === "bar");
+    this.caret.classList.toggle("term-steady", !out.cursor.blinks);
     this.caret.style.left = `${out.cursor.col * this.cell.width}px`;
-    this.caret.style.top = `${out.cursor.row * this.cell.height}px`;
-    this.caret.style.width = `${Math.max(1, this.cell.width)}px`;
-    this.caret.style.height = `${Math.max(1, this.cell.height)}px`;
+    this.caret.style.width = `${out.cursor.style === "bar" ? 2 : Math.max(1, this.cell.width)}px`;
+    this.caret.style.height = `${out.cursor.style === "underline" ? 2 : Math.max(1, this.cell.height)}px`;
+    this.caret.style.top =
+      out.cursor.style === "underline"
+        ? `${(out.cursor.row + 1) * this.cell.height - 2}px`
+        : `${out.cursor.row * this.cell.height}px`;
 
     if (this.follow) this.scroll.scrollTop = this.scroll.scrollHeight;
   }
@@ -174,26 +184,26 @@ function rowNode(line, cls) {
 }
 
 /**
- * A cheap fingerprint of what is on the screen, so a frame that changed nothing
- * paints nothing.
+ * A cheap fingerprint of a frame, so a frame that changed nothing paints nothing. Everything the
+ * page draws rides on it: the letters, their classes, the colours they carry inline, and the caret.
  *
- * @param {{history: any[][], screen: any[][]}} out
+ * @param {{history: any[][], screen: any[][], cursor: {row: number, col: number, visible: boolean}}}
  */
-function hash(out) {
-  let value = 0;
-  const feed = (/** @type {any[]} */ rows) => {
+export function signature(out) {
+  let value = out.cursor.row * 31 + out.cursor.col + (out.cursor.visible ? 7 : 13);
+  const feed = (/** @type {any[][]} */ rows) => {
     for (const line of rows) {
       for (const run of line) {
-        for (let i = 0; i < run.text.length; i += 1) {
-          value = (value * 31 + run.text.charCodeAt(i)) | 0;
-        }
-        value = (value * 31 + run.cls.length) | 0;
+        const look = `${run.cls} ${run.style}`;
+        for (let i = 0; i < run.text.length; i += 1) value = (value * 31 + run.text.charCodeAt(i)) | 0;
+        for (let i = 0; i < look.length; i += 1) value = (value * 31 + look.charCodeAt(i)) | 0;
       }
+      value = (value * 31 + 10) | 0;
     }
   };
   feed(out.history);
   feed(out.screen);
-  return value.toString(36);
+  return `${value.toString(36)}:${out.screen.length}:${out.history.length}`;
 }
 
 /**

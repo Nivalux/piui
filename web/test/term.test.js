@@ -28,7 +28,7 @@ test("what is written shows up where the cursor stands", () => {
   const term = open();
   term.write("hello");
   assert.equal(row(term, 0), "hello");
-  assert.deepEqual(term.render().cursor, { row: 0, col: 5, visible: true });
+  assert.deepEqual(term.render().cursor, { row: 0, col: 5, visible: true, style: "block", blinks: true });
 });
 
 test("a line longer than the window folds onto the next", () => {
@@ -169,6 +169,21 @@ test("a sequence nobody implements leaves no letters behind", () => {
   const term = open();
   term.write("\x1b[?2004h\x1b[>4;2m\x1b[?1hbefore\x1b(Bafter");
   assert.equal(row(term, 0), "beforeafter");
+});
+
+test("a caret asked for by number changes shape and leaves no letter behind", () => {
+  const term = open();
+  term.write("\x1b[2 q:wq\x1b[?25h\x1b[2 q");
+  assert.equal(row(term, 0), ":wq");
+  assert.equal(term.cursorStyle, "block");
+  assert.equal(term.cursorBlinks, false);
+
+  term.write("\x1b[5 q");
+  assert.equal(term.cursorStyle, "bar");
+  assert.equal(term.cursorBlinks, true);
+
+  term.write("\x1b[3 q");
+  assert.equal(term.cursorStyle, "underline");
 });
 
 test("the window title is read out and nothing else", () => {

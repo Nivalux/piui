@@ -2429,6 +2429,10 @@ pre,
   pointer-events: none;
 }
 
+.term-caret.term-steady {
+  animation: none;
+}
+
 .term-input:focus ~ .term-screen .term-caret,
 .term:focus-within .term-caret {
   animation: none;

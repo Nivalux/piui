@@ -35,7 +35,11 @@ export class Terminal {
     this.onTitle = () => {};
     this.state = "ground";
     this.params = "";
+    this.intermediate = "";
     this.fallback = "";
+    /** Shape and blink of the caret, as `CSI Ps SP q` asks for them. */
+    this.cursorStyle = "block";
+    this.cursorBlinks = true;
   }
 
   /** @param {number} rows @param {number} cols */
@@ -78,7 +82,13 @@ export class Terminal {
     return {
       history: this.history.map(runsOf),
       screen: this.screen().map(runsOf),
-      cursor: { row: this.row, col: this.col, visible: this.cursorVisible },
+      cursor: {
+        row: this.row,
+        col: this.col,
+        visible: this.cursorVisible,
+        style: this.cursorStyle,
+        blinks: this.cursorBlinks,
+      },
       title: this.title,
     };
   }
@@ -123,6 +133,7 @@ export class Terminal {
     if (ch === "[") {
       this.state = "params";
       this.params = "";
+      this.intermediate = "";
       this.fallback = "";
       return;
     }
@@ -142,18 +153,38 @@ export class Terminal {
     if (ch === "c") return this.reset();
   }
 
-  /** @param {string} ch */
+  /**
+   * `ESC [ parameters intermediates final`: only the byte at the end names the sequence, so the
+   * punctuation in between (`CSI 2 SP q`, a caret) must not be read as it.
+   *
+   * @param {string} ch
+   */
   #params(ch) {
-    if ((ch >= "0" && ch <= "9") || ch === ";" || ch === "?" || ch === ">" || ch === "<" || ch === "=") {
+    const code = ch.codePointAt(0) ?? 0;
+    if (code >= 0x20 && code <= 0x2f) {
+      if (this.intermediate.length < 4) this.intermediate += ch;
+      return;
+    }
+    if (code >= 0x30 && code <= 0x3f) {
       this.params += ch;
       if (this.params.length > 32) this.state = "ground";
       return;
     }
+    if (ch === esc) {
+      this.state = "escape";
+      this.params = "";
+      this.intermediate = "";
+      return;
+    }
+    if (code < 0x20) return;
+
     const privateMode = this.params.startsWith("?");
     const digits = privateMode ? this.params.slice(1) : this.params;
     const args = parseArgs(digits);
+    const intermediate = this.intermediate;
     this.state = "ground";
-    this.#dispatch(ch, args, privateMode);
+    this.intermediate = "";
+    this.#dispatch(ch, args, privateMode, intermediate);
   }
 
   /** @param {string} ch */
@@ -176,9 +207,12 @@ export class Terminal {
    * @param {string} final
    * @param {number[]} args
    * @param {boolean} priv
+   * @param {string} intermediate
    */
-  #dispatch(final, args, priv) {
+  #dispatch(final, args, priv, intermediate) {
     const first = args.length > 0 ? args[0] : 0;
+
+    if (intermediate === " " && final === "q") return this.setCursorStyle(first);
 
     if (final === "A") return this.moveCursor(-(first || 1), 0);
     if (final === "B") return this.moveCursor(first || 1, 0);
@@ -220,6 +254,13 @@ export class Terminal {
       if (first === 6) return this.onReport(`${esc}[${this.row + 1};${this.col + 1}R`);
       return;
     }
+  }
+
+  /** `CSI Ps SP q`: the shape a program wants its caret in; odd numbers blink, even ones stand still. */
+  /** @param {number} code */
+  setCursorStyle(code) {
+    this.cursorStyle = code === 3 || code === 4 ? "underline" : code === 5 || code === 6 ? "bar" : "block";
+    this.cursorBlinks = code === 0 || code % 2 === 1;
   }
 
   /** @param {string} ch */
@@ -482,6 +523,8 @@ export class Terminal {
     this.top = 0;
     this.bottom = this.rows - 1;
     this.cursorVisible = true;
+    this.cursorStyle = "block";
+    this.cursorBlinks = true;
     this.wrapPending = false;
   }
 }

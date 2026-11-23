@@ -1070,7 +1070,7 @@ test("the branch sits in the title bar and both places pick the same base", { sk
 
   fs.writeFileSync(path.join(gitProject, "notes.md"), "one\ntwo\n");
   git(gitProject, ["branch", "release"]);
-  git(gitProject, ["add", "notes.md"]);
+  git(gitProject, ["add", "-A"]);
   git(gitProject, ["commit", "-qm", "two lines"]);
   git(gitProject, ["update-ref", "refs/remotes/origin/main", "HEAD"]);
   git(gitProject, ["update-ref", "refs/remotes/origin/HEAD", "HEAD"]);
@@ -1972,6 +1972,55 @@ test("closing a terminal view ends the shell on the server", { skip: blocked }, 
     id,
     { timeout: 5000 },
   );
+});
+
+test("the terminal window stops at the edge of its panel", { skip: blocked }, async () => {
+  await openTerminalTab();
+  await page.waitForFunction(() => document.getElementById("terminal")?.hidden === false, null, { timeout: 5000 });
+
+  /** What the panel measures, and how much of it the text reaches past. */
+  const measure = () =>
+    page.evaluate(() => {
+      const scroll = /** @type {HTMLElement} */ (document.querySelector("#terminal .term-scroll"));
+      const inset = window.getComputedStyle(scroll);
+      const boxes = [.../** @type {NodeListOf<HTMLElement>} */ (scroll.querySelectorAll(".term-row"))].map((row) => ({
+        box: row.getBoundingClientRect(),
+        letters: (row.textContent ?? "").replace(/\s+$/, "").length,
+      }));
+      return {
+        wide: scroll.clientWidth - parseFloat(inset.paddingLeft) - parseFloat(inset.paddingRight),
+        tall: scroll.clientHeight - parseFloat(inset.paddingTop) - parseFloat(inset.paddingBottom),
+        sideways: scroll.scrollWidth - scroll.clientWidth,
+        updown: scroll.scrollHeight - scroll.clientHeight,
+        rows: boxes.length,
+        tallest: Math.max(0, ...boxes.map((one) => one.box.height)),
+        widest: Math.max(0, ...boxes.map((one) => one.box.width)),
+        fullest: Math.max(0, ...boxes.map((one) => one.letters)),
+      };
+    });
+
+  const empty = await measure();
+  assert.ok(empty.rows >= 3, `the shell was given a window to fill: ${empty.rows} rows`);
+  assert.ok(empty.rows * empty.tallest <= empty.tall, `${empty.rows} rows of ${empty.tallest} in ${empty.tall}`);
+  assert.ok(empty.updown <= 1, `nothing to scroll up and down yet: ${empty.updown}`);
+
+  // A full-width program is where an over-sized window shows: btop, vim and friends draw every
+  // column to the last one, so one column too many is a line past the edge and a second scrollbar.
+  await page.locator("#terminal .term-screen").first().click();
+  await page.keyboard.type("printf '%.0s=' {1..600}; printf piui9\n");
+  await page.waitForFunction(
+    () =>
+      [...document.querySelectorAll("#terminal .term-row")].some((row) => (row.textContent ?? "").includes("piui9")),
+    undefined,
+    { timeout: 15000 },
+  );
+
+  const full = await measure();
+  assert.ok(full.fullest > 40, `the screen is drawn to its last column: ${full.fullest}`);
+  assert.ok(full.widest <= full.wide, `no line reaches past the panel: ${full.widest} of ${full.wide}`);
+  assert.equal(full.sideways, 0, "and nothing to scroll sideways to");
+
+  await closeTerminalView();
 });
 
 test("a chat whose folder is gone is read from a copy, not by putting the folder back", { skip: blocked }, async () => {
