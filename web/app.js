@@ -2356,7 +2356,12 @@ function sessionRow(entry, ranges = []) {
     : `${relativeTime(entry.updated, Date.now())} · ${entry.messages} msgs`;
   row.append(title, span(meta, "session-meta"));
   row.onclick = () => void (already ? openTab(already.id) : createTab({ session: entry.path }));
-  row.append(menuButton(() => [{ label: "Copy path", run: () => void copyPath(entry.cwd ?? "") }]));
+  row.append(
+    menuButton(() => [
+      { label: "Copy path", run: () => void copyPath(entry.cwd ?? "") },
+      { label: "Copy session path", run: () => void copyPath(entry.path) },
+    ]),
+  );
   return row;
 }
 

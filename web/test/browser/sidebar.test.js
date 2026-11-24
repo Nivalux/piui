@@ -276,18 +276,26 @@ test("a row's actions sit behind a ⋯, and right-click is inert", async () => {
   );
 });
 
-test("a session row offers its folder without opening the chat", async () => {
+test("a session row offers its folder and its session file without opening the chat", async () => {
   const before = await activeTab();
+  await page.context().grantPermissions(["clipboard-read", "clipboard-write"], { origin: base });
   const row = page.locator(".session").first();
 
   await row.locator(".row-menu").click();
   await page.waitForSelector(".row-actions", { state: "visible" });
   await menuHangsUnder(row);
-  assert.deepEqual(await page.locator(".row-action").allInnerTexts(), ["Copy path"]);
+  assert.deepEqual(await page.locator(".row-action").allInnerTexts(), ["Copy path", "Copy session path"]);
   assert.equal(await activeTab(), before, "the chat behind it stayed put");
 
   await page.locator(".row-action", { hasText: "Copy path" }).click();
   await toastSays(/copied \//);
+
+  await row.locator(".row-menu").click();
+  await page.locator(".row-action", { hasText: "Copy session path" }).click();
+  await toastSays(/copied .*\.jsonl/);
+  const held = await page.evaluate(() => navigator.clipboard.readText());
+  assert.match(held, /\.jsonl$/, "the clipboard holds the session file itself");
+  assert.equal(await activeTab(), before, "copying the file left the chat alone");
 });
 
 test("a second ⋯ takes the first menu down instead of stacking on it", { skip: blocked }, async () => {
