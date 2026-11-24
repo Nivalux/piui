@@ -2,6 +2,7 @@
 
 /** The page. */
 
+import { live, note, start as stopwatch, took } from "./perf.js";
 import { Transcript } from "./transcript.js";
 import { toClipboard } from "./clip.js";
 import { filterCommands, knownCommands, parseCommands, parseSlash, slashRun } from "./commands.js";
@@ -1222,7 +1223,10 @@ function connect(id) {
 
   source.onmessage = (message) => {
     const frame = parseFrame(String(message.data));
-    if (frame) handle(frame);
+    if (frame) {
+      if (live.on) live.frames += 1;
+      handle(frame);
+    }
   };
 }
 
@@ -2199,13 +2203,34 @@ function hidePalette(event) {
 
 // --------------------------------------------------------------- rendering
 
+/** How often an arriving token may repaint the page, in milliseconds.
+ *
+ * A model answers at well under a hundred tokens a second, so painting every
+ * one of sixty frames buys nothing a reader can see and costs a layout of the
+ * whole chat each time.
+ */
+const repaintEvery = 40;
+
+/** When the chat was last painted from a token.
+ *
+ * @type {number} */
+let paintedAt = 0;
+
 function markDirty() {
   if (scheduled) return;
   scheduled = true;
-  requestAnimationFrame(() => {
-    scheduled = false;
-    renderStream();
-  });
+  requestAnimationFrame(waitForTurn);
+}
+
+/** @param {number} now */
+function waitForTurn(now) {
+  if (now - paintedAt < repaintEvery) {
+    requestAnimationFrame(waitForTurn);
+    return;
+  }
+  scheduled = false;
+  paintedAt = now;
+  renderStream();
 }
 
 /**
@@ -2215,9 +2240,11 @@ function markDirty() {
  * stops working.
  */
 function renderStream() {
+  const started = stopwatch();
   renderTranscript();
   renderQueue();
   renderFooter();
+  took("renderStream", started);
 }
 
 function render() {
@@ -2705,6 +2732,7 @@ function groupHeader(label, count, open) {
 let transcriptStart = -1;
 
 function renderTranscript() {
+  const started = stopwatch();
   if (transcriptStart < 0 && transcript.blocks.length > 0) {
     transcriptStart = Math.max(0, transcript.blocks.length - 60);
   } else {
@@ -2712,6 +2740,8 @@ function renderTranscript() {
   }
   const seen = new Set();
   let nextNode = el.transcript.firstChild;
+  let signatureChars = 0;
+  let repainted = 0;
   const before = earlierWrites();
   // How a block is painted depends on it, so it belongs in what a block is remembered by.
   const thoughts = state.ui.show_thinking === true ? "" : "no-thoughts ";
@@ -2726,6 +2756,7 @@ function renderTranscript() {
     if (node !== nextNode) el.transcript.insertBefore(node, nextNode);
     nextNode = node.nextSibling;
     const signature = `${thoughts}${forkStamp} ${JSON.stringify(block)}`;
+    signatureChars += signature.length;
     if (signatures.get(block.id) === signature) continue;
 
     // A row under the pointer is left exactly as it stands. Rebuilding it takes
@@ -2736,6 +2767,7 @@ function renderTranscript() {
 
     signatures.set(block.id, signature);
     paint(node, block, before.get(block.id) ?? null);
+    repainted += 1;
   }
 
   for (const [id, node] of painted) {
@@ -2745,8 +2777,11 @@ function renderTranscript() {
     node.remove();
   }
 
-  paintEnded();
-  if (state.follow) jumpToEnd();
+  notePaint(seen.size, signatureChars);
+  // Scrolling to the bottom makes the browser work out the height of everything
+  // first, so it only happens when this pass actually changed the page.
+  if (state.follow && (repainted > 0 || paintEnded())) jumpToEnd();
+  took("renderTranscript", started);
 }
 
 /** @type {HTMLElement | null} */ let endedNote = null;
@@ -2781,14 +2816,15 @@ function paintEnded() {
   }
 
   if (said === null) {
+    const had = endedNote !== null || endedPaint !== "";
     endedNote?.remove();
     endedNote = null;
     endedPaint = "";
-    return;
+    return had;
   }
 
   const stamp = `${said.title}\n${said.why}`;
-  if (endedPaint === stamp && endedNote?.isConnected) return;
+  if (endedPaint === stamp && endedNote?.isConnected) return false;
 
   endedPaint = stamp;
   const note = element("div", "chat-ended");
@@ -2800,6 +2836,7 @@ function paintEnded() {
   endedNote?.remove();
   el.transcript.append(note);
   endedNote = note;
+  return true;
 }
 
 /** How far the reading position sits above the newest block. */
@@ -2824,9 +2861,24 @@ function watchScroll() {
 }
 
 function jumpToEnd() {
+  const started = stopwatch();
   el.transcript.scrollTop = el.transcript.scrollHeight;
   state.follow = true;
   el.jump.hidden = true;
+  took("jumpToEnd", started);
+}
+
+/**
+ * What one pass over the chat cost: how many blocks were looked at and how many
+ * bytes were turned into the string that decides whether a block is repainted.
+ *
+ * @param {number} blocks
+ * @param {number} signatureChars
+ */
+function notePaint(blocks, signatureChars) {
+  if (!live.on) return;
+  note("blocks looked at", blocks);
+  note("signature bytes", 1, signatureChars);
 }
 
 /**
@@ -2837,6 +2889,7 @@ function jumpToEnd() {
  * @returns {Map<number, string | null>}
  */
 function earlierWrites() {
+  const started = stopwatch();
   /** @type {Map<string, string>} */
   const latest = new Map();
   /** @type {Map<number, string | null>} */
@@ -2849,6 +2902,7 @@ function earlierWrites() {
     before.set(block.id, latest.get(path) ?? null);
     latest.set(path, String(block.args?.content ?? ""));
   }
+  took("earlierWrites", started);
   return before;
 }
 
@@ -2858,6 +2912,17 @@ function earlierWrites() {
  * @param {string | null} [before]
  */
 function paint(node, block, before = null) {
+  const started = stopwatch();
+  paintBlock(node, block, before);
+  took("paint", started);
+}
+
+/**
+ * @param {HTMLElement} node
+ * @param {Block} block
+ * @param {string | null} [before]
+ */
+function paintBlock(node, block, before = null) {
   const kept = scrollOf(node);
 
   node.replaceChildren();
@@ -3090,8 +3155,11 @@ function liveClock(block) {
  * @param {string} className
  */
 function markdownBox(text, className) {
+  const started = stopwatch();
   const box = element("div", `md ${className}`);
   box.append(markdownNode(parseMarkdown(text)));
+  if (live.on) note("markdown boxes", 1, text.length);
+  took("markdownBox", started);
   return box;
 }
 
@@ -3287,6 +3355,7 @@ function trackRun(tab, running) {
 let turnStartedAt = 0;
 
 function renderFooter() {
+  const started = stopwatch();
   const tab = active();
   const reading = meter.reading();
 
@@ -3312,6 +3381,7 @@ function renderFooter() {
   el.meterBar.hidden =
     terminalInView() !== "" ||
     (el.busy.hidden && el.context.hidden && parts.length === 0 && el.rate.textContent.length === 0);
+  took("renderFooter", started);
 }
 
 /**
