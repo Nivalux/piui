@@ -1843,13 +1843,8 @@ function strings(value) {
 let queueWaiter = null;
 
 /**
- * Hand the queued messages back to the editor, the way Esc does in the terminal.
- *
- * Pi holds the queue, so it is asked to empty it and what it hands back goes in
- * the box. An answer that says nothing was queued is taken at its word: those
- * messages are already in the chat and putting them back would send them twice.
- * Only when no answer comes at all does the page fall back on the copies it was
- * holding, which is what a reader would otherwise have lost.
+ * Hand the queued messages back to the editor, the way Esc does in the terminal,
+ * together with any copy Pi never acknowledged.
  */
 async function pullQueue() {
   const tabId = state.active;
@@ -1876,11 +1871,27 @@ async function pullQueue() {
     setTimeout(() => done(null), 2000);
   });
 
-  const texts = cleared ?? items.map((item) => item.text);
+  const texts = handedBack(
+    cleared,
+    items.map((item) => item.text),
+  );
   if (texts.length > 0) el.input.value = [el.input.value, ...texts].filter((line) => line).join("\n\n");
   grow();
   el.input.focus();
   renderQueue();
+}
+
+/**
+ * What the editor is handed: Pi's own list, then anything this page sent that Pi never named.
+ *
+ * @param {string[] | null} cleared
+ * @param {string[]} mine
+ * @returns {string[]}
+ */
+function handedBack(cleared, mine) {
+  const texts = cleared ?? mine;
+  const known = new Set(texts.map((text) => text.trim()));
+  return [...texts, ...mine.filter((text) => !known.has(text.trim()))];
 }
 
 /**

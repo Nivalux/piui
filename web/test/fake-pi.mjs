@@ -122,6 +122,16 @@ function announceQueue() {
 }
 
 /**
+ * A steer whose words reach neither a queue nor the chat, the way a pi that is
+ * about to be replaced takes one and never says so.
+ *
+ * @param {string} text
+ */
+function swallowed(text) {
+  return /unconfirmed/i.test(text);
+}
+
+/**
  * Hand the queued messages to the model: into the history and onto the stream,
  * so a client sees them leave the queue the way it sees a real Pi deliver them.
  *
@@ -240,10 +250,14 @@ async function answer(line) {
       followUpMode = String(command.mode ?? "one-at-a-time");
       return reply("set_follow_up_mode", {});
 
-    case "steer":
-      queue.steering.push(String(command.message ?? ""));
-      announceQueue();
+    case "steer": {
+      const text = String(command.message ?? "");
+      if (!swallowed(text)) {
+        queue.steering.push(text);
+        announceQueue();
+      }
       return reply("steer", { disposition: "queued" });
+    }
 
     case "follow_up":
       queue.followUp.push(String(command.message ?? ""));
