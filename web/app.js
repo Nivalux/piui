@@ -596,7 +596,7 @@ function wire() {
   el.model.onchange = () => void pickModel();
   el.thinking.onchange = () => pickThinking();
 
-  for (const node of el.shell.querySelectorAll(".spinner")) turnTo(node);
+  beat();
 
   window.addEventListener("pointerdown", (event) => {
     pressed = event.target instanceof Element ? event.target.closest(".block") : null;
@@ -3395,6 +3395,8 @@ let runTab = "";
 let runSince = 0;
 /** @type {ReturnType<typeof setInterval> | null} */
 let runTicker = null;
+/** @type {ReturnType<typeof setInterval> | null} */
+let spinTicker = null;
 
 /**
  * Spins the composer indicator and counts how long this answer is taking.
@@ -3433,6 +3435,14 @@ function trackRun(tab, running) {
         node.textContent = duration(Math.max(0, Date.now() - Number(node.dataset.tick)));
       }
     }, 1000);
+  }
+  if (running && !spinTicker) {
+    beat();
+    spinTicker = setInterval(beat, spinPeriod / spinSteps);
+  }
+  if (!running && spinTicker) {
+    clearInterval(spinTicker);
+    spinTicker = null;
   }
   if (!running && runTicker) {
     clearInterval(runTicker);
@@ -4376,33 +4386,48 @@ function element(tag, className, content) {
   return node;
 }
 
-/** Filled in the first time a spinner is built, from the stylesheet. */
-let spinPeriod = 0;
+const spinPeriod = 900;
+const spinSteps = 12;
+const pulsePeriod = 1200;
+const calm = matchMedia("(prefers-reduced-motion: reduce)");
 
 /**
- * The ring that says something is happening. The transcript and the sidebar are
- * rebuilt while pi works, and a new element starts its animation at zero, so a
- * rebuilt spinner only jitters. Starting it at the point the clock has already
- * reached makes every replacement a continuation of the same turn.
+ * The angle the wall clock has reached, so a rebuilt ring continues where its
+ * predecessor stood instead of starting over.
+ *
+ * @returns {string}
+ */
+function spinAngle() {
+  if (calm.matches) return "rotate(0deg)";
+  const step = Math.floor(Date.now() / (spinPeriod / spinSteps));
+  return `rotate(${(step * (360 / spinSteps)) % 360}deg)`;
+}
+
+/** How lit a running dot stands, in three slow steps of the same clock. */
+function pulseOpacity() {
+  if (calm.matches) return "1";
+  return String(1 - (Math.floor(Date.now() / (pulsePeriod / 3)) % 3) * 0.35);
+}
+
+/** Puts every ring and every running dot on the point the clock has reached. */
+function beat() {
+  const turn = spinAngle();
+  const lit = pulseOpacity();
+  for (const node of el.shell.querySelectorAll(".spinner")) node.style.transform = turn;
+  for (const node of el.shell.querySelectorAll(".dot.running")) node.style.opacity = lit;
+}
+
+/**
+ * The ring that says something is happening, turned by our own ticker because a
+ * stylesheet animation is reticked sixty times a second whether or not the
+ * browser is willing to draw it off the main thread.
  *
  * @returns {HTMLElement}
  */
 function spinner() {
   const node = element("span", "spinner");
-  turnTo(node);
+  node.style.transform = spinAngle();
   return node;
-}
-
-/**
- * @param {HTMLElement} node
- */
-function turnTo(node) {
-  if (spinPeriod === 0) {
-    const raw = getComputedStyle(document.documentElement).getPropertyValue("--spin-period");
-    const value = Number.parseFloat(raw);
-    spinPeriod = Number.isFinite(value) && value > 0 ? (raw.includes("ms") ? value : value * 1000) : 900;
-  }
-  node.style.animationDelay = `${-(Date.now() % spinPeriod)}ms`;
 }
 
 /**

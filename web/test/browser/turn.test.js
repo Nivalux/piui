@@ -125,10 +125,10 @@ test("clicking a running tool opens it and keeps it open", { skip: blocked }, as
   const steps = await page.evaluate(async () => {
     /** Where in its turn a spinner stands, in ms, whatever it was built at. */
     const angle = (/** @type {Element} */ node) => {
-      const time = Number(node.getAnimations()[0]?.currentTime ?? 0);
-      const raw = getComputedStyle(node).animationDelay;
-      const delay = Number.parseFloat(raw) * (raw.includes("ms") ? 1 : 1000);
-      return time - delay;
+      const face = /matrix\(([-\d.]+), ([-\d.]+)/.exec(getComputedStyle(node).transform);
+      if (!face) return 0;
+      const deg = (Math.atan2(Number(face[2]), Number(face[1])) * 180) / Math.PI;
+      return ((((deg % 360) + 360) % 360) / 360) * 900;
     };
 
     /** @type {[number, number][]} */
@@ -156,7 +156,7 @@ test("clicking a running tool opens it and keeps it open", { skip: blocked }, as
     }),
   );
   assert.ok(
-    worst < 120,
+    worst < 150,
     `the spinner keeps turning with the clock rather than starting over: ${turns.map(([angle, at]) => Math.round(angle - at))}`,
   );
 
