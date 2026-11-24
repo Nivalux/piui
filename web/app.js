@@ -217,6 +217,26 @@ const meter = new Meter();
 let stream = null;
 /** @type {Map<number, HTMLElement>} */
 const painted = new Map();
+
+/**
+ * The newest block, watched for growth. The browser has already worked out the
+ * heights by the time this fires, so keeping the end in view costs no layout at
+ * all — asking for a height in the middle of a repaint is what did.
+ */
+const growth = new ResizeObserver(() => {
+  const started = stopwatch();
+  if (state.follow) pinBottom();
+  took("pin bottom", started);
+});
+
+/** @type {Element | null} */
+let watched = null;
+
+/** Move the chat to its newest line, but only when it is not already there. */
+function pinBottom() {
+  const box = el.transcript;
+  if (box.scrollHeight - box.scrollTop - box.clientHeight > 1) box.scrollTop = box.scrollHeight;
+}
 /** @type {Map<number, string>} */
 const signatures = new Map();
 /** @type {Map<number, boolean>} block id → whether the reader left this fold open */
@@ -1132,6 +1152,7 @@ async function openTab(id) {
   transcript.clear();
   transcriptStart = -1;
   meter.reset();
+  forgetGrowth();
   painted.clear();
   signatures.clear();
   renderQueue();
@@ -1290,6 +1311,7 @@ async function sendCommand(command) {
 
 /** @param {Frame} frame */
 function handle(frame) {
+  const started = stopwatch();
   if (isPiuiEvent(frame)) {
     if (frame.event === "running") {
       const tab = active();
@@ -1369,7 +1391,10 @@ function handle(frame) {
   if (frame.type === "message_start" && frame.message?.role === "user") ask("get_fork_messages");
 
   retirePending(frame);
+  const reducer = stopwatch();
   if (transcript.event(frame)) markDirty();
+  took("transcript reducer", reducer);
+  took("handle frame", started);
   // Pi only knows what the next request will cost once a turn is through, and one
   // answer can run several turns: asking at every one of them is what keeps the
   // context ring moving during a long answer rather than only at its end.
@@ -1425,6 +1450,7 @@ function response(frame) {
     }
     toast(frame.command === "clone" ? "Cloned: this chat is a copy of where it stood" : "A fresh session", 4000);
     transcript.clear();
+    forgetGrowth();
     painted.clear();
     signatures.clear();
     el.transcript.replaceChildren();
@@ -2216,6 +2242,18 @@ const repaintEvery = 40;
  * @type {number} */
 let paintedAt = 0;
 
+/** How long the last few frames actually took to arrive, in milliseconds.
+ *
+ * A frame that takes longer than the screen's is the only honest signal that a
+ * repaint is too much for the machine reading it, so it decides how often an
+ * arriving token is allowed to repaint.
+ *
+ * @type {number} */
+let frameGap = 16;
+
+/** @type {number} */
+let lastFrameAt = 0;
+
 function markDirty() {
   if (scheduled) return;
   scheduled = true;
@@ -2224,13 +2262,26 @@ function markDirty() {
 
 /** @param {number} now */
 function waitForTurn(now) {
-  if (now - paintedAt < repaintEvery) {
+  const gap = now - lastFrameAt;
+  if (lastFrameAt > 0 && gap > 0 && gap < 500) frameGap = frameGap * 0.8 + gap * 0.2;
+  lastFrameAt = now;
+  live.gap = frameGap;
+  if (now - paintedAt < everyPaint()) {
     requestAnimationFrame(waitForTurn);
     return;
   }
   scheduled = false;
   paintedAt = now;
   renderStream();
+}
+
+/** How long a repaint waits, stretched to a quarter of its usual rate while the
+ * page is missing frames.
+ *
+ * @returns {number}
+ */
+function everyPaint() {
+  return frameGap > 24 ? repaintEvery * 4 : repaintEvery;
 }
 
 /**
@@ -2778,10 +2829,21 @@ function renderTranscript() {
   }
 
   notePaint(seen.size, signatureChars);
-  // Scrolling to the bottom makes the browser work out the height of everything
-  // first, so it only happens when this pass actually changed the page.
-  if (state.follow && (repainted > 0 || paintEnded())) jumpToEnd();
+  note("blocks repainted", repainted);
+  paintEnded();
+  const last = el.transcript.lastElementChild;
+  if (last !== watched) {
+    if (watched) growth.unobserve(watched);
+    watched = last;
+    if (last) growth.observe(last);
+  }
   took("renderTranscript", started);
+}
+
+/** Stop watching, for when the whole chat is thrown away. */
+function forgetGrowth() {
+  growth.disconnect();
+  watched = null;
 }
 
 /** @type {HTMLElement | null} */ let endedNote = null;

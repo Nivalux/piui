@@ -11,7 +11,7 @@ const on = typeof localStorage !== "undefined" && localStorage.getItem("piui:per
 /** @type {Map<string, { calls: number, ms: number, amount: number }>} */
 const tallies = new Map();
 
-const meter = { on, frames: 0 };
+const meter = { on, frames: 0, gap: 0 };
 
 /**
  * Count one thing happening: how many times, and how much of it.
@@ -70,7 +70,7 @@ if (on) {
           `${name} ${tally.calls}x ${Math.round(tally.ms)}ms${tally.amount ? ` ${compact(tally.amount)}` : ""}`,
       );
     console.log(
-      `[piui] 5s: ${rows.join(" | ") || "nothing painted"} | frames ${meter.frames} | nodes ${document.getElementsByTagName("*").length}`,
+      `[piui] 5s: ${rows.join(" | ")} | frames ${meter.frames} | gap ${meter.gap.toFixed(1)}ms | nodes ${document.getElementsByTagName("*").length}`,
     );
     for (const tally of tallies.values()) {
       tally.calls = 0;

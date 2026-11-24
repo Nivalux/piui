@@ -873,6 +873,10 @@ pre,
 
 .block {
   max-width: 900px;
+
+  /* Blocks off the screen cost no layout and no paint. */
+  content-visibility: auto;
+  contain-intrinsic-size: auto 140px;
 }
 
 .block .who {

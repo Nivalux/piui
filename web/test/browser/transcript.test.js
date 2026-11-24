@@ -385,8 +385,8 @@ test("older messages are painted on upward scroll without moving the reading pos
   try {
     await openFreshChat();
     await page.waitForFunction(() => document.querySelectorAll("#transcript .block").length === 60);
-    assert.match(await page.locator("#transcript .block").first().innerText(), /history message 120/);
-    assert.match(await page.locator("#transcript .block").last().innerText(), /history message 179/);
+    assert.match(await page.locator("#transcript .block").first().textContent(), /history message 120/);
+    assert.match(await page.locator("#transcript .block").last().textContent(), /history message 179/);
     const before = await page
       .locator("#transcript .block")
       .first()
@@ -405,12 +405,12 @@ test("older messages are painted on upward scroll without moving the reading pos
       }));
     assert.equal(after.text, before.text);
     assert.ok(Math.abs(after.top - before.top) < 2);
-    assert.match(await page.locator("#transcript .block").first().innerText(), /history message 60/);
+    assert.match(await page.locator("#transcript .block").first().textContent(), /history message 60/);
     await page.locator("#transcript").evaluate((node) => {
       node.scrollTop = 0;
     });
     await page.waitForFunction(() => document.querySelectorAll("#transcript .block").length === 180);
-    assert.match(await page.locator("#transcript .block").first().innerText(), /history message 0/);
+    assert.match(await page.locator("#transcript .block").first().textContent(), /history message 0/);
   } finally {
     await page.unroute("**/api/events?*");
   }
