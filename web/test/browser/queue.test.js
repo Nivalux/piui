@@ -75,3 +75,24 @@ test("a thought pi never acknowledged comes back instead of vanishing", { skip: 
   assert.ok((await editorText()).includes("an unconfirmed thought"));
   await idle();
 });
+
+test("the button to pull a thought back outlives the tokens arriving beside it", { skip: blocked }, async () => {
+  await openFreshChat();
+  await busyWith("stream the answer");
+  await steer("a second thought");
+  await page.waitForSelector("#queue button", { timeout: 15000 });
+
+  const held = await page.evaluate(async () => {
+    const touched = document.querySelector("#queue button");
+    const words = document.querySelector("#transcript")?.textContent?.length ?? 0;
+    await new Promise((resolve) => setTimeout(resolve, 700));
+    return {
+      arriving: (document.querySelector("#transcript")?.textContent?.length ?? 0) > words,
+      same: touched !== null && touched === document.querySelector("#queue button") && touched.isConnected,
+    };
+  });
+
+  assert.ok(held.arriving, "an answer was really arriving while the button was watched");
+  assert.ok(held.same, "the button under a hand that pressed it is still there to release on");
+  await idle();
+});

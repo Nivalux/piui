@@ -1823,6 +1823,11 @@ function queueWord() {
   return state.ui.send_mode === "queue" ? "queued" : "steering";
 }
 
+/** What the strip was showing when it was last touched.
+ *
+ * @type {string} */
+let queuePainted = "";
+
 function renderQueue() {
   const tabId = state.active ?? "";
   const word = queueWord();
@@ -1840,6 +1845,13 @@ function renderQueue() {
   // is only told how many there are.
   const blind = state.queued - (held ? texts.length : 0);
   if (blind > 0) rows.push(`${blind} from before this page`);
+
+  // An answer repaints this on every token. Rebuilding it anyway would replace
+  // its button between the press and the release, and a thought could not be
+  // pulled back while pi thinks.
+  const painted = [word, String(rows.length), ...rows].join("\n");
+  if (painted === queuePainted) return;
+  queuePainted = painted;
 
   el.queue.replaceChildren();
   for (const text of rows) {
