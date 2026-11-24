@@ -395,6 +395,7 @@ pre,
 .dot.running {
   background: var(--accent);
   animation: pulse 1.2s ease-in-out infinite;
+  will-change: opacity;
 }
 
 @keyframes pulse {
@@ -1855,12 +1856,14 @@ pre,
   border-top-color: var(--accent);
   border-radius: 50%;
   animation: piui-spin var(--spin-period) linear infinite;
+  will-change: transform;
 }
 
 .pre.live::after {
   content: "▍";
   color: var(--accent);
   animation: piui-blink 1s steps(2, start) infinite;
+  will-change: opacity;
 }
 
 /* Opacity, not visibility: only opacity runs without waking the page to repaint
