@@ -319,11 +319,8 @@ async function boot() {
   const first = state.tabs.find((tab) => tab.id === remembered) ?? state.tabs[0];
   if (first) return openTab(first.id);
 
-  // A restart kills the Pi processes but not the sessions they were in: put back
-  // every chat that was open, oldest first, so the one last looked at ends up on
-  // screen. Each one costs a Pi process, so a very long list gets trimmed.
   /** @type {{cwd: string, session?: string}[]} */
-  const saved = ((await getJSON("/api/restore").catch(() => [])) ?? []).slice(-8);
+  const saved = (await getJSON("/api/restore").catch(() => [])) ?? [];
   for (const item of saved) {
     await createTab(item.session ? { cwd: item.cwd, session: item.session } : { cwd: item.cwd }).catch(() => {});
   }
@@ -1111,6 +1108,7 @@ async function openTab(id) {
   stream?.close();
   stream = null;
   transcript.clear();
+  transcriptStart = -1;
   meter.reset();
   painted.clear();
   signatures.clear();
@@ -2639,23 +2637,32 @@ function groupHeader(label, count, open) {
   return head;
 }
 
+let transcriptStart = -1;
+
 function renderTranscript() {
+  if (transcriptStart < 0 && transcript.blocks.length > 0) {
+    transcriptStart = Math.max(0, transcript.blocks.length - 60);
+  } else {
+    transcriptStart = Math.min(transcriptStart, Math.max(0, transcript.blocks.length - 60));
+  }
   const seen = new Set();
+  let nextNode = el.transcript.firstChild;
   const before = earlierWrites();
   // How a block is painted depends on it, so it belongs in what a block is remembered by.
   const thoughts = state.ui.show_thinking === true ? "" : "no-thoughts ";
 
-  for (const block of transcript.blocks) {
+  for (const block of transcript.blocks.slice(Math.max(0, transcriptStart))) {
     seen.add(block.id);
-    const signature = `${thoughts}${forkStamp} ${JSON.stringify(block)}`;
-    if (signatures.get(block.id) === signature) continue;
-
     let node = painted.get(block.id);
     if (!node) {
       node = element("div", `block ${block.kind}`);
       painted.set(block.id, node);
-      el.transcript.append(node);
     }
+    if (node !== nextNode) el.transcript.insertBefore(node, nextNode);
+    nextNode = node.nextSibling;
+    const signature = `${thoughts}${forkStamp} ${JSON.stringify(block)}`;
+    if (signatures.get(block.id) === signature) continue;
+
     // A row under the pointer is left exactly as it stands. Rebuilding it takes
     // the line out of the document and back, and a press that spans that gets no
     // click at all: the reader who wants to read a thought while it is still
@@ -2742,6 +2749,13 @@ function scrollGap() {
 function watchScroll() {
   state.follow = scrollGap() < 60;
   el.jump.hidden = state.follow;
+  if (!state.follow && el.transcript.scrollTop < 200 && transcriptStart > 0) {
+    const height = el.transcript.scrollHeight;
+    const top = el.transcript.scrollTop;
+    transcriptStart = Math.max(0, transcriptStart - 60);
+    renderTranscript();
+    el.transcript.scrollTop = top + el.transcript.scrollHeight - height;
+  }
 }
 
 function jumpToEnd() {

@@ -104,6 +104,7 @@ pub fn main(minimal: std.process.Init.Minimal) !void {
     const address = try std.Io.net.IpAddress.parseIp4(resolved.host, resolved.port);
     var listener = try address.listen(io, .{ .reuse_address = true });
     defer listener.deinit(io);
+    group.concurrent(io, hub.Hub.warm, .{center}) catch {};
 
     std.debug.print("piui on http://{s}:{d}\n", .{ resolved.host, resolved.port });
     std.debug.print("log lines on stderr, times in UTC\n", .{});
@@ -190,7 +191,7 @@ fn parseArgs(args: std.process.Args) !Overrides {
                 \\  --config <file>      piui settings (default ~/.piui/config.json)
                 \\  --scratch <dir>      workdirs for chats without a project
                 \\  --web <dir>          serve web/ from disk instead of embedded
-                \\  --idle <seconds>     close idle tabs (default 1800, 0 disables)
+                \\  --idle <seconds>     reclaim idle workers (default 1800, 0 disables)
                 \\
                 \\Every option also has a place in the config file under "server", so a
                 \\port can be set once instead of typed again. The token is generated on

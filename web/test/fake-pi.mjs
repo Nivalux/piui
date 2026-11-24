@@ -187,6 +187,15 @@ async function answer(line) {
     case "get_entries":
       return reply("get_entries", { entries: [] });
 
+    case "switch_session":
+      return send({
+        type: "response",
+        id: JSON.parse(line).id,
+        command: "switch_session",
+        success: true,
+        data: { cancelled: true },
+      });
+
     case "get_messages":
       return reply("get_messages", { messages: history });
 

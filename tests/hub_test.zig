@@ -27,6 +27,32 @@ fn opened(comptime dir: []const u8, io: Io, a: std.mem.Allocator) !hub.Hub {
     };
 }
 
+test "idle reclamation preserves tabs and only manual close removes saved entries" {
+    var threaded: Io.Threaded = .init(testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    var h = try opened("tmp/hub-idle", io, arena.allocator());
+    defer Io.Dir.cwd().deleteTree(io, "tmp/hub-idle") catch {};
+    h.state_path = "tmp/hub-idle/tabs.json";
+    h.idle_after_ms = 1;
+    var first = hub.Tab{ .id = "t1", .cwd = "/tmp", .project = true, .session_path = "/tmp/first.jsonl", .created_ms = 0, .last_output_ms = -1000000 };
+    var second = hub.Tab{ .id = "t2", .cwd = "/tmp", .project = true, .session_path = "/tmp/second.jsonl", .created_ms = 0, .last_output_ms = -1000000 };
+    try h.tabs.put(arena.allocator(), first.id, &first);
+    try h.tabs.put(arena.allocator(), second.id, &second);
+    h.reapIdle();
+    try testing.expect(h.get(first.id) == &first);
+    try testing.expect(h.get(second.id) == &second);
+    try testing.expect(!first.closed and !second.closed);
+    first.closed = true;
+    h.close(&second, "closed by user");
+    try testing.expect(h.get(second.id) == null);
+    const saved = hub.Hub.loadSaved(arena.allocator(), io, h.state_path);
+    try testing.expectEqual(@as(usize, 1), saved.len);
+    try testing.expectEqualStrings("/tmp/first.jsonl", saved[0].session.?);
+}
+
 test "a tab that lands on another session file is remembered again" {
     try testing.expect(hub.sessionMoved(null, "/store/fork.jsonl"));
     try testing.expect(hub.sessionMoved("/store/parent.jsonl", "/store/fork.jsonl"));

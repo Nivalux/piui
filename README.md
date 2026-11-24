@@ -9,6 +9,7 @@ same `.js` files that were type checked.
 ## What it does
 
 - chats grouped by project, filtered with an fzf-style box, restored when the server comes back
+- settled chats stay until manually closed; idle Pi workers are pooled and working chats keep an exclusive worker
 - transcript of a turn: thoughts, tool lines with their diff bars, images the agent read, the answer
 - diff panel and file list of the chat's repository, with a base to compare against (working, staged, any branch)
 - a PTY terminal per project, selection copied out and the clipboard pasted in
@@ -16,7 +17,7 @@ same `.js` files that were type checked.
 
 ## Requirements
 
-- `pi` used from the account piui runs as — it reads `~/.pi/agent/sessions` and starts `pi --mode rpc` per chat
+- `pi` used from the account piui runs as — it reads `~/.pi/agent/sessions` and pools `pi --mode rpc` workers through the public RPC interface
 - `git` on `PATH` for the diff panel
 - Zig 0.17.1 or newer, only to build from source
 

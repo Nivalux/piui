@@ -77,10 +77,34 @@ pub const Tab = struct {
     /// are read-only facts for the page.
     copied_from: ?[]const u8 = null,
     gone_folder: ?[]const u8 = null,
-    process: *child.Child,
+    worker: ?*Worker = null,
     stderr: child.Tail = .{ .limit = 16 * 1024 },
     subscribers: std.ArrayList(*Subscriber) = .empty,
     lock: Io.Mutex = .init,
+};
+
+fn changesSession(kind: []const u8) bool {
+    for ([_][]const u8{ "fork", "clone", "new_session", "switch_session", "reload" }) |command| {
+        if (std.mem.eql(u8, kind, command)) return true;
+    }
+    return false;
+}
+
+const Worker = struct {
+    process: *child.Child,
+    stderr: child.Tail = .{ .limit = 16 * 1024 },
+    owner: ?*Tab = null,
+    lock: Io.Mutex = .init,
+    ready: Io.Condition = .init,
+    pending: usize = 0,
+    busy: bool = false,
+    context_pending: bool = false,
+    dead: bool = false,
+    switching: bool = false,
+    switched: bool = false,
+    switch_ok: bool = false,
+    switch_cancelled: bool = false,
+    target: ?[]const u8 = null,
 };
 
 pub const Error = error{ TabNotFound, SpawnFailed, NoWorkdir, OutOfMemory };
@@ -194,8 +218,53 @@ pub const Hub = struct {
     tabs: std.StringHashMapUnmanaged(*Tab) = .empty,
     lock: Io.Mutex = .init,
     counter: u32 = 0,
+    pool_lock: Io.Mutex = .init,
+    create_lock: Io.Mutex = .init,
+    workers: std.ArrayList(*Worker) = .empty,
+
+    pub fn warm(self: *Hub) void {
+        self.pool_lock.lockUncancelable(self.io);
+        defer self.pool_lock.unlock(self.io);
+        for (self.workers.items) |worker| {
+            worker.lock.lockUncancelable(self.io);
+            const available = !worker.dead and !worker.busy and !worker.context_pending and (worker.owner == null or worker.pending == 0);
+            worker.lock.unlock(self.io);
+            if (available) return;
+        }
+        const process = child.Child.spawn(self.allocator, self.io, .{ .bin = self.pi_bin, .args = &.{ "--mode", "rpc", "--no-session" }, .cwd = self.scratch_root }) catch return;
+        const worker = self.allocator.create(Worker) catch {
+            process.kill();
+            return;
+        };
+        worker.* = .{ .process = process, .pending = 1 };
+        self.workers.append(self.allocator, worker) catch {
+            process.kill();
+            return;
+        };
+        self.group.concurrent(self.io, pump, .{ self, worker }) catch {
+            worker.dead = true;
+            process.kill();
+            return;
+        };
+        self.group.concurrent(self.io, child.drain, .{ self.allocator, self.io, process.stderr, &worker.stderr }) catch process.kill();
+        self.write(worker, "{\"type\":\"get_state\",\"id\":\"piui_pool_warm\"}") catch process.kill();
+    }
 
     pub fn create(self: *Hub, cwd: ?[]const u8, session: ?[]const u8) Error!*Tab {
+        self.create_lock.lockUncancelable(self.io);
+        defer self.create_lock.unlock(self.io);
+        if (session) |path| {
+            self.lock.lockUncancelable(self.io);
+            defer self.lock.unlock(self.io);
+            var iterator = self.tabs.iterator();
+            while (iterator.next()) |item| {
+                const tab = item.value_ptr.*;
+                tab.lock.lockUncancelable(self.io);
+                const same = !tab.closed and tab.session_path != null and std.mem.eql(u8, tab.session_path.?, path);
+                tab.lock.unlock(self.io);
+                if (same) return tab;
+            }
+        }
         const resolved = self.resolveCwd(cwd) catch return error.NoWorkdir;
 
         const number = blk: {
@@ -205,32 +274,6 @@ pub const Hub = struct {
             break :blk self.counter;
         };
         const id = std.fmt.allocPrint(self.allocator, "t{d}", .{number}) catch return error.OutOfMemory;
-
-        var args: std.ArrayList([]const u8) = .empty;
-        args.append(self.allocator, "--mode") catch return error.OutOfMemory;
-        args.append(self.allocator, "rpc") catch return error.OutOfMemory;
-        if (session) |path| {
-            args.append(self.allocator, "--session") catch return error.OutOfMemory;
-            args.append(self.allocator, path) catch return error.OutOfMemory;
-        }
-        if (self.sessions_root.len > 0) {
-            const store = sessions.projectDir(self.allocator, self.sessions_root, resolved) catch
-                return error.OutOfMemory;
-            Io.Dir.cwd().createDirPath(self.io, store) catch {};
-            args.append(self.allocator, "--session-dir") catch return error.OutOfMemory;
-            args.append(self.allocator, store) catch return error.OutOfMemory;
-        }
-
-        const process = child.Child.spawn(self.allocator, self.io, .{
-            .bin = self.pi_bin,
-            .args = args.items,
-            .cwd = resolved,
-        }) catch |err| {
-            self.allocator.free(resolved);
-            return switch (err) {
-                else => error.SpawnFailed,
-            };
-        };
 
         const kept_session = if (session) |path|
             self.allocator.dupe(u8, path) catch return error.OutOfMemory
@@ -247,8 +290,14 @@ pub const Hub = struct {
             .last_output_ms = json.nowMs(self.io),
             .created_epoch = json.epochMs(self.io),
             .last_output_epoch = json.epochMs(self.io),
-            .process = process,
         };
+
+        self.pool_lock.lockUncancelable(self.io);
+        _ = self.acquire(tab) catch |err| {
+            self.pool_lock.unlock(self.io);
+            return err;
+        };
+        self.pool_lock.unlock(self.io);
 
         self.lock.lockUncancelable(self.io);
         self.tabs.put(self.allocator, id, tab) catch {
@@ -257,16 +306,6 @@ pub const Hub = struct {
         };
         self.lock.unlock(self.io);
 
-        self.group.concurrent(self.io, pump, .{ self, tab }) catch {
-            self.close(tab, "reader failed to start");
-            return error.SpawnFailed;
-        };
-
-        if (session) |path| {
-            log.info("pi started {s} pid={?d} cwd={s} session={s}", .{ id, process.proc.id, resolved, path });
-        } else {
-            log.info("pi started {s} pid={?d} cwd={s}", .{ id, process.proc.id, resolved });
-        }
         self.persist();
 
         self.announce(tab);
@@ -288,7 +327,6 @@ pub const Hub = struct {
     fn bootstrap(self: *Hub, tab: *Tab) void {
         const commands = [_][]const u8{
             "{\"type\":\"get_state\",\"id\":\"piui_state\"}",
-            "{\"type\":\"get_messages\",\"id\":\"piui_messages\"}",
             "{\"type\":\"get_commands\",\"id\":\"piui_commands\"}",
             "{\"type\":\"get_available_models\",\"id\":\"piui_models\"}",
             "{\"type\":\"get_available_thinking_levels\",\"id\":\"piui_thinking\"}",
@@ -297,11 +335,129 @@ pub const Hub = struct {
     }
 
     pub fn send(self: *Hub, tab: *Tab, record: []const u8) void {
-        var line: std.ArrayList(u8) = .empty;
-        defer line.deinit(self.allocator);
-        line.appendSlice(self.allocator, record) catch return;
-        line.append(self.allocator, '\n') catch return;
-        tab.process.send(line.items) catch self.noteClosed(tab);
+        self.pool_lock.lockUncancelable(self.io);
+        defer self.pool_lock.unlock(self.io);
+        const worker = self.acquire(tab) catch {
+            self.noteClosed(tab);
+            return;
+        };
+        const parsed = std.json.parseFromSlice(std.json.Value, self.allocator, record, .{}) catch return;
+        defer parsed.deinit();
+        const kind = if (parsed.value == .object) protocol.string(parsed.value.object, "type") orelse "" else "";
+        worker.lock.lockUncancelable(self.io);
+        if (!std.mem.eql(u8, kind, "extension_ui_response")) worker.pending += 1;
+        if (changesSession(kind)) worker.context_pending = true;
+        if (std.mem.eql(u8, kind, "prompt") or std.mem.eql(u8, kind, "steer") or std.mem.eql(u8, kind, "follow_up")) worker.busy = true;
+        worker.lock.unlock(self.io);
+        self.write(worker, record) catch {
+            worker.process.kill();
+            self.noteClosed(tab);
+        };
+        if (std.mem.eql(u8, kind, "prompt")) self.group.concurrent(self.io, Hub.warm, .{self}) catch {};
+    }
+
+    fn write(self: *Hub, worker: *Worker, record: []const u8) !void {
+        const line = try std.fmt.allocPrint(self.allocator, "{s}\n", .{record});
+        defer self.allocator.free(line);
+        try worker.process.send(line);
+    }
+
+    fn acquire(self: *Hub, tab: *Tab) Error!*Worker {
+        if (tab.worker) |worker| {
+            worker.lock.lockUncancelable(self.io);
+            const valid = !worker.dead and worker.owner == tab;
+            worker.lock.unlock(self.io);
+            if (valid) return worker;
+            tab.worker = null;
+        }
+        if (tab.session_path) |path| {
+            var index = self.workers.items.len;
+            while (index > 0) {
+                index -= 1;
+                const worker = self.workers.items[index];
+                worker.lock.lockUncancelable(self.io);
+                if (worker.dead or worker.busy or worker.context_pending or worker.pending != 0 or worker.switching) {
+                    worker.lock.unlock(self.io);
+                    continue;
+                }
+                const previous = worker.owner;
+                if (worker.owner) |old| {
+                    old.lock.lockUncancelable(self.io);
+                    const persisted = old.session_path != null and !old.running;
+                    old.lock.unlock(self.io);
+                    if (!persisted) {
+                        worker.lock.unlock(self.io);
+                        continue;
+                    }
+                    old.worker = null;
+                }
+                worker.owner = null;
+                worker.switching = true;
+                worker.switched = false;
+                worker.switch_ok = false;
+                worker.switch_cancelled = false;
+                worker.target = path;
+                worker.lock.unlock(self.io);
+                const command = json.encode(self.allocator, .{ .type = "switch_session", .id = "piui_pool_switch", .sessionPath = path }) catch return error.OutOfMemory;
+                defer self.allocator.free(command);
+                self.write(worker, command) catch {
+                    worker.process.kill();
+                    continue;
+                };
+                worker.lock.lockUncancelable(self.io);
+                while (!worker.switched and !worker.dead) {
+                    worker.ready.waitTimeout(self.io, &worker.lock, .{ .duration = .{ .clock = .awake, .raw = Io.Duration.fromSeconds(15) } }) catch break;
+                }
+                if (!worker.dead and worker.switched and worker.switch_cancelled) {
+                    worker.owner = previous;
+                    if (previous) |old| old.worker = worker;
+                    worker.switching = false;
+                    worker.lock.unlock(self.io);
+                    continue;
+                }
+                if (!worker.dead and worker.switched and worker.switch_ok) {
+                    worker.switched = false;
+                    worker.switch_ok = false;
+                    worker.lock.unlock(self.io);
+                    self.write(worker, "{\"type\":\"get_state\",\"id\":\"piui_pool_verify\"}") catch worker.process.kill();
+                    worker.lock.lockUncancelable(self.io);
+                    while (!worker.switched and !worker.dead) {
+                        worker.ready.waitTimeout(self.io, &worker.lock, .{ .duration = .{ .clock = .awake, .raw = Io.Duration.fromSeconds(15) } }) catch break;
+                    }
+                }
+                if (!worker.dead and worker.switched and worker.switch_ok) {
+                    worker.owner = tab;
+                    worker.switching = false;
+                    tab.worker = worker;
+                    worker.lock.unlock(self.io);
+                    log.info("pi reused {s} pid={?d}", .{ tab.id, worker.process.proc.id });
+                    return worker;
+                }
+                worker.dead = true;
+                worker.switching = false;
+                worker.lock.unlock(self.io);
+                worker.process.kill();
+            }
+        }
+        var args: std.ArrayList([]const u8) = .empty;
+        defer args.deinit(self.allocator);
+        args.appendSlice(self.allocator, &.{ "--mode", "rpc" }) catch return error.OutOfMemory;
+        if (tab.session_path) |path| args.appendSlice(self.allocator, &.{ "--session", path }) catch return error.OutOfMemory;
+        if (self.sessions_root.len > 0) {
+            const store = sessions.projectDir(self.allocator, self.sessions_root, tab.cwd) catch return error.OutOfMemory;
+            Io.Dir.cwd().createDirPath(self.io, store) catch {};
+            args.appendSlice(self.allocator, &.{ "--session-dir", store }) catch return error.OutOfMemory;
+        }
+        const process = child.Child.spawn(self.allocator, self.io, .{ .bin = self.pi_bin, .args = args.items, .cwd = tab.cwd }) catch return error.SpawnFailed;
+        errdefer process.kill();
+        const worker = self.allocator.create(Worker) catch return error.OutOfMemory;
+        worker.* = .{ .process = process, .owner = tab };
+        self.workers.append(self.allocator, worker) catch return error.OutOfMemory;
+        tab.worker = worker;
+        self.group.concurrent(self.io, pump, .{ self, worker }) catch return error.SpawnFailed;
+        self.group.concurrent(self.io, child.drain, .{ self.allocator, self.io, process.stderr, &worker.stderr }) catch return error.SpawnFailed;
+        log.info("pi started {s} pid={?d} cwd={s}", .{ tab.id, process.proc.id, tab.cwd });
+        return worker;
     }
 
     pub fn get(self: *Hub, id: []const u8) ?*Tab {
@@ -351,30 +507,69 @@ pub const Hub = struct {
         _ = self.tabs.remove(tab.id);
         self.lock.unlock(self.io);
 
-        const payload = json.encode(self.allocator, Closed{ .reason = reason, .stderr = "" }) catch {
-            tab.process.kill();
-            return;
-        };
+        const payload = json.encode(self.allocator, Closed{ .reason = reason, .stderr = "" }) catch return;
         defer self.allocator.free(payload);
         self.markClosed(tab, payload);
-        tab.process.kill();
+        self.release(tab);
         self.persist();
     }
 
     /// Reads Pi's stdout until the pipe closes, routing as it goes.
-    fn pump(hub: *Hub, tab: *Tab) void {
+    fn pump(hub: *Hub, worker: *Worker) void {
         var buffer: [64 * 1024]u8 = undefined;
-        var stream = tab.process.stdout.readerStreaming(hub.io, &buffer);
+        var stream = worker.process.stdout.readerStreaming(hub.io, &buffer);
         var records = framing.Records.init(hub.allocator, &stream.interface);
         defer records.deinit();
 
         while (records.next()) |maybe_record| {
             const record = maybe_record orelse break;
             defer hub.allocator.free(record);
-            hub.route(tab, record);
+            var parsed = protocol.parse(hub.allocator, record) catch continue;
+            defer parsed.deinit(hub.allocator);
+            worker.lock.lockUncancelable(hub.io);
+            if (worker.switching) {
+                if (parsed.id != null and std.mem.eql(u8, parsed.id.?, "piui_pool_switch")) {
+                    worker.switch_ok = parsed.response.success and !parsed.response.cancelled;
+                    worker.switch_cancelled = parsed.response.cancelled;
+                    worker.switched = true;
+                    worker.ready.signal(hub.io);
+                } else if (parsed.id != null and std.mem.eql(u8, parsed.id.?, "piui_pool_verify")) {
+                    worker.switch_ok = parsed.response.success and parsed.response.session_file != null and worker.target != null and std.mem.eql(u8, parsed.response.session_file.?, worker.target.?);
+                    worker.switched = true;
+                    worker.ready.signal(hub.io);
+                }
+                worker.lock.unlock(hub.io);
+                continue;
+            }
+            const owner = worker.owner;
+            worker.lock.unlock(hub.io);
+            if (owner) |tab| hub.route(tab, record);
+            var refresh_context = false;
+            worker.lock.lockUncancelable(hub.io);
+            if (parsed.kind == .response) {
+                worker.pending -|= 1;
+                if (changesSession(parsed.response.command)) {
+                    if (parsed.response.success and !parsed.response.cancelled) {
+                        worker.pending += 1;
+                        refresh_context = true;
+                    } else worker.context_pending = false;
+                }
+                if (parsed.id != null and std.mem.eql(u8, parsed.id.?, "piui_pool_context")) worker.context_pending = false;
+                if (!parsed.response.success and (std.mem.eql(u8, parsed.response.command, "prompt") or std.mem.eql(u8, parsed.response.command, "steer") or std.mem.eql(u8, parsed.response.command, "follow_up"))) worker.busy = false;
+            }
+            if (parsed.kind == .agent_start) worker.busy = true;
+            if (parsed.kind == .agent_settled) worker.busy = false;
+            worker.lock.unlock(hub.io);
+            if (refresh_context) hub.write(worker, "{\"type\":\"get_state\",\"id\":\"piui_pool_context\"}") catch worker.process.kill();
         } else |_| {}
 
-        hub.noteClosed(tab);
+        worker.lock.lockUncancelable(hub.io);
+        worker.dead = true;
+        const owner = worker.owner;
+        worker.owner = null;
+        worker.ready.signal(hub.io);
+        worker.lock.unlock(hub.io);
+        if (owner) |tab| hub.noteClosed(tab);
     }
 
     /// When the chat last did something. The sidebar sorts settled chats by this, so it moves only
@@ -398,6 +593,13 @@ pub const Hub = struct {
         defer parsed.deinit(self.allocator);
 
         if (parsed.kind != .response) self.noteActivity(tab);
+        if (parsed.response.session_name) |name| {
+            tab.lock.lockUncancelable(self.io);
+            self.allocator.free(tab.session_name orelse "");
+            tab.session_name = name;
+            parsed.response.session_name = null;
+            tab.lock.unlock(self.io);
+        }
 
         switch (parsed.kind) {
             .agent_start => self.setRunning(tab, true),
@@ -457,7 +659,6 @@ pub const Hub = struct {
         var iterator = self.tabs.iterator();
         while (iterator.next()) |item| {
             const tab = item.value_ptr.*;
-            if (tab.closed) continue;
             tab.lock.lockUncancelable(self.io);
             open.append(self.allocator, .{
                 .ms = tab.last_output_ms,
@@ -492,7 +693,7 @@ pub const Hub = struct {
     }
 
     fn noteClosed(self: *Hub, tab: *Tab) void {
-        const tail = tab.stderr.snapshot(self.allocator, self.io) catch "";
+        const tail = if (tab.worker) |worker| worker.stderr.snapshot(self.allocator, self.io) catch "" else tab.stderr.snapshot(self.allocator, self.io) catch "";
         defer if (tail.len > 0) self.allocator.free(tail);
 
         if (tail.len == 0) {
@@ -524,29 +725,54 @@ pub const Hub = struct {
         for (subscribers) |sub| sub.close(self.io);
     }
 
-    /// Reaps tabs whose pipe has been quiet for `idle_after_ms`.
+    /// Reclaims idle workers without removing their tabs.
     pub fn reap(self: *Hub, stop: *std.atomic.Value(bool)) void {
         while (!stop.load(.monotonic)) {
             Io.sleep(self.io, Io.Duration.fromSeconds(idle_check_seconds), .awake) catch return;
-            if (self.idle_after_ms <= 0) continue;
-
-            const cutoff = json.nowMs(self.io) - self.idle_after_ms;
-            var victims: std.ArrayList(*Tab) = .empty;
-            defer victims.deinit(self.allocator);
-
-            self.lock.lockUncancelable(self.io);
-            var iterator = self.tabs.iterator();
-            while (iterator.next()) |item| {
-                const tab = item.value_ptr.*;
-                tab.lock.lockUncancelable(self.io);
-                const idle = !tab.running and !tab.closed and tab.last_output_ms < cutoff;
-                tab.lock.unlock(self.io);
-                if (idle) victims.append(self.allocator, tab) catch {};
-            }
-            self.lock.unlock(self.io);
-
-            for (victims.items) |tab| self.close(tab, "idle timeout");
+            self.reapIdle();
         }
+    }
+
+    pub fn reapIdle(self: *Hub) void {
+        if (self.idle_after_ms <= 0) return;
+        const cutoff = json.nowMs(self.io) - self.idle_after_ms;
+        var victims: std.ArrayList(*Tab) = .empty;
+        defer victims.deinit(self.allocator);
+        self.lock.lockUncancelable(self.io);
+        var iterator = self.tabs.iterator();
+        while (iterator.next()) |item| {
+            const tab = item.value_ptr.*;
+            tab.lock.lockUncancelable(self.io);
+            const idle = !tab.running and !tab.closed and tab.last_output_ms < cutoff;
+            tab.lock.unlock(self.io);
+            if (idle) victims.append(self.allocator, tab) catch {};
+        }
+        self.lock.unlock(self.io);
+        for (victims.items) |tab| self.release(tab);
+    }
+
+    fn release(self: *Hub, tab: *Tab) void {
+        self.pool_lock.lockUncancelable(self.io);
+        defer self.pool_lock.unlock(self.io);
+        const worker = tab.worker orelse return;
+        worker.lock.lockUncancelable(self.io);
+        defer worker.lock.unlock(self.io);
+        if (worker.owner != tab) return;
+        if (!tab.closed and (tab.running or worker.busy or worker.context_pending or worker.pending != 0)) return;
+        worker.owner = null;
+        tab.worker = null;
+        if (!worker.busy and !worker.context_pending and worker.pending == 0) {
+            var another_idle = false;
+            for (self.workers.items) |other| {
+                if (other == worker) continue;
+                other.lock.lockUncancelable(self.io);
+                another_idle = another_idle or (!other.dead and !other.busy and !other.context_pending and other.pending == 0);
+                other.lock.unlock(self.io);
+            }
+            if (!another_idle) return;
+        }
+        worker.dead = true;
+        worker.process.kill();
     }
 
     /// Say that a chat is being read from a copy of itself, and remember what it was copied from

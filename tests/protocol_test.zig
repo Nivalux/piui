@@ -39,6 +39,20 @@ test "response carries the command, the outcome and the session file" {
     try testing.expectEqualStrings("6f2c", record.response.session_id.?);
 }
 
+test "a cancelled session switch is distinct from a successful switch" {
+    var parse = Parse.init();
+    defer parse.deinit();
+    const cancelled = try parse.line(
+        \\{"id":"piui_pool_switch","type":"response","command":"switch_session","success":true,"data":{"cancelled":true}}
+    );
+    try testing.expect(cancelled.response.success);
+    try testing.expect(cancelled.response.cancelled);
+    const switched = try parse.line(
+        \\{"type":"response","command":"switch_session","success":true,"data":{"cancelled":false}}
+    );
+    try testing.expect(!switched.response.cancelled);
+}
+
 test "a failed response keeps success false" {
     var parse = Parse.init();
     defer parse.deinit();

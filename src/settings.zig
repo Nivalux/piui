@@ -16,7 +16,7 @@ pub const Server = struct {
     sessions: []const u8 = "",
     /// Workdirs for chats without a project; empty means `~/.piui/scratch`.
     scratch: []const u8 = "",
-    /// Close a tab whose pi has been idle this long; 0 keeps it forever.
+    /// Reclaim idle workers after this delay without removing tabs; 0 disables reclamation.
     idle_seconds: i64 = default_idle_seconds,
 };
 

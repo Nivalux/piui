@@ -370,6 +370,52 @@ test("a turn that stops on a thought says there is nothing after it", { skip: bl
   assert.match(await thought.locator(".fold-body").innerText(), /never says it/);
 });
 
+test("older messages are painted on upward scroll without moving the reading position", { skip: blocked }, async () => {
+  const messages = Array.from({ length: 180 }, (_, index) => ({
+    role: "user",
+    content: [{ type: "text", text: `history message ${index}` }],
+    timestamp: index,
+  }));
+  await page.route("**/api/events?*", (route) =>
+    route.fulfill({
+      contentType: "text/event-stream",
+      body: `retry: 60000\ndata: ${JSON.stringify({ type: "response", command: "get_messages", data: { messages } })}\n\n`,
+    }),
+  );
+  try {
+    await openFreshChat();
+    await page.waitForFunction(() => document.querySelectorAll("#transcript .block").length === 60);
+    assert.match(await page.locator("#transcript .block").first().innerText(), /history message 120/);
+    assert.match(await page.locator("#transcript .block").last().innerText(), /history message 179/);
+    const before = await page
+      .locator("#transcript .block")
+      .first()
+      .evaluate((node) => {
+        const box = document.getElementById("transcript");
+        if (box) box.scrollTop = 0;
+        return { text: node.textContent, top: node.getBoundingClientRect().top };
+      });
+    await page.waitForFunction(() => document.querySelectorAll("#transcript .block").length === 120);
+    const after = await page
+      .locator("#transcript .block")
+      .nth(60)
+      .evaluate((node) => ({
+        text: node.textContent,
+        top: node.getBoundingClientRect().top,
+      }));
+    assert.equal(after.text, before.text);
+    assert.ok(Math.abs(after.top - before.top) < 2);
+    assert.match(await page.locator("#transcript .block").first().innerText(), /history message 60/);
+    await page.locator("#transcript").evaluate((node) => {
+      node.scrollTop = 0;
+    });
+    await page.waitForFunction(() => document.querySelectorAll("#transcript .block").length === 180);
+    assert.match(await page.locator("#transcript .block").first().innerText(), /history message 0/);
+  } finally {
+    await page.unroute("**/api/events?*");
+  }
+});
+
 test("the page threw nothing", { skip: blocked }, async () => {
   assert.deepEqual(crashes, []);
 });

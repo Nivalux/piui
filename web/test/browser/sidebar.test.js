@@ -5,6 +5,7 @@
 import { after, before, test } from "node:test";
 import fs from "node:fs";
 import assert from "node:assert/strict";
+import { relativeTime } from "../../format.js";
 import {
   activeTab,
   base,
@@ -54,7 +55,8 @@ test("a fork says it is one, and says which chat it came from", { skip: blocked 
     forks.every((row) => row.meta.includes("· fork of explain the pi wiring")),
     "the line under a fork names the chat it was copied from",
   );
-  assert.ok(forks[0].meta.startsWith("1d ago · 2 msgs"), "and still leaves time and count readable");
+  const age = relativeTime(Date.parse("2026-11-22T09:00:00.000Z"), await page.evaluate(() => Date.now()));
+  assert.ok(forks[0].meta.startsWith(`${age} · 2 msgs`), "and still leaves time and count readable");
   assert.ok(forks[0].tip.includes("explain the pi wiring"), "hovering says it too");
 
   const plain = rows.find((row) => row.title === "nothing else at all");

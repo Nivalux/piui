@@ -15,6 +15,7 @@ pub const Kind = enum {
 pub const Response = struct {
     command: []const u8 = "",
     success: bool = false,
+    cancelled: bool = false,
     session_file: ?[]const u8 = null,
     session_id: ?[]const u8 = null,
     session_name: ?[]const u8 = null,
@@ -73,6 +74,7 @@ pub fn parse(allocator: std.mem.Allocator, raw: []const u8) ParseError!Record {
         if (get(object, "data")) |data_value| {
             if (data_value == .object) {
                 const data = data_value.object;
+                record.response.cancelled = flag(data, "cancelled");
                 record.response.session_file = try copy(allocator, string(data, "sessionFile"));
                 record.response.session_id = try copy(allocator, string(data, "sessionId"));
                 record.response.session_name = try copy(allocator, string(data, "sessionName"));
