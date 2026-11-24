@@ -128,7 +128,7 @@ test("clicking a running tool opens it and keeps it open", { skip: blocked }, as
       const face = /matrix\(([-\d.]+), ([-\d.]+)/.exec(getComputedStyle(node).transform);
       if (!face) return 0;
       const deg = (Math.atan2(Number(face[2]), Number(face[1])) * 180) / Math.PI;
-      return ((((deg % 360) + 360) % 360) / 360) * 900;
+      return ((((deg % 360) + 360) % 360) / 360) * 750;
     };
 
     /** @type {[number, number][]} */
@@ -151,8 +151,8 @@ test("clicking a running tool opens it and keeps it open", { skip: blocked }, as
   const [first, atFirst] = turns[0];
   const worst = Math.max(
     ...turns.map(([angle, at]) => {
-      const behind = Math.abs((((angle - first - (at - atFirst)) % 900) + 900) % 900);
-      return Math.min(behind, 900 - behind);
+      const behind = Math.abs((((angle - first - (at - atFirst)) % 750) + 750) % 750);
+      return Math.min(behind, 750 - behind);
     }),
   );
   assert.ok(

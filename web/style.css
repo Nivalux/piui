@@ -384,18 +384,6 @@ pre,
   height: 11px;
 }
 
-.dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--line);
-}
-
-.dot.running {
-  background: var(--accent);
-  will-change: opacity;
-}
-
 .side-foot {
   margin-top: auto;
   border-top: 1px solid var(--line);
@@ -1847,7 +1835,20 @@ pre,
   border: 2px solid color-mix(in oklab, var(--accent) 25%, transparent);
   border-top-color: var(--accent);
   border-radius: 50%;
+  animation: piui-spin 750ms linear infinite;
   will-change: transform;
+}
+
+/* The translateZ is what puts the turn on a layer of its own. Without it the
+   browser is free to retick the whole page sixty times a second instead, which
+   costs more than the ring it is turning. */
+@keyframes piui-spin {
+  from {
+    transform: rotate(0) translateZ(0);
+  }
+  to {
+    transform: rotate(360deg) translateZ(0);
+  }
 }
 
 .pre.live::after {
@@ -1857,8 +1858,6 @@ pre,
   will-change: opacity;
 }
 
-/* Opacity, not visibility: only opacity runs without waking the page to repaint
-   the line the cursor sits at, sixty times a second. */
 @keyframes piui-blink {
   to {
     opacity: 0;
