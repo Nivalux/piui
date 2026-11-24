@@ -347,6 +347,11 @@ async function turn(prompt) {
     return streamAnswer();
   }
 
+  if (/endless stream/i.test(prompt)) {
+    await sleep(400);
+    return endless();
+  }
+
   if (tall) return tallAnswer();
 
   // Two seconds of tokens, so a test can watch what a page does to the rest of
@@ -467,6 +472,43 @@ async function shell(call, final) {
 /**
  * An answer that keeps arriving for about two seconds.
  */
+async function endless() {
+  let text = "";
+  const pace = Number(process.env.PIUI_FAKE_PACE ?? 10);
+  const lines = Number(process.env.PIUI_FAKE_LINES ?? 450);
+
+  send({
+    type: "message_update",
+    assistantMessageEvent: { type: "thinking_start", contentIndex: 0 },
+    timestamp: now(),
+  });
+  for (let line = 1; line <= lines; line += 1) {
+    const delta = `wort ${line} `;
+    text += delta;
+    send({
+      type: "message_update",
+      assistantMessageEvent: { type: "thinking_delta", contentIndex: 0, delta },
+      timestamp: now(),
+    });
+    await sleep(pace);
+  }
+  send({ type: "message_update", assistantMessageEvent: { type: "thinking_end", contentIndex: 0 }, timestamp: now() });
+
+  send({ type: "message_update", assistantMessageEvent: { type: "text_start", contentIndex: 0 }, timestamp: now() });
+  for (let line = 1; line <= lines; line += 1) {
+    const delta = line % 40 === 0 ? "\n\n```zig\nconst width = 40;\n```\n\n" : `wort ${line} `;
+    text += delta;
+    send({
+      type: "message_update",
+      assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta },
+      timestamp: now(),
+    });
+    await sleep(pace);
+  }
+  send({ type: "message_update", assistantMessageEvent: { type: "text_end", contentIndex: 0 }, timestamp: now() });
+  return text;
+}
+
 async function streamAnswer() {
   let text = "";
   for (let line = 1; line <= 80; line += 1) {
