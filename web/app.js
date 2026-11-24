@@ -1344,10 +1344,12 @@ function handle(frame) {
     meter.turn(frame.message.usage?.output ?? 0, Date.now() - turnStartedAt);
   }
   if (frame.type === "queue_update") {
-    heldQueues.set(state.active ?? "", {
+    const tabId = state.active ?? "";
+    const held = {
       steering: strings(frame.steering),
       followUp: strings(frame.followUp),
-    });
+    };
+    heldQueues.set(tabId, held);
     // Pi has just said exactly what it holds, so a count from before that says
     // nothing any more.
     state.queued = 0;
@@ -1941,6 +1943,15 @@ function retirePending(frame) {
   if (message?.role !== "user") return;
 
   const text = flatten(message.content).trim();
+
+  // A message that has just landed in the chat cannot still be waiting in a
+  // queue, whatever the last word Pi said about that queue was.
+  const held = heldQueues.get(tabId);
+  if (held) {
+    held.steering = held.steering.filter((item) => item.trim() !== text);
+    held.followUp = held.followUp.filter((item) => item.trim() !== text);
+  }
+
   const items = pending.get(tabId);
   const index = items ? items.findIndex((item) => item.text.trim() === text) : -1;
   if (index >= 0) {

@@ -197,6 +197,33 @@ test("replaying stored messages needs no events at all", () => {
   );
 });
 
+test("a compaction a chat came back with is still in it", () => {
+  const transcript = new Transcript();
+
+  transcript.replay([
+    { role: "compactionSummary", summary: "Earlier: the wiring was read.", tokensBefore: 114904 },
+    { role: "user", content: "and now the sidebar" },
+  ]);
+
+  assert.deepEqual(
+    transcript.blocks.map((block) => block.kind),
+    ["compaction", "user"],
+    "the chat does not simply begin where the summary ends",
+  );
+  assert.equal(transcript.blocks[0].text, "114904 tokens compacted");
+  assert.equal(transcript.blocks[0].summary, "Earlier: the wiring was read.");
+});
+
+test("a branch a chat came back on says where it came from", () => {
+  const transcript = new Transcript();
+
+  transcript.replay([{ role: "branchSummary", summary: "Copied from the wiring chat.", fromId: "e7" }]);
+
+  assert.equal(transcript.blocks[0].kind, "compaction");
+  assert.equal(transcript.blocks[0].text, "branch summary");
+  assert.equal(transcript.blocks[0].summary, "Copied from the wiring chat.");
+});
+
 test("tool details survive the live event and the replay", () => {
   const live = new Transcript();
   live.event({ type: "tool_execution_start", toolCallId: "c1", toolName: "edit", args: { path: "/tmp/a" } });

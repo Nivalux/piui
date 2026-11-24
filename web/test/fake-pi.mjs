@@ -139,7 +139,8 @@ function swallowed(text) {
  */
 function deliver(kind) {
   const texts = queue[kind];
-  queue[kind] = [];
+  const stuck = /stuck/i.test(String(process.env.PIUI_FAKE_QUEUE ?? ""));
+  queue[kind] = stuck ? [...texts] : [];
   announceQueue();
   for (const text of texts) {
     const message = asked(text);
@@ -338,6 +339,12 @@ async function turn(prompt) {
       timestamp: now(),
     });
     await sleep(thoughtful ? 260 : 30);
+  }
+
+  if (/hold the run/i.test(prompt)) {
+    await sleep(1200);
+    deliver("steering");
+    return streamAnswer();
   }
 
   if (tall) return tallAnswer();

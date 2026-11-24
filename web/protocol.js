@@ -55,8 +55,12 @@
 
 /**
  * @typedef {Object} Message
- * @property {"user" | "assistant" | "toolResult"} role
+ * @property {"user" | "assistant" | "toolResult" | "compactionSummary" | "branchSummary"} role
  * @property {string | Content[]} [content]
+ * @property {string} [summary] what a compaction or a branch kept of what came before
+ * @property {number} [tokensBefore] size of the context the compaction replaced
+ * @property {string} [fromId] where the summarised stretch of the chat begins
+ * @property {number} [fromSeq] its entry number in the session file
  * @property {Usage} [usage]
  * @property {string} [stopReason]
  * @property {string} [errorMessage]

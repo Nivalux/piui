@@ -417,6 +417,29 @@ export class Transcript {
    * @param {boolean} replayed
    */
   #message(message, replayed) {
+    if (message.role === "compactionSummary") {
+      this.#push({
+        kind: "compaction",
+        id: nextId++,
+        text:
+          typeof message.tokensBefore === "number" ? `${message.tokensBefore} tokens compacted` : "context compacted",
+        summary: message.summary ?? null,
+        done: true,
+      });
+      return;
+    }
+
+    if (message.role === "branchSummary") {
+      this.#push({
+        kind: "compaction",
+        id: nextId++,
+        text: "branch summary",
+        summary: message.summary ?? null,
+        done: true,
+      });
+      return;
+    }
+
     if (message.role === "user") {
       const images = /** @type {Image[]} */ (
         imagesOf(message.content).map((part) => ({ mimeType: part.mimeType ?? "image/png", data: part.data ?? "" }))

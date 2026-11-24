@@ -30,6 +30,8 @@ let base = "";
 
 /** A folder that really exists, so a session can claim it as its project. */
 let wiredProject = "";
+/** @type {string} */
+let sessionsDir = "";
 /** A project folder that was deleted after its chat was written. */
 let goneProject = "";
 
@@ -324,6 +326,7 @@ export async function start() {
   fs.writeFileSync(path.join(dir, "token"), token);
 
   const sessions = path.join(dir, "sessions");
+  sessionsDir = sessions;
   fs.mkdirSync(sessions, { recursive: true });
   wiredProject = path.join(dir, "wired-project");
   fs.mkdirSync(wiredProject, { recursive: true });
@@ -476,7 +479,8 @@ function settled(work, ms) {
  * sidebar has to sort on.
  *
  * @param {string} file
- * @param {{cwd: string, first: string, header: string, last: string, parent?: string}} spec
+ * @param {{cwd: string, first: string, header: string, last: string, parent?: string,
+ *   compaction?: {summary: string, tokensBefore: number, at: string}}} spec
  */
 function writeSession(file, spec) {
   const header = { type: "session", cwd: spec.cwd, timestamp: spec.header };
@@ -488,12 +492,27 @@ function writeSession(file, spec) {
       timestamp: spec.header,
       message: { role: "user", content: [{ type: "text", text: spec.first }] },
     }),
+  ];
+  if (spec.compaction) {
+    lines.push(
+      JSON.stringify({
+        type: "message",
+        timestamp: spec.compaction.at,
+        message: {
+          role: "compactionSummary",
+          summary: spec.compaction.summary,
+          tokensBefore: spec.compaction.tokensBefore,
+        },
+      }),
+    );
+  }
+  lines.push(
     JSON.stringify({
       type: "message",
       timestamp: spec.last,
       message: { role: "assistant", content: [{ type: "text", text: "done" }] },
     }),
-  ];
+  );
   fs.writeFileSync(file, `${lines.join("\n")}\n`);
 }
 
@@ -566,6 +585,7 @@ export {
   root,
   runTurn,
   runner,
+  sessionsDir,
   showPanel,
   sidebarIds,
   switchTo,
