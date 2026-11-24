@@ -1834,9 +1834,11 @@ pre,
   animation: piui-blink 1s steps(2, start) infinite;
 }
 
+/* Opacity, not visibility: only opacity runs without waking the page to repaint
+   the line the cursor sits at, sixty times a second. */
 @keyframes piui-blink {
   to {
-    visibility: hidden;
+    opacity: 0;
   }
 }
 
