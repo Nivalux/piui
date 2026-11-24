@@ -37,6 +37,42 @@ test "status and diff of a working tree" {
     try testing.expect(std.mem.indexOf(u8, one, "new.txt") != null);
 }
 
+test "a file that differs only in its line endings is not a change" {
+    var threaded: Io.Threaded = .init(testing.allocator, .{ .environ = testing.environ });
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    const repo = try join(a, &.{ try root(a), "eol" });
+    try Io.Dir.cwd().deleteTree(io, repo);
+    try Io.Dir.cwd().createDirPath(io, repo);
+
+    try run(io, a, repo, &.{ "init", "-q", "-b", "master", "." });
+    try write(io, a, repo, "f.txt", "a\r\nb\r\nc\r\n");
+    try write(io, a, repo, "g.txt", "x\n");
+    try run(io, a, repo, &.{ "-c", "core.autocrlf=false", "add", "." });
+    try run(io, a, repo, &.{ "-c", "core.autocrlf=false", "-c", "user.email=piui@test", "-c", "user.name=piui", "commit", "-qm", "start" });
+
+    try write(io, a, repo, "f.txt", "a\nB\nc\n");
+    try write(io, a, repo, "g.txt", "x\r\n");
+
+    const status = git.status(a, io, repo, .working);
+    try testing.expectEqual(@as(usize, 1), status.files.len);
+    try testing.expectEqual(@as(u32, 1), status.insertions);
+    try testing.expectEqual(@as(u32, 1), status.deletions);
+
+    const edit = findFile(status.files, "f.txt") orelse return error.TestUnexpectedResult;
+    try testing.expectEqual(@as(u32, 1), edit.insertions);
+    try testing.expectEqual(@as(u32, 1), edit.deletions);
+
+    const patch = try git.diff(a, io, repo, .working, null);
+    try testing.expect(std.mem.indexOf(u8, patch, "+B") != null);
+    try testing.expect(std.mem.indexOf(u8, patch, "-a") == null);
+}
+
 test "a base of the working tree counts lines, a base of a branch counts commits" {
     var threaded: Io.Threaded = .init(testing.allocator, .{ .environ = testing.environ });
     defer threaded.deinit();

@@ -80,6 +80,9 @@ pub const not_a_repository = "not a git repository";
 /// owns memory it has to free.
 const codes = "MADRCTU?!";
 
+/// Asked of every diff, so a checkout that rewrote only its line endings is not a change.
+const ignore_line_endings = "--ignore-cr-at-eol";
+
 fn codeText(code: u8) []const u8 {
     if (std.mem.indexOfScalar(u8, codes, code)) |at| return codes[at .. at + 1];
     return "?";
@@ -150,9 +153,9 @@ const Lines = struct { added: u32 = 0, removed: u32 = 0 };
 /// A file no one has added yet has no entry, and a binary one counts as none.
 fn lineCounts(allocator: std.mem.Allocator, io: Io, cwd: []const u8, base: Base) std.StringHashMap(Lines) {
     const argv: []const []const u8 = switch (base) {
-        .working => &.{ "diff", "--numstat", "-z", "HEAD" },
-        .staged => &.{ "diff", "--numstat", "-z", "--cached", "HEAD" },
-        else => &.{ "diff", "--numstat", "-z", base.refName().? },
+        .working => &.{ "diff", ignore_line_endings, "--numstat", "-z", "HEAD" },
+        .staged => &.{ "diff", ignore_line_endings, "--numstat", "-z", "--cached", "HEAD" },
+        else => &.{ "diff", ignore_line_endings, "--numstat", "-z", base.refName().? },
     };
     var counts = std.StringHashMap(Lines).init(allocator);
     const out = git(allocator, io, cwd, argv, .limited(8 << 20)) catch return counts;
@@ -245,14 +248,14 @@ pub fn status(allocator: std.mem.Allocator, io: Io, cwd: []const u8, base: Base)
 
     const argv: []const []const u8 = switch (base) {
         .working => &.{ "status", "--porcelain=v1", "-z", "--untracked-files=all" },
-        .staged => &.{ "diff", "--name-status", "-z", "--cached", "HEAD" },
-        else => &.{ "diff", "--name-status", "-z", base.refName().? },
+        .staged => &.{ "diff", ignore_line_endings, "--name-status", "-z", "--cached", "HEAD" },
+        else => &.{ "diff", ignore_line_endings, "--name-status", "-z", base.refName().? },
     };
 
     var collector = Collector{ .allocator = a };
     if (git(a, io, cwd, argv, .limited(8 << 20))) |output| {
         switch (base) {
-            .working => parsePorcelain(&collector, output),
+            .working => parsePorcelain(&collector, output, &counts),
             else => parseNameStatus(&collector, output),
         }
     } else |err| {
@@ -272,7 +275,8 @@ pub fn status(allocator: std.mem.Allocator, io: Io, cwd: []const u8, base: Base)
     return result;
 }
 
-fn parsePorcelain(collector: *Collector, output: []const u8) void {
+/// A porcelain entry with no counts left is a file that differs in nothing but line endings.
+fn parsePorcelain(collector: *Collector, output: []const u8, counts: *const std.StringHashMap(Lines)) void {
     var fields = std.mem.splitScalar(u8, output, 0);
     while (fields.next()) |field| {
         if (field.len < 4) continue;
@@ -288,6 +292,7 @@ fn parsePorcelain(collector: *Collector, output: []const u8) void {
         const untracked = index == '?' and worktree == '?';
         const code = if (worktree != ' ') worktree else index;
         const staged = index != ' ' and index != '?';
+        if (!untracked and !counts.contains(path)) continue;
         collector.add(path, display, code, staged, untracked);
     }
 }
@@ -321,6 +326,7 @@ pub fn diff(allocator: std.mem.Allocator, io: Io, cwd: []const u8, base: Base, p
     try argv.append(a, "diff");
     try argv.append(a, "--no-ext-diff");
     try argv.append(a, "--no-color");
+    try argv.append(a, ignore_line_endings);
     switch (base) {
         .working => {},
         .staged => try argv.append(a, "--cached"),
@@ -333,6 +339,7 @@ pub fn diff(allocator: std.mem.Allocator, io: Io, cwd: []const u8, base: Base, p
         try argv.append(a, "diff");
         try argv.append(a, "--no-ext-diff");
         try argv.append(a, "--no-color");
+        try argv.append(a, ignore_line_endings);
         try argv.append(a, "--no-index");
         try argv.append(a, "/dev/null");
         try argv.append(a, path.?);
@@ -416,8 +423,12 @@ test "a porcelain list keeps the worktree letter and the untracked flag" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
 
+    var counts = std.StringHashMap(Lines).init(arena.allocator());
+    try counts.put("web/app.js", .{ .added = 1, .removed = 1 });
+    try counts.put("new/name", .{ .added = 2, .removed = 0 });
+
     var collector = Collector{ .allocator = arena.allocator() };
-    parsePorcelain(&collector, " M web/app.js\x00?? src/new.zig\x00R  new/name\x00old/name\x00");
+    parsePorcelain(&collector, " M web/app.js\x00?? src/new.zig\x00R  new/name\x00old/name\x00 M src/eol.txt\x00", &counts);
 
     const files = collector.files.items;
     try std.testing.expectEqual(@as(usize, 3), files.len);
