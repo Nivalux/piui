@@ -74,6 +74,23 @@ test("a folded line keeps its buttons inside the fold", { skip: blocked }, async
   await clipboardHolds("sleep 2 && echo done");
 });
 
+test("a fenced block hands over its own text", { skip: blocked }, async () => {
+  await idle();
+  await runTurn("show a code fence piui-copy-3");
+
+  const fence = page.locator("#transcript .block.text .code-wrap").last();
+  await fence.waitFor();
+  assert.equal(await fence.locator("pre.md-code").count(), 1, "the block stays a block");
+
+  await hold("");
+  await fence.locator('[aria-label="copy code"]').click();
+  await clipboardHolds("const width = 40;\nconst height = 7;");
+  await toastSays(/Copied/);
+
+  const held = await page.evaluate(async () => await navigator.clipboard.readText());
+  assert.equal(held.includes("Die Breite"), false, "the prose around the block stays out of it");
+});
+
 test("forking a message cuts the chat back to where it was asked", { skip: blocked }, async () => {
   await idle();
   const asked = page.locator("#transcript .block.user", { hasText: "piui-copy-1" }).first();

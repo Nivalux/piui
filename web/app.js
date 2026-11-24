@@ -3220,9 +3220,39 @@ function markdownBox(text, className) {
   const started = stopwatch();
   const box = element("div", `md ${className}`);
   box.append(markdownNode(parseMarkdown(text)));
+  const fences = /** @type {NodeListOf<HTMLElement>} */ (box.querySelectorAll("pre.md-code"));
+  for (const fence of fences) fenceCopy(fence);
   if (live.on) note("markdown boxes", 1, text.length);
   took("markdownBox", started);
   return box;
+}
+
+/**
+ * A fenced block hands over its own text on its own, so a reader does not have
+ * to select around the prose and lose the indentation.
+ *
+ * @param {HTMLElement} fence
+ */
+function fenceCopy(fence) {
+  const wrap = element("div", "code-wrap");
+  fence.replaceWith(wrap);
+  wrap.append(fence);
+  const copy = iconButton("copy", "copy code", () => void copyFence(fence, copy));
+  copy.title = "Copy this block";
+  wrap.append(copy);
+}
+
+/**
+ * @param {HTMLElement} fence
+ * @param {HTMLElement} copy
+ */
+async function copyFence(fence, copy) {
+  const text = fence.querySelector("code")?.textContent ?? "";
+  if (text.length === 0) return;
+  if (!(await toClipboard(text))) return;
+  copy.classList.add("copied");
+  setTimeout(() => copy.classList.remove("copied"), 1200);
+  toast("Copied!", 1200);
 }
 
 /**

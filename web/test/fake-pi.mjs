@@ -352,6 +352,11 @@ async function turn(prompt) {
     return endless();
   }
 
+  if (/code fence/i.test(prompt)) {
+    await sleep(120);
+    return fencedAnswer();
+  }
+
   if (tall) return tallAnswer();
 
   // Two seconds of tokens, so a test can watch what a page does to the rest of
@@ -526,6 +531,30 @@ async function streamAnswer() {
   history.push({ role: "assistant", content: [{ type: "text", text }] });
   send({ type: "message_end", message: { role: "assistant" }, timestamp: now() });
   deliver("steering");
+  send({ type: "turn_end", timestamp: now() });
+  send({ type: "agent_end", willRetry: false, timestamp: now() });
+  settle();
+}
+
+/**
+ * A short answer with a fenced block in the middle of its prose.
+ */
+async function fencedAnswer() {
+  const text = "Die Breite:\n\n```zig\nconst width = 40;\nconst height = 7;\n```\n\nFertig.";
+  send({ type: "message_update", assistantMessageEvent: { type: "text_start", contentIndex: 0 }, timestamp: now() });
+  for (const delta of ["Die Breite:\n\n", "```zig\nconst width = 40;\nconst height = 7;\n```\n", "\nFertig."]) {
+    send({
+      type: "message_update",
+      assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta },
+      usage: { input: 10, output: 4, cacheRead: 0, cacheWrite: 0, cost: { total: 0 } },
+      timestamp: now(),
+    });
+    await sleep(30);
+  }
+  send({ type: "message_update", assistantMessageEvent: { type: "text_end", contentIndex: 0 }, timestamp: now() });
+
+  history.push({ role: "assistant", content: [{ type: "text", text }] });
+  send({ type: "message_end", message: { role: "assistant" }, timestamp: now() });
   send({ type: "turn_end", timestamp: now() });
   send({ type: "agent_end", willRetry: false, timestamp: now() });
   settle();

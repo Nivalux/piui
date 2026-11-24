@@ -1094,6 +1094,35 @@ pre,
   white-space: pre;
 }
 
+/* The button sits beside the block, not in it: inside it would scroll away
+   with the code it is meant to copy. */
+.md .code-wrap {
+  position: relative;
+}
+
+.md .code-wrap .button.icon {
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  padding: 2px 5px;
+  color: var(--fg-soft);
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  opacity: 0;
+  transition: opacity 120ms;
+}
+
+.md .code-wrap:hover .button.icon,
+.md .code-wrap:focus-within .button.icon {
+  opacity: 1;
+}
+
+.md .code-wrap .button.icon.copied {
+  color: var(--add-text);
+  border-color: var(--add-text);
+}
+
 .md blockquote {
   margin: 0 0 9px;
   padding-left: 11px;
