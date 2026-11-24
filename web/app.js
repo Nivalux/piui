@@ -2494,6 +2494,7 @@ function tabRow(tab, ranges = []) {
   row.append(
     menuButton(() => [
       { label: "Copy path", run: () => void copyPath(tab.cwd) },
+      ...(tab.sessionPath ? [{ label: "Copy session path", run: () => void copyPath(tab.sessionPath ?? "") }] : []),
       {
         label: "Archive into sessions",
         danger: true,

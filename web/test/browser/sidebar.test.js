@@ -298,6 +298,20 @@ test("a session row offers its folder and its session file without opening the c
   assert.equal(await activeTab(), before, "copying the file left the chat alone");
 });
 
+test("an open chat hands out its own session file as well", { skip: blocked }, async () => {
+  await page.context().grantPermissions(["clipboard-read", "clipboard-write"], { origin: base });
+  await page.locator("#session-list .session").first().click();
+  const chat = await activeTab();
+  const row = page.locator(`#tab-list .tab[data-tab="${chat}"]`);
+
+  await row.locator(".row-menu").click();
+  await page.waitForSelector(".row-actions", { state: "visible" });
+  await page.locator(".row-action", { hasText: "Copy session path" }).click();
+  await toastSays(/copied .*\.jsonl/);
+  const held = await page.evaluate(() => navigator.clipboard.readText());
+  assert.match(held, /\.jsonl$/, "the clipboard holds the file of the chat that is open");
+});
+
 test("a second ⋯ takes the first menu down instead of stacking on it", { skip: blocked }, async () => {
   await openFreshChat();
   const first = await activeTab();
