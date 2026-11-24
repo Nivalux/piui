@@ -787,6 +787,11 @@ pre,
   max-width: none;
 }
 
+/* The title gives way, never a chip: a squeezed branch loses its counts and an icon its glyph. */
+.top .chip {
+  flex: 0 0 auto;
+}
+
 .button {
   padding: 6px 12px;
   border-radius: 8px;

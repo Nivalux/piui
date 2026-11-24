@@ -2471,7 +2471,7 @@ function tabRow(tab, ranges = []) {
   const status = element("span", "tab-status");
   if (tab.running) {
     const since = tab.runStartedMs ?? tab.createdMs;
-    status.append(spinner(), span(`working ${ago(Date.now() - since)}`, "live"));
+    status.append(spinner(), span(ago(Date.now() - since), "live"));
   } else if (unread) {
     status.append(span("done", "done"));
   } else if (tab.lastOutputMs > 0) {

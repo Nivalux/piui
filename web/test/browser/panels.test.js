@@ -533,6 +533,40 @@ test("a window too narrow for both gives the chat the pixels", { skip: blocked }
   );
 });
 
+test("a short title bar takes room off the title, not off the branch counts", { skip: blocked || noGit }, async () => {
+  git(gitProject, ["add", "-A"]);
+  git(gitProject, ["commit", "-qm", "a clean base for the badge"]);
+  fs.writeFileSync(path.join(gitProject, "notes.md"), "alpha\nbeta\n");
+
+  await openProjectChat(gitProject);
+  await page.waitForFunction(
+    () => {
+      const chip = document.getElementById("branch");
+      return chip !== null && !chip.hidden && chip.childNodes.length === 3;
+    },
+    undefined,
+    { timeout: 30000 },
+  );
+
+  await page.setViewportSize({ width: 700, height: 800 });
+  try {
+    const badge = await page.locator("#branch").evaluate((/** @type {HTMLElement} */ node) => ({
+      parts: [...node.childNodes].map((part) => part.textContent ?? ""),
+      clipped: node.scrollWidth > node.clientWidth + 1,
+      cut: [...node.querySelectorAll("span")].some((one) => (one.textContent ?? "").length === 0),
+      right: node.getBoundingClientRect().right,
+      view: window.innerWidth,
+    }));
+    assert.equal(badge.parts.length, 3, `branch, added, removed: ${JSON.stringify(badge.parts)}`);
+    assert.match(badge.parts[1], /^\+\d+$/);
+    assert.match(badge.parts[2], /^−\d+$/);
+    assert.ok(!badge.clipped && !badge.cut, `nothing is cut off: ${JSON.stringify(badge)}`);
+    assert.ok(badge.right <= badge.view + 1, "and the badge stays inside the window");
+  } finally {
+    await page.setViewportSize({ width: 1280, height: 800 });
+  }
+});
+
 test("the page threw nothing", { skip: blocked }, async () => {
   assert.deepEqual(crashes, []);
 });

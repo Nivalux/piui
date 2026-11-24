@@ -385,6 +385,19 @@ test("a chat whose folder is gone is read from a copy, not by putting the folder
   assert.ok(!(await page.locator(".chat-ended").isVisible()), "and the notice has nothing left to say");
 });
 
+test("a working chat says how long; the spinner says the rest", { skip: blocked }, async () => {
+  await openFreshChat();
+  await page.fill("#input", "and now the long one");
+  await page.click("#send");
+
+  const row = page.locator("#tab-list .tab.active");
+  await row.locator(".spinner").waitFor({ state: "visible", timeout: 10000 });
+  const status = (await row.locator(".tab-status").innerText()).trim();
+  assert.doesNotMatch(status, /working/, "the spinner is that word");
+  assert.match(status, /^\d+[smhd]$/, `only the time beside it: ${status}`);
+  await idle();
+});
+
 test("the page threw nothing", { skip: blocked }, async () => {
   assert.deepEqual(crashes, []);
 });
