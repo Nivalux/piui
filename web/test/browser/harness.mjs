@@ -78,19 +78,37 @@ function chatId() {
 }
 
 /**
- * Open a chat in a folder of the reader's own, the way +Project does it.
+ * Type a folder into the picker and make sure it is still there when Enter follows, because the
+ * picker paints its own starting folder into the field while that typing is landing.
+ *
+ * @param {string} cwd
+ */
+async function pickerTakes(cwd) {
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    await page.fill("#dir-field", cwd);
+    await page.waitForTimeout(150);
+    if ((await page.inputValue("#dir-field")) === cwd) return;
+  }
+  throw new Error(`the folder picker would not take ${cwd}`);
+}
+
+/**
+ * Open a chat in a folder of the reader's own, the way +Project does it. The chat before it can
+ * already sit in the same folder, so the tab has to move as well as the folder line.
  *
  * @param {string} cwd
  */
 async function openProjectChat(cwd) {
+  const was = await page.evaluate(() => localStorage.getItem("piui:tab") ?? "");
   await page.click("#new-project");
   await page.waitForSelector("#dir-field");
-  await page.fill("#dir-field", cwd);
+  await pickerTakes(cwd);
   await page.keyboard.press("Enter");
   await page.waitForFunction(
-    /** @param {string} want */
-    (want) => document.getElementById("tab-cwd")?.textContent === want,
-    cwd,
+    /** @param {{want: string, gone: string}} want */
+    ({ want, gone }) =>
+      document.getElementById("tab-cwd")?.textContent === want && (localStorage.getItem("piui:tab") ?? "") !== gone,
+    { want: cwd, gone: was },
     { timeout: 30000 },
   );
 }
@@ -399,7 +417,9 @@ export async function start() {
     },
   );
   server.stdout?.resume();
-  server.stderr?.resume();
+  if (process.env.PIUI_SERVER_LOG) {
+    server.stderr?.setEncoding("utf8").on("data", (chunk) => process.stdout.write(`  [piui] ${chunk}`));
+  } else server.stderr?.resume();
   await waitForServer();
 
   runner = await chromium.launch({

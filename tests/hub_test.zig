@@ -53,6 +53,17 @@ test "idle reclamation preserves tabs and only manual close removes saved entrie
     try testing.expectEqualStrings("/tmp/first.jsonl", saved[0].session.?);
 }
 
+test "a pi marked for a restart goes between turns, never during one" {
+    try testing.expect(hub.readyToReplace(true, false, false, false, 0, false, 0));
+    try testing.expect(hub.readyToReplace(true, false, false, false, 3, true, 0));
+    try testing.expect(!hub.readyToReplace(true, true, false, false, 0, false, 0));
+    try testing.expect(!hub.readyToReplace(true, true, false, false, 0, true, 0));
+    try testing.expect(!hub.readyToReplace(true, false, true, false, 0, true, 0));
+    try testing.expect(!hub.readyToReplace(true, false, false, true, 0, true, 0));
+    try testing.expect(!hub.readyToReplace(false, false, false, false, 0, true, 0));
+    try testing.expect(!hub.readyToReplace(true, false, false, false, 0, true, 1));
+}
+
 test "a tab that lands on another session file is remembered again" {
     try testing.expect(hub.sessionMoved(null, "/store/fork.jsonl"));
     try testing.expect(hub.sessionMoved("/store/parent.jsonl", "/store/fork.jsonl"));

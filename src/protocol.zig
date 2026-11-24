@@ -6,6 +6,7 @@ pub const Kind = enum {
     agent_start,
     agent_end,
     agent_settled,
+    queue_update,
     session_info_changed,
     thinking_level_changed,
     extension_ui_request,
@@ -27,6 +28,8 @@ pub const Record = struct {
     id: ?[]const u8 = null,
     response: Response = .{},
     name: ?[]const u8 = null,
+    /// How many messages pi says it is still holding between turns, from a frame that counts them.
+    held: ?usize = null,
 
     pub fn deinit(self: *Record, allocator: std.mem.Allocator) void {
         if (self.id) |value| allocator.free(value);
@@ -78,6 +81,7 @@ pub fn parse(allocator: std.mem.Allocator, raw: []const u8) ParseError!Record {
                 record.response.session_file = try copy(allocator, string(data, "sessionFile"));
                 record.response.session_id = try copy(allocator, string(data, "sessionId"));
                 record.response.session_name = try copy(allocator, string(data, "sessionName"));
+                if (std.mem.eql(u8, record.response.command, "get_state")) record.held = pending(data);
             }
         }
         return record;
@@ -90,10 +94,27 @@ pub fn parse(allocator: std.mem.Allocator, raw: []const u8) ParseError!Record {
         return .{ .kind = .session_info_changed, .name = try copy(allocator, string(object, "name")) };
     }
     if (std.mem.eql(u8, type_name, "thinking_level_changed")) return .{ .kind = .thinking_level_changed };
+    if (std.mem.eql(u8, type_name, "queue_update")) return .{ .kind = .queue_update, .held = queued(object) };
     if (std.mem.eql(u8, type_name, "extension_ui_request")) {
         return .{ .kind = .extension_ui_request, .id = try copy(allocator, string(object, "id")) };
     }
     return .{ .kind = .other };
+}
+
+/// What pi has queued for the next turns, read off the two lists a `queue_update` carries.
+fn queued(object: std.json.ObjectMap) ?usize {
+    var total: usize = 0;
+    for ([_][]const u8{ "steering", "followUp" }) |key| {
+        const value = object.get(key) orelse continue;
+        if (value == .array) total += value.array.items.len;
+    }
+    return total;
+}
+
+/// The same count, spelled one number in a `get_state` answer.
+fn pending(data: std.json.ObjectMap) ?usize {
+    const count = integer(data, "pendingMessageCount") orelse return null;
+    return if (count < 0) 0 else @intCast(count);
 }
 
 pub fn get(object: std.json.ObjectMap, key: []const u8) ?std.json.Value {

@@ -19,6 +19,7 @@ pub const Child = struct {
     stdout: Io.File,
     stderr: Io.File,
     write_lock: Io.Mutex = .init,
+    killed: std.atomic.Value(bool) = .{ .raw = false },
 
     pub fn spawn(allocator: std.mem.Allocator, io: Io, options: Options) !*Child {
         var argv: std.ArrayList([]const u8) = .empty;
@@ -60,7 +61,10 @@ pub const Child = struct {
         self.stdin.close(self.io) catch {};
     }
 
+    /// Signals once and forgives every later call: a second kill would reap a child that is
+    /// already gone, which Zig treats as a double free.
     pub fn kill(self: *Child) void {
+        if (self.killed.swap(true, .monotonic)) return;
         self.proc.kill(self.io);
     }
 

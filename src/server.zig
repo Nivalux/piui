@@ -152,6 +152,16 @@ pub const Server = struct {
             return self.sendJson(request, .accepted, "{\"ok\":true,\"state\":\"queued\"}");
         }
 
+        if (std.mem.eql(u8, path, "/api/reload")) {
+            if (request.head.method != .POST) return self.text(request, .bad_request, "post");
+            const payload = std.fmt.allocPrint(
+                a,
+                "{{\"ok\":true,\"restarting\":{d}}}",
+                .{self.options.hub.reloadPool()},
+            ) catch return self.text(request, .internal_server_error, "oom");
+            return self.sendJson(request, .ok, payload);
+        }
+
         if (std.mem.eql(u8, path, "/api/restore")) {
             const payload = json.encode(a, self.options.hub.restored) catch
                 return self.text(request, .internal_server_error, "encode");

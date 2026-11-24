@@ -9,10 +9,11 @@ import {
   blocked,
   crashes,
   gitProject,
+  idle,
   openProjectChat,
   page,
   readCommands,
-  sidebarIds,
+  runTurn,
   start,
   stop,
   toastSays,
@@ -75,7 +76,7 @@ test("something that only starts like a command is still a prompt", { skip: bloc
   await sawSent((frames) => frames.some((frame) => frame.type === "prompt" && frame.message === "/notacommand hello"));
 });
 
-test("reload reopens the chat on the file it was opened from", { skip: blocked }, async () => {
+test("reload hands the chat to a pi that starts again on the same file", { skip: blocked }, async () => {
   await page.locator("#session-list .session-title", { hasText: "explain the pi wiring" }).first().click();
   await page.waitForFunction(
     /** @param {string} want */
@@ -84,22 +85,42 @@ test("reload reopens the chat on the file it was opened from", { skip: blocked }
     { timeout: 20000 },
   );
   const was = await activeTab();
-  const tabs = await sidebarIds();
 
   await typeLine("/reload");
-  await toastSays(/Reopened/);
+  await toastSays(/once the answer in flight is done/);
 
   await page.waitForFunction(
     /** @param {string} gone */
-    (gone) => !Array.from(document.querySelectorAll("#tab-list .tab")).some((node) => node.dataset.tab === gone),
+    (gone) => document.querySelector("#tab-list .tab.active")?.dataset.tab !== gone,
     was,
-    { timeout: 10000 },
+    { timeout: 20000 },
   );
-  const after = await sidebarIds();
-  assert.equal(after.length, tabs.length, "one chat in, one chat out");
-  assert.notEqual(await activeTab(), was, "the chat carries on in a tab of its own");
-
   await page.waitForSelector("#transcript .block.user", { hasText: "explain the pi wiring" });
+});
+
+test("reload waits for an answer that is still being written", { skip: blocked }, async () => {
+  await openProjectChat(wiredProject);
+  await runTurn("explain the pi wiring");
+  await idle();
+
+  await page.fill("#input", "give me a long answer");
+  await page.click("#send");
+  await page.waitForFunction(() => document.querySelector("#tab-list .tab.active .spinner") !== null, undefined, {
+    timeout: 20000,
+  });
+  const was = await activeTab();
+
+  await typeLine("/reload");
+  await toastSays(/once the answer in flight is done/);
+  assert.equal(await activeTab(), was, "the answer keeps the tab it was written in");
+
+  await idle();
+  await page.waitForFunction(
+    /** @param {string} gone */
+    (gone) => document.querySelector("#tab-list .tab.active")?.dataset.tab !== gone,
+    was,
+    { timeout: 20000 },
+  );
 });
 
 test("the page threw nothing", { skip: blocked }, async () => {

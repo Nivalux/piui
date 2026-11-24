@@ -90,6 +90,27 @@ fn changesSession(kind: []const u8) bool {
     return false;
 }
 
+/// Whether a pi marked for a restart can be let go at this moment: between turns, with nothing it
+/// was asked still outstanding and nothing borrowed for a session switch. `settled` is the frame
+/// that ended a turn, the one point a busy pi can still be replaced - unless a steer is already
+/// queued, because then the next turn is on its way.
+pub fn readyToReplace(
+    marked: bool,
+    busy: bool,
+    context_pending: bool,
+    switching: bool,
+    pending: usize,
+    settled: bool,
+    steer_queued: usize,
+) bool {
+    return marked and
+        !busy and
+        !context_pending and
+        !switching and
+        steer_queued == 0 and
+        (settled or pending == 0);
+}
+
 const Worker = struct {
     process: *child.Child,
     stderr: child.Tail = .{ .limit = 16 * 1024 },
@@ -101,6 +122,12 @@ const Worker = struct {
     context_pending: bool = false,
     dead: bool = false,
     switching: bool = false,
+    /// Set when this pi is on its way out: it finishes the turn it is in, then the page starts a
+    /// fresh one, so a reload never cuts an answer short.
+    restart: bool = false,
+    /// Messages pi is holding for a later turn, which make a settle the gap between two turns
+    /// rather than the end of the work.
+    steer_queued: usize = 0,
     switched: bool = false,
     switch_ok: bool = false,
     switch_cancelled: bool = false,
@@ -227,7 +254,8 @@ pub const Hub = struct {
         defer self.pool_lock.unlock(self.io);
         for (self.workers.items) |worker| {
             worker.lock.lockUncancelable(self.io);
-            const available = !worker.dead and !worker.busy and !worker.context_pending and (worker.owner == null or worker.pending == 0);
+            const available =
+                !worker.dead and !worker.busy and !worker.context_pending and !worker.restart and (worker.owner == null or worker.pending == 0);
             worker.lock.unlock(self.io);
             if (available) return;
         }
@@ -248,6 +276,29 @@ pub const Hub = struct {
         };
         self.group.concurrent(self.io, child.drain, .{ self.allocator, self.io, process.stderr, &worker.stderr }) catch process.kill();
         self.write(worker, "{\"type\":\"get_state\",\"id\":\"piui_pool_warm\"}") catch process.kill();
+    }
+
+    /// Mark every pi in the pool for a restart: the busy ones go once their turn settles, the ones
+    /// already waiting at once, so every chat comes back on a process that read them again.
+    pub fn reloadPool(self: *Hub) usize {
+        self.pool_lock.lockUncancelable(self.io);
+        defer self.pool_lock.unlock(self.io);
+
+        var marked: usize = 0;
+        for (self.workers.items) |worker| {
+            worker.lock.lockUncancelable(self.io);
+            if (worker.dead) {
+                worker.lock.unlock(self.io);
+                continue;
+            }
+            worker.restart = true;
+            const waiting =
+                readyToReplace(true, worker.busy, worker.context_pending, worker.switching, worker.pending, false, worker.steer_queued);
+            worker.lock.unlock(self.io);
+            marked += 1;
+            if (waiting) worker.process.kill();
+        }
+        return marked;
     }
 
     pub fn create(self: *Hub, cwd: ?[]const u8, session: ?[]const u8) Error!*Tab {
@@ -338,7 +389,7 @@ pub const Hub = struct {
         self.pool_lock.lockUncancelable(self.io);
         defer self.pool_lock.unlock(self.io);
         const worker = self.acquire(tab) catch {
-            self.noteClosed(tab);
+            self.noteClosed(tab, "pi exited");
             return;
         };
         const parsed = std.json.parseFromSlice(std.json.Value, self.allocator, record, .{}) catch return;
@@ -348,10 +399,11 @@ pub const Hub = struct {
         if (!std.mem.eql(u8, kind, "extension_ui_response")) worker.pending += 1;
         if (changesSession(kind)) worker.context_pending = true;
         if (std.mem.eql(u8, kind, "prompt") or std.mem.eql(u8, kind, "steer") or std.mem.eql(u8, kind, "follow_up")) worker.busy = true;
+        if (std.mem.eql(u8, kind, "steer") or std.mem.eql(u8, kind, "follow_up")) worker.steer_queued += 1;
         worker.lock.unlock(self.io);
         self.write(worker, record) catch {
             worker.process.kill();
-            self.noteClosed(tab);
+            self.noteClosed(tab, "pi exited");
         };
         if (std.mem.eql(u8, kind, "prompt")) self.group.concurrent(self.io, Hub.warm, .{self}) catch {};
     }
@@ -376,7 +428,7 @@ pub const Hub = struct {
                 index -= 1;
                 const worker = self.workers.items[index];
                 worker.lock.lockUncancelable(self.io);
-                if (worker.dead or worker.busy or worker.context_pending or worker.pending != 0 or worker.switching) {
+                if (worker.dead or worker.busy or worker.context_pending or worker.pending != 0 or worker.switching or worker.restart) {
                     worker.lock.unlock(self.io);
                     continue;
                 }
@@ -516,6 +568,7 @@ pub const Hub = struct {
 
     /// Reads Pi's stdout until the pipe closes, routing as it goes.
     fn pump(hub: *Hub, worker: *Worker) void {
+        var retiring = false;
         var buffer: [64 * 1024]u8 = undefined;
         var stream = worker.process.stdout.readerStreaming(hub.io, &buffer);
         var records = framing.Records.init(hub.allocator, &stream.interface);
@@ -557,9 +610,27 @@ pub const Hub = struct {
                 if (parsed.id != null and std.mem.eql(u8, parsed.id.?, "piui_pool_context")) worker.context_pending = false;
                 if (!parsed.response.success and (std.mem.eql(u8, parsed.response.command, "prompt") or std.mem.eql(u8, parsed.response.command, "steer") or std.mem.eql(u8, parsed.response.command, "follow_up"))) worker.busy = false;
             }
-            if (parsed.kind == .agent_start) worker.busy = true;
+            if (parsed.kind == .agent_start) {
+                worker.busy = true;
+                worker.steer_queued = 0;
+            }
             if (parsed.kind == .agent_settled) worker.busy = false;
+            if (parsed.held) |count| worker.steer_queued = count;
+            const settled = parsed.kind == .agent_settled;
+            retiring = readyToReplace(
+                worker.restart,
+                worker.busy,
+                worker.context_pending,
+                worker.switching,
+                worker.pending,
+                settled,
+                worker.steer_queued,
+            );
             worker.lock.unlock(hub.io);
+            if (retiring) {
+                worker.process.kill();
+                break;
+            }
             if (refresh_context) hub.write(worker, "{\"type\":\"get_state\",\"id\":\"piui_pool_context\"}") catch worker.process.kill();
         } else |_| {}
 
@@ -569,7 +640,7 @@ pub const Hub = struct {
         worker.owner = null;
         worker.ready.signal(hub.io);
         worker.lock.unlock(hub.io);
-        if (owner) |tab| hub.noteClosed(tab);
+        if (owner) |tab| hub.noteClosed(tab, if (retiring) "reloaded" else "pi exited");
     }
 
     /// When the chat last did something. The sidebar sorts settled chats by this, so it moves only
@@ -692,7 +763,7 @@ pub const Hub = struct {
         return parsed.value;
     }
 
-    fn noteClosed(self: *Hub, tab: *Tab) void {
+    fn noteClosed(self: *Hub, tab: *Tab, reason: []const u8) void {
         const tail = if (tab.worker) |worker| worker.stderr.snapshot(self.allocator, self.io) catch "" else tab.stderr.snapshot(self.allocator, self.io) catch "";
         defer if (tail.len > 0) self.allocator.free(tail);
 
@@ -704,7 +775,7 @@ pub const Hub = struct {
             log.warn("pi exited {s} stderr:\n      {s}", .{ tab.id, report });
         }
 
-        const payload = json.encode(self.allocator, Closed{ .stderr = tail }) catch return;
+        const payload = json.encode(self.allocator, Closed{ .reason = reason, .stderr = tail }) catch return;
         defer self.allocator.free(payload);
         self.markClosed(tab, payload);
     }

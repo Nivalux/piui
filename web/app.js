@@ -1090,6 +1090,27 @@ async function wake(id) {
   return again;
 }
 
+/** The chat this page asked to restart, waiting for its pi to leave. */
+const restarting = new Set();
+
+/**
+ * Replace every pi the server is running, each one after the turn it is in.
+ *
+ * @returns {Promise<number>} how many pi are on their way out
+ */
+async function restartPool() {
+  const answer = await postJSON("/api/reload", {}).catch(() => null);
+  const count = Number(answer?.restarting);
+  if (!Number.isFinite(count)) return 0;
+
+  const id = state.active;
+  if (!id) return count;
+
+  if (state.tabs.find((item) => item.id === id)?.closed) await wake(id);
+  else if (count > 0) restarting.add(id);
+  return count;
+}
+
 /** @param {unknown} error @returns {boolean} whether the server said this chat is not there */
 function isGone(error) {
   return error instanceof Error && error.message.startsWith("404");
@@ -1274,12 +1295,14 @@ function handle(frame) {
       replaceTab(frame.tab);
       render();
     } else if (frame.event === "closed") {
+      const gone = state.active ?? "";
+      const asked = restarting.delete(gone);
       const why = frame.reason || "closed";
       const detail = frame.stderr ? `: ${String(frame.stderr).slice(-200)}` : "";
-      toast(why === "closed by user" ? "Tab closed" : `Pi exited (${why})${detail}`, 8000);
+      if (!asked) toast(why === "closed by user" ? "Tab closed" : `Pi exited (${why})${detail}`, 8000);
       if (frame.stderr) console.warn(frame.stderr);
-      endings.set(state.active ?? "", frame.stderr ? String(frame.stderr).slice(-600) : why);
-      const tab = state.tabs.find((item) => item.id === state.active);
+      if (!asked) endings.set(gone, frame.stderr ? String(frame.stderr).slice(-600) : why);
+      const tab = state.tabs.find((item) => item.id === gone);
       if (tab) tab.closed = true;
       // Nothing follows an ending. Left open, the browser would reconnect to a chat that has said
       // its last word and be told the same thing forever.
@@ -1287,6 +1310,7 @@ function handle(frame) {
       stream = null;
       renderFooter();
       render();
+      if (asked) void wake(gone);
     }
     return;
   }
@@ -1616,12 +1640,13 @@ async function runCommand(route) {
     }
 
     case "reload": {
-      if (busy) return busyNote(route.name);
-      if (!tab) return false;
-      const fresh = await createTab(tab.sessionPath ? { cwd: tab.cwd, session: tab.sessionPath } : { cwd: tab.cwd });
-      if (fresh.length === 0) return false;
-      await closeTabById(tab.id);
-      toast("Reopened: pi reads its extensions, skills, prompts and files again", 5000);
+      const count = await restartPool();
+      toast(
+        count > 0
+          ? `${count} ${count === 1 ? "chat restarts" : "chats restart"} once the answer in flight is done`
+          : "nothing was running: the next line starts a pi that read them again",
+        6000,
+      );
       return true;
     }
 
