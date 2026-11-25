@@ -3,6 +3,9 @@
 , buildPackages
 , git
 , makeWrapper
+, nodejs
+, typescript
+, doCheck ? true
 }:
 
 stdenv.mkDerivation (finalAttrs: {
@@ -19,10 +22,11 @@ stdenv.mkDerivation (finalAttrs: {
       !(lib.elem keep dropped);
   };
 
-  nativeBuildInputs = [
-    buildPackages.zig_0_17
-    makeWrapper
-  ];
+  nativeBuildInputs =
+    [ buildPackages.zig_0_17 makeWrapper ]
+    ++ lib.optionals doCheck [ nodejs typescript git ];
+
+  doCheck = doCheck;
 
   dontConfigure = true;
 
@@ -42,6 +46,20 @@ stdenv.mkDerivation (finalAttrs: {
 
   postInstall = ''
     wrapProgram "$out/bin/piui" --prefix PATH : ${lib.makeBinPath [ git ]}
+  '';
+
+  checkPhase = ''
+    runHook preCheck
+
+    export ZIG_GLOBAL_CACHE_DIR="$TMPDIR/zig-global"
+    export ZIG_LOCAL_CACHE_DIR="$TMPDIR/zig-local"
+    export HOME="$TMPDIR"
+
+    zig build -Doptimize=ReleaseSafe test-zig
+    node --test --test-timeout=15000 --test-force-exit web/test/*.test.js
+    tsc --project web
+
+    runHook postCheck
   '';
 
   meta = {

@@ -49,6 +49,9 @@ nix-build -E 'with import <nixpkgs> {}; callPackage ./package.nix {}'
 ./result/bin/piui
 ```
 
+The check phase runs the zig units, the fuzz replay, the js logic and the jsdoc types; the browser suite stays with
+`just test`, since it drives a real chromium. Pass `doCheck = false` to `callPackage` to build without asking.
+
 ## NixOS
 
 `package.nix` is a plain derivation, so it can be built straight out of a pinned source tree — a tack pin, a
