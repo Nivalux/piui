@@ -72,6 +72,8 @@ test "the run boundary events" {
     try testing.expectEqual(protocol.Kind.agent_start, (try parse.line("{\"type\":\"agent_start\"}")).kind);
     try testing.expectEqual(protocol.Kind.agent_end, (try parse.line("{\"type\":\"agent_end\",\"messages\":[]}")).kind);
     try testing.expectEqual(protocol.Kind.agent_settled, (try parse.line("{\"type\":\"agent_settled\"}")).kind);
+    try testing.expect((try parse.line("{\"type\":\"agent_end\",\"messages\":[],\"willRetry\":true}")).retrying);
+    try testing.expect(!(try parse.line("{\"type\":\"agent_end\",\"messages\":[],\"willRetry\":false}")).retrying);
 }
 
 test "session_info_changed keeps the name, an absent name means cleared" {

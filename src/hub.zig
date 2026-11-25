@@ -111,6 +111,13 @@ pub fn readyToReplace(
         (settled or pending == 0);
 }
 
+/// Whether a thought handed to pi now would still find a turn that collects steering. pi polls its
+/// steering queue one last time when a turn ends, so after that the queue has no reader and pi
+/// would hold the thought until something else woke it.
+pub fn stillSteering(busy: bool, ended: bool) bool {
+    return busy and !ended;
+}
+
 const Worker = struct {
     process: *child.Child,
     stderr: child.Tail = .{ .limit = 16 * 1024 },
@@ -128,6 +135,9 @@ const Worker = struct {
     /// Messages pi is holding for a later turn, which make a settle the gap between two turns
     /// rather than the end of the work.
     steer_queued: usize = 0,
+    /// Set from the moment pi's last turn is over until the run settles, the gap in which a steer
+    /// would find no turn left that collects steering.
+    ended: bool = false,
     switched: bool = false,
     switch_ok: bool = false,
     switch_cancelled: bool = false,
@@ -395,17 +405,35 @@ pub const Hub = struct {
         const parsed = std.json.parseFromSlice(std.json.Value, self.allocator, record, .{}) catch return;
         defer parsed.deinit();
         const kind = if (parsed.value == .object) protocol.string(parsed.value.object, "type") orelse "" else "";
+        const queued = std.mem.eql(u8, kind, "steer") or std.mem.eql(u8, kind, "follow_up");
         worker.lock.lockUncancelable(self.io);
+        const collecting = stillSteering(worker.busy and !worker.restart, worker.ended);
+        const rewriting = queued and !collecting;
         if (!std.mem.eql(u8, kind, "extension_ui_response")) worker.pending += 1;
         if (changesSession(kind)) worker.context_pending = true;
-        if (std.mem.eql(u8, kind, "prompt") or std.mem.eql(u8, kind, "steer") or std.mem.eql(u8, kind, "follow_up")) worker.busy = true;
-        if (std.mem.eql(u8, kind, "steer") or std.mem.eql(u8, kind, "follow_up")) worker.steer_queued += 1;
+        if (std.mem.eql(u8, kind, "prompt") or queued) worker.busy = true;
+        if (queued and !rewriting) worker.steer_queued += 1;
         worker.lock.unlock(self.io);
-        self.write(worker, record) catch {
+
+        const asked = if (rewriting) asPrompt(self.allocator, parsed.value) else null;
+        defer if (asked) |text| self.allocator.free(text);
+        self.write(worker, asked orelse record) catch {
             worker.process.kill();
             self.noteClosed(tab, "pi exited");
         };
-        if (std.mem.eql(u8, kind, "prompt")) self.group.concurrent(self.io, Hub.warm, .{self}) catch {};
+        if (asked != null or std.mem.eql(u8, kind, "prompt")) self.group.concurrent(self.io, Hub.warm, .{self}) catch {};
+    }
+
+    /// Rewrites a thought aimed at a turn that is not running into the next thing the chat will do,
+    /// because pi would otherwise hold it until something else woke it.
+    fn asPrompt(a: std.mem.Allocator, value: std.json.Value) ?[]const u8 {
+        if (value != .object) return null;
+        var asked = value;
+        asked.object.put(a, "type", .{ .string = "prompt" }) catch return null;
+        var out: std.Io.Writer.Allocating = .init(a);
+        defer out.deinit();
+        std.json.Stringify.value(asked, .{}, &out.writer) catch return null;
+        return a.dupe(u8, out.written()) catch null;
     }
 
     fn write(self: *Hub, worker: *Worker, record: []const u8) !void {
@@ -612,9 +640,14 @@ pub const Hub = struct {
             }
             if (parsed.kind == .agent_start) {
                 worker.busy = true;
+                worker.ended = false;
                 worker.steer_queued = 0;
             }
-            if (parsed.kind == .agent_settled) worker.busy = false;
+            if (parsed.kind == .agent_end) worker.ended = !parsed.retrying;
+            if (parsed.kind == .agent_settled) {
+                worker.busy = false;
+                worker.ended = false;
+            }
             if (parsed.held) |count| worker.steer_queued = count;
             const settled = parsed.kind == .agent_settled;
             retiring = readyToReplace(

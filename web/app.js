@@ -671,10 +671,15 @@ function onKey(event) {
 // -------------------------------------------------------------------- tabs
 
 async function loadTabs() {
+  const asked = tabsTouched;
   const list = await getJSON("/api/tabs");
+  if (tabsTouched !== asked) return;
   state.tabs = Array.isArray(list) ? list : [];
   renderSidebar();
 }
+
+/** Bumped by every tab fact the server pushed us, so a list fetched before it is not painted over. */
+let tabsTouched = 0;
 
 // ---------------------------------------------------------------- terminals
 
@@ -1201,6 +1206,7 @@ function connect(id) {
 
   source.onopen = () => {
     state.connected = true;
+    void loadTabs();
     // One mode, the one the reader chose, and it takes everything the reader
     // queued at once rather than one message per completed turn: two thoughts
     // typed in a row belong to one instruction, and answering them one at a time
@@ -1255,7 +1261,7 @@ function connect(id) {
     const frame = parseFrame(String(message.data));
     if (frame) {
       if (live.on) live.frames += 1;
-      handle(frame);
+      handle(frame, id);
     }
   };
 }
@@ -1318,19 +1324,26 @@ async function sendCommand(command) {
   }
 }
 
-/** @param {Frame} frame */
-function handle(frame) {
+/**
+ * @param {Frame} frame
+ * @param {string} [from] the chat whose stream carried it, so a late frame from one chat cannot
+ * be read as news about whichever chat happens to be on screen now
+ */
+function handle(frame, from) {
   const started = stopwatch();
   if (isPiuiEvent(frame)) {
     if (frame.event === "running") {
-      const tab = active();
-      if (tab) tab.running = frame.running === true;
+      const tab = state.tabs.find((item) => item.id === (from ?? state.active));
+      if (tab) {
+        tab.running = frame.running === true;
+        tabsTouched += 1;
+      }
       render();
     } else if (frame.event === "tab") {
       replaceTab(frame.tab);
       render();
     } else if (frame.event === "closed") {
-      const gone = state.active ?? "";
+      const gone = from ?? state.active ?? "";
       const asked = restarting.delete(gone);
       const why = frame.reason || "closed";
       const detail = frame.stderr ? `: ${String(frame.stderr).slice(-200)}` : "";
@@ -1339,16 +1352,20 @@ function handle(frame) {
       if (!asked) endings.set(gone, frame.stderr ? String(frame.stderr).slice(-600) : why);
       const tab = state.tabs.find((item) => item.id === gone);
       if (tab) tab.closed = true;
-      // Nothing follows an ending. Left open, the browser would reconnect to a chat that has said
-      // its last word and be told the same thing forever.
-      stream?.close();
-      stream = null;
-      renderFooter();
+      if (gone === state.active) {
+        // Nothing follows an ending. Left open, the browser would reconnect to a chat that has said
+        // its last word and be told the same thing forever.
+        stream?.close();
+        stream = null;
+        renderFooter();
+      }
       render();
       if (asked) void wake(gone);
     }
     return;
   }
+
+  if (from !== undefined && from !== state.active) return;
 
   // The first frame of a stream is a bare TabInfo, without a type at all.
   if (!frame.type && frame.id) {
@@ -1537,6 +1554,7 @@ function response(frame) {
 
 /** @param {TabInfo} tab */
 function replaceTab(tab) {
+  tabsTouched += 1;
   const index = state.tabs.findIndex((item) => item.id === tab.id);
   if (index >= 0) state.tabs[index] = tab;
   else state.tabs.unshift(tab);
@@ -1863,10 +1881,7 @@ function steeringCommand() {
 /** The one word the strip uses: a reader chose a mode, and both halves of the
  * page have to say the same thing about what is waiting. */
 function queueWord() {
-  // Nothing is being steered while pi sits idle. A message sent to a chat that
-  // is not working is simply the next thing it will do, whichever mode was
-  // picked, and calling it steering would promise a turn that is not running.
-  if (!transcript.running) return "on its way";
+  if (active()?.running !== true) return "on its way";
   return state.ui.send_mode === "queue" ? "queued" : "steering";
 }
 

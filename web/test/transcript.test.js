@@ -714,3 +714,19 @@ test("a thought that streamed live keeps the count of the message it streamed wi
   assert.equal(thought?.request?.input, 120);
   assert.equal(thought?.cacheMiss, null);
 });
+
+test("a transcript put back from storage is not still running because the last one was", () => {
+  const transcript = new Transcript();
+  transcript.event({ type: "agent_start" });
+  assert.equal(transcript.running, true);
+
+  transcript.replay([{ role: "user", content: "earlier" }]);
+  assert.equal(transcript.running, false);
+
+  transcript.event({ type: "agent_start" });
+  transcript.clear();
+  assert.equal(transcript.running, false);
+
+  transcript.replay([{ role: "user", content: "earlier" }], true);
+  assert.equal(transcript.running, true);
+});

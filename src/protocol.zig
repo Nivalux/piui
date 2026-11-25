@@ -30,6 +30,8 @@ pub const Record = struct {
     name: ?[]const u8 = null,
     /// How many messages pi says it is still holding between turns, from a frame that counts them.
     held: ?usize = null,
+    /// Whether pi means to run this turn again, so a thought sent into the gap still has a turn.
+    retrying: bool = false,
 
     pub fn deinit(self: *Record, allocator: std.mem.Allocator) void {
         if (self.id) |value| allocator.free(value);
@@ -88,7 +90,7 @@ pub fn parse(allocator: std.mem.Allocator, raw: []const u8) ParseError!Record {
     }
 
     if (std.mem.eql(u8, type_name, "agent_start")) return .{ .kind = .agent_start };
-    if (std.mem.eql(u8, type_name, "agent_end")) return .{ .kind = .agent_end };
+    if (std.mem.eql(u8, type_name, "agent_end")) return .{ .kind = .agent_end, .retrying = flag(object, "willRetry") };
     if (std.mem.eql(u8, type_name, "agent_settled")) return .{ .kind = .agent_settled };
     if (std.mem.eql(u8, type_name, "session_info_changed")) {
         return .{ .kind = .session_info_changed, .name = try copy(allocator, string(object, "name")) };

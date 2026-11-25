@@ -139,6 +139,7 @@ export class Transcript {
 
   clear() {
     this.#blocks = [];
+    this.#running = false;
     this.#tools.clear();
     this.#shells.clear();
     this.#current = { text: [], thinking: [] };

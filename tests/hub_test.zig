@@ -64,6 +64,12 @@ test "a pi marked for a restart goes between turns, never during one" {
     try testing.expect(!hub.readyToReplace(true, false, false, false, 0, true, 1));
 }
 
+test "a thought is only steered into a turn that still collects steering" {
+    try testing.expect(hub.stillSteering(true, false));
+    try testing.expect(!hub.stillSteering(true, true));
+    try testing.expect(!hub.stillSteering(false, false));
+}
+
 test "a tab that lands on another session file is remembered again" {
     try testing.expect(hub.sessionMoved(null, "/store/fork.jsonl"));
     try testing.expect(hub.sessionMoved("/store/parent.jsonl", "/store/fork.jsonl"));
