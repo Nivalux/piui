@@ -1529,6 +1529,15 @@ pre,
   font: 12px var(--mono);
 }
 
+.diff-wait {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  color: var(--accent);
+  font: 12px var(--mono);
+}
+
 .diff-count {
   color: var(--fg-soft);
   font: 11px var(--mono);

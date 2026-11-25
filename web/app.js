@@ -298,6 +298,10 @@ const perProject = 6;
 const attachments = [];
 /** @type {GitStatus | null} */
 let status = null;
+/** @type {string} the chat the status in hand was read for, "" before the first read */
+let statusFor = "";
+/** Whether the git of the chat on screen is still on its way from the server. */
+let gitReading = false;
 
 let paletteIndex = 0;
 let scheduled = false;
@@ -2733,7 +2737,7 @@ async function copyPath(text) {
  */
 function tabFoot(tab, from) {
   const foot = element("div", "tab-foot");
-  const branch = tab.id === state.active ? (status?.branch ?? "") : "";
+  const branch = tab.id === state.active && !gitReading ? (status?.branch ?? "") : "";
   foot.append(span(branch.length > 0 ? branch : shortPath(tab.cwd), "path"));
   if (from) foot.append(span(`fork of ${from.of}`, "fork-of"));
   if (tab.id === state.active && state.model.length > 0) foot.append(span(shortModel(state.model), "model"));
@@ -3597,9 +3601,28 @@ function pickThinking() {
 let refreshGeneration = 0;
 
 async function refreshGit() {
-  if (!state.active) return;
+  if (!state.active) {
+    status = null;
+    statusFor = "";
+    gitReading = false;
+    renderBranch();
+    return;
+  }
   const id = state.active;
   const generation = ++refreshGeneration;
+
+  // A chat in another folder has git of its own. On a share that takes a second
+  // to answer, the panel would otherwise go on wearing the folder the chat
+  // before it lived in, so the read of a new chat clears what it is about to replace.
+  if (id !== statusFor) {
+    statusFor = id;
+    status = null;
+    gitReading = true;
+    el.base.textContent = "reading";
+    renderBranch();
+    renderSidebar();
+    if (state.ui.files === true && state.panel === "diff") showGitReading();
+  }
 
   try {
     status = /** @type {GitStatus} */ (
@@ -3610,8 +3633,10 @@ async function refreshGit() {
   }
   if (id !== state.active || generation !== refreshGeneration) return;
 
+  gitReading = false;
   el.base.textContent = status?.label ?? state.base;
   renderBranch();
+  renderSidebar();
 
   if (state.ui.files !== true || state.panel !== "diff") return;
 
@@ -3637,6 +3662,14 @@ async function refreshGit() {
   }
   if (rows.length === 0) rows.push(element("div", "diff-empty", "nothing changed"));
   el.diffBody.replaceChildren(...rows);
+}
+
+/** What the diff panel shows while the git of a chat is still being read. */
+function showGitReading() {
+  el.diffHead.replaceChildren();
+  const wait = element("div", "diff-wait");
+  wait.append(spinner(), span("reading git"));
+  el.diffBody.replaceChildren(wait);
 }
 
 const git_messages = /** @type {Record<string, string>} */ ({

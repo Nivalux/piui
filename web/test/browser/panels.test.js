@@ -110,6 +110,46 @@ test("the diff tab reads like git status and opens a patch beside the chat", { s
   assert.ok(await page.locator("#transcript").isVisible(), "and the chat is where it was");
 });
 
+test("a chat still reading its own git says so instead of wearing the one before it", {
+  skip: blocked || noGit,
+}, async () => {
+  await openProjectChat(gitProject);
+  await showPanel(true);
+  await page.waitForFunction(() => document.getElementById("branch")?.hidden === false, undefined, {
+    timeout: 30000,
+  });
+  const branch = (await page.locator("#branch").innerText()).trim().split(/\s+/)[0];
+  assert.ok(branch.length > 0, "the repository names itself before the switch");
+
+  await page.route("**/api/git/status**", async (route) => {
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+    await route.continue().catch(() => {});
+  });
+
+  try {
+    await openFreshChat();
+    const whileWaiting = await page.evaluate(() => ({
+      base: document.getElementById("base")?.textContent ?? "",
+      chipShown: document.getElementById("branch")?.hidden !== true,
+      foot: document.querySelector("#tab-list .tab.active .path")?.textContent ?? "",
+    }));
+    assert.ok(
+      await page.locator("#diff-body .diff-wait").isVisible(),
+      "the panel says it is reading rather than listing the last folder",
+    );
+    assert.ok(!whileWaiting.chipShown, "a folder whose git is not in yet does not name a branch");
+    assert.equal(whileWaiting.base, "reading", "the base waits for the folder it belongs to");
+    assert.notEqual(whileWaiting.foot, branch, "the row of the new chat does not wear the old branch");
+    assert.ok(whileWaiting.foot.length > 0, "and it still says where the chat is");
+  } finally {
+    await page.unroute("**/api/git/status**");
+  }
+
+  await page.waitForFunction(() => document.querySelector("#diff-body .diff-wait") === null, undefined, {
+    timeout: 30000,
+  });
+});
+
 test("the branch sits in the title bar and both places pick the same base", { skip: blocked || noGit }, async () => {
   const open = await page.locator("#tab-list .tab").count();
   await openProjectChat(gitProject);
