@@ -302,6 +302,8 @@ let status = null;
 let statusFor = "";
 /** Whether the git of the chat on screen is still on its way from the server. */
 let gitReading = false;
+/** The folder the Files tab is showing. A query ignores it: typing searches the project. */
+let filesDir = "";
 
 let paletteIndex = 0;
 let scheduled = false;
@@ -1187,7 +1189,7 @@ async function openTab(id) {
 
   connect(id);
   render();
-  void refreshGit();
+  void refreshPanel();
   void loadSessions();
 }
 
@@ -1407,7 +1409,7 @@ function handle(frame) {
   if (frame.type === "agent_settled" || frame.type === "turn_end") {
     ask("get_session_stats");
     render();
-    void refreshGit();
+    void refreshPanel();
   }
 }
 
@@ -3618,10 +3620,14 @@ async function refreshGit() {
     statusFor = id;
     status = null;
     gitReading = true;
+    state.files = [];
+    state.filesTruncated = false;
+    filesDir = "";
     el.base.textContent = "reading";
     renderBranch();
     renderSidebar();
-    if (state.ui.files === true && state.panel === "diff") showGitReading();
+    showGitReading();
+    showFileReading();
   }
 
   try {
@@ -3664,12 +3670,20 @@ async function refreshGit() {
   el.diffBody.replaceChildren(...rows);
 }
 
-/** What the diff panel shows while the git of a chat is still being read. */
+/** What the diff side of the panel shows while the git of a chat is still coming. */
 function showGitReading() {
   el.diffHead.replaceChildren();
-  const wait = element("div", "diff-wait");
+  const wait = element("div", "panel-wait");
   wait.append(spinner(), span("reading git"));
   el.diffBody.replaceChildren(wait);
+}
+
+/** What the folder side of the panel shows while the folder of a chat is still coming. */
+function showFileReading() {
+  el.fileCrumbs.hidden = true;
+  const wait = element("div", "panel-wait");
+  wait.append(spinner(), span("reading folder"));
+  el.fileList.replaceChildren(wait);
 }
 
 const git_messages = /** @type {Record<string, string>} */ ({
@@ -4210,14 +4224,14 @@ function renderPanelTabs() {
   el.base.hidden = !diff;
 }
 
-/** Whatever the panel is showing has to be read again. */
+/**
+ * Everything the panel and the badges show belongs to the folder of one chat: the
+ * branch, the base, the changed files, the listing. The git behind the badges is
+ * read even with the panel folded away, because the badges do not fold.
+ */
 function refreshPanel() {
-  if (state.ui.files !== true) return;
-  if (state.panel === "files") {
-    void loadFiles();
-    return;
-  }
   void refreshGit();
+  if (state.ui.files === true && state.panel === "files") void loadFiles();
 }
 
 /** A patch that is being read follows the base and the work it is compared to. */
@@ -4237,9 +4251,6 @@ async function loadFiles() {
   state.filesTruncated = !!payload?.truncated;
   renderFileList();
 }
-
-/** The folder the Files tab is showing. A query ignores it: typing searches the project. */
-let filesDir = "";
 
 /** @param {string} dir */
 function goDir(dir) {

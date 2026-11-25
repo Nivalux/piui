@@ -134,7 +134,7 @@ test("a chat still reading its own git says so instead of wearing the one before
       foot: document.querySelector("#tab-list .tab.active .path")?.textContent ?? "",
     }));
     assert.ok(
-      await page.locator("#diff-body .diff-wait").isVisible(),
+      await page.locator("#diff-body .panel-wait").isVisible(),
       "the panel says it is reading rather than listing the last folder",
     );
     assert.ok(!whileWaiting.chipShown, "a folder whose git is not in yet does not name a branch");
@@ -145,7 +145,48 @@ test("a chat still reading its own git says so instead of wearing the one before
     await page.unroute("**/api/git/status**");
   }
 
-  await page.waitForFunction(() => document.querySelector("#diff-body .diff-wait") === null, undefined, {
+  await page.waitForFunction(() => document.querySelector("#diff-body .panel-wait") === null, undefined, {
+    timeout: 30000,
+  });
+});
+
+test("the folder side of the panel belongs to the chat on screen just as much", {
+  skip: blocked || noGit,
+}, async () => {
+  await openProjectChat(gitProject);
+  await showPanel(true);
+  await page.click("#panel-files-tab");
+  await page.waitForFunction(
+    () => [...document.querySelectorAll("#file-list .file-row")].some((row) => row.textContent?.includes("notes.md")),
+    undefined,
+    { timeout: 30000 },
+  );
+
+  const slow = async (/** @type {any} */ route) => {
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+    await route.continue().catch(() => {});
+  };
+  await page.route("**/api/git/status**", slow);
+  await page.route("**/api/files**", slow);
+
+  try {
+    await openFreshChat();
+    const whileWaiting = await page.evaluate(() => ({
+      wait: document.querySelector("#file-list .panel-wait") !== null,
+      rows: [...document.querySelectorAll("#file-list .file-row")].map((row) => row.textContent ?? ""),
+      crumbs: document.getElementById("file-crumbs")?.hidden !== true,
+      chipShown: document.getElementById("branch")?.hidden !== true,
+    }));
+    assert.ok(whileWaiting.wait, "the listing says it is reading the folder of this chat");
+    assert.deepEqual(whileWaiting.rows, [], `no row of the folder before it: ${whileWaiting.rows.join(", ")}`);
+    assert.ok(!whileWaiting.crumbs, "and no trail of folders from that one");
+    assert.ok(!whileWaiting.chipShown, "the title bar names no branch until the read is in");
+  } finally {
+    await page.unroute("**/api/git/status**");
+    await page.unroute("**/api/files**");
+  }
+
+  await page.waitForFunction(() => document.querySelector("#file-list .panel-wait") === null, undefined, {
     timeout: 30000,
   });
 });
