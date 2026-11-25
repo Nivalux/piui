@@ -408,7 +408,7 @@ test("a working chat says how long; the spinner says the rest", { skip: blocked 
   await row.locator(".spinner").waitFor({ state: "visible", timeout: 10000 });
   const status = (await row.locator(".tab-status").innerText()).trim();
   assert.doesNotMatch(status, /working/, "the spinner is that word");
-  assert.match(status, /^\d+[smhd]$/, `only the time beside it: ${status}`);
+  assert.match(status, /^[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]\s*\d+[smhd]$/, `only the indicator and time: ${status}`);
   await idle();
 });
 

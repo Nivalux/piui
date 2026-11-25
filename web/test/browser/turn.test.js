@@ -118,24 +118,20 @@ test("clicking a running tool opens it and keeps it open", { skip: blocked }, as
   keepsWidth(clockAtStart.tick, "the tool clock");
   keepsWidth(clockAtStart.busy, "the footer clock");
 
-  // The row is rewritten many times a second. A spinner that starts its turn at
-  // zero on every rewrite only jitters, so each one begins at the angle the
-  // clock already reached. The spinner in the composer is never rebuilt: hold
-  // the two against each other and they keep step.
   const steps = await page.evaluate(async () => {
-    /** Where in its turn a spinner stands, in ms, whatever it was built at. */
-    const angle = (/** @type {Element} */ node) => {
-      const face = /matrix\(([-\d.]+), ([-\d.]+)/.exec(getComputedStyle(node).transform);
-      if (!face) return 0;
-      const deg = (Math.atan2(Number(face[2]), Number(face[1])) * 180) / Math.PI;
-      return ((((deg % 360) + 360) % 360) / 360) * 750;
-    };
-
-    /** @type {[number, number][]} */
     const seen = [];
     for (let i = 0; i < 6; i += 1) {
       const live = document.querySelector("#transcript .block.tool .spinner");
-      if (live) seen.push([angle(live), performance.now()]);
+      const footer = document.querySelector("#busy .spinner");
+      if (live && footer)
+        seen.push({
+          tool: live.textContent,
+          footer: footer.textContent,
+          animation: getComputedStyle(live).animationName,
+          transform: getComputedStyle(live).transform,
+          width: live.getBoundingClientRect().width,
+          hidden: live.getAttribute("aria-hidden"),
+        });
       await new Promise((resolve) => setTimeout(resolve, 320));
     }
     return seen;
@@ -145,20 +141,16 @@ test("clicking a running tool opens it and keeps it open", { skip: blocked }, as
   keepsWidth(clockAtEnd.tick, "the tool clock");
   keepsWidth(clockAtEnd.busy, "the footer clock");
 
-  /** @type {[number, number][]} */
-  const turns = steps;
-  assert.ok(turns.length >= 4, "a spinner turns while the tool runs");
-  const [first, atFirst] = turns[0];
-  const worst = Math.max(
-    ...turns.map(([angle, at]) => {
-      const behind = Math.abs((((angle - first - (at - atFirst)) % 750) + 750) % 750);
-      return Math.min(behind, 750 - behind);
-    }),
-  );
-  assert.ok(
-    worst < 150,
-    `the spinner keeps turning with the clock rather than starting over: ${turns.map(([angle, at]) => Math.round(angle - at))}`,
-  );
+  assert.ok(steps.length >= 4);
+  assert.ok(new Set(steps.map((step) => step.tool)).size >= 3);
+  for (const step of steps) {
+    assert.equal(step.tool, step.footer);
+    assert.match(step.tool ?? "", /^[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]$/);
+    assert.equal(step.animation, "none");
+    assert.equal(step.transform, "none");
+    assert.equal(step.width, steps[0].width);
+    assert.equal(step.hidden, "true");
+  }
 
   await row.locator(".spinner").waitFor({ state: "detached", timeout: 20000 });
   assert.equal(

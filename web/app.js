@@ -4,6 +4,7 @@
 
 import { live, note, start as stopwatch, took } from "./perf.js";
 import { Transcript } from "./transcript.js";
+import { currentActivityFrame, watchActivity } from "./activity.js";
 import { toClipboard } from "./clip.js";
 import { filterCommands, knownCommands, parseCommands, parseSlash, slashRun } from "./commands.js";
 import {
@@ -307,6 +308,7 @@ boot().catch((err) => {
 });
 
 async function boot() {
+  watchActivity(document);
   const health = await getJSON("/api/health").catch(() => null);
   state.build = typeof health?.build === "string" ? health.build : "";
 
@@ -4374,19 +4376,9 @@ function element(tag, className, content) {
   return node;
 }
 
-/** One turn of the ring, in milliseconds, shared with the stylesheet. */
-const spinPeriod = 750;
-
-/**
- * The ring that says something is happening. The stylesheet turns it; this one
- * line hands it the angle the clock has already reached, so a row rewritten
- * many times a second carries on turning instead of starting over every time.
- *
- * @returns {HTMLElement}
- */
 function spinner() {
-  const node = element("span", "spinner");
-  node.style.animationDelay = `${-(Date.now() % spinPeriod)}ms`;
+  const node = element("span", "spinner", currentActivityFrame());
+  node.setAttribute("aria-hidden", "true");
   return node;
 }
 

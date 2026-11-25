@@ -12,6 +12,9 @@ pkgs.mkShellNoCC {
     fd
     playwright
     chromium
+    fontconfig
+    dejavu_fonts
+    noto-fonts-color-emoji
   ];
 
   shellHook = ''
@@ -24,6 +27,14 @@ pkgs.mkShellNoCC {
     # downloading a private copy of a browser at test time.
     export PLAYWRIGHT_CORE="${pkgs.playwright}"
     export PIUI_CHROMIUM="${pkgs.chromium}/bin/chromium"
+    export FONTCONFIG_FILE="${pkgs.writeText "piui-fonts.conf" ''
+      <?xml version="1.0"?>
+      <fontconfig>
+        <dir>${pkgs.dejavu_fonts}/share/fonts</dir>
+        <dir>${pkgs.noto-fonts-color-emoji}/share/fonts</dir>
+        <cachedir prefix="xdg">fontconfig</cachedir>
+      </fontconfig>
+    ''}"
     export PI_MONOREPO="${pkgs.pi-coding-agent}/lib/node_modules/pi-monorepo"
   '';
 }

@@ -12,6 +12,13 @@
   font-display: swap;
 }
 
+@font-face {
+  font-family: "piui activity";
+  src: url("/fonts/activity.ttf") format("truetype");
+  font-weight: 400;
+  font-display: swap;
+}
+
 :root,
 :root[data-theme="dark"] {
   color-scheme: dark;
@@ -1830,25 +1837,16 @@ pre,
 }
 
 .spinner {
-  width: 11px;
-  height: 11px;
-  border: 2px solid color-mix(in oklab, var(--accent) 25%, transparent);
-  border-top-color: var(--accent);
-  border-radius: 50%;
-  animation: piui-spin 750ms linear infinite;
-  will-change: transform;
-}
-
-/* The translateZ is what puts the turn on a layer of its own. Without it the
-   browser is free to retick the whole page sixty times a second instead, which
-   costs more than the ring it is turning. */
-@keyframes piui-spin {
-  from {
-    transform: rotate(0) translateZ(0);
-  }
-  to {
-    transform: rotate(360deg) translateZ(0);
-  }
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 15px;
+  width: 15px;
+  height: 15px;
+  color: var(--accent);
+  font:
+    14px / 1 "piui activity",
+    monospace;
 }
 
 .pre.live::after {

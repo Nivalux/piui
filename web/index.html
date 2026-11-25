@@ -30,7 +30,7 @@
           type. The page loads itself as soon as the server is back.
         </p>
         <p class="gate-wait-line">
-          <span class="spinner"></span>
+          <span class="spinner" aria-hidden="true">⠋</span>
           <span id="gate-wait-time">asking again</span>
         </p>
       </div>
@@ -114,13 +114,13 @@
             <div id="terminal" class="terminal" hidden></div>
 
             <div id="offline" class="offline" hidden>
-              <span class="spinner"></span>
+              <span class="spinner" aria-hidden="true">⠋</span>
               <span>piui is not reachable. What is on screen stays; the page keeps asking every two seconds.</span>
             </div>
 
             <div id="meter-bar" class="chat-meter">
               <span id="busy" class="busy" hidden>
-                <span class="spinner"></span>
+                <span class="spinner" aria-hidden="true">⠋</span>
                 <span id="busy-time"></span>
               </span>
               <span id="status" class="muted"></span>

@@ -76,3 +76,11 @@ test "the font is baked whole, bytes and all" {
     try std.testing.expectEqual(@as(u8, 1), font.body[1]);
     try std.testing.expect(font.body.len > 300_000);
 }
+
+test "the activity font is embedded as a small subset" {
+    const font = lookup("/fonts/activity.ttf") orelse return error.TestMissingFont;
+    try std.testing.expectEqualStrings("font/ttf", font.mime);
+    try std.testing.expectEqual(@as(u8, 0), font.body[0]);
+    try std.testing.expectEqual(@as(u8, 1), font.body[1]);
+    try std.testing.expect(font.body.len > 1000 and font.body.len < 8192);
+}
