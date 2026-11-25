@@ -327,6 +327,7 @@ async function turn(prompt) {
   send({ type: "message_start", message: { role: "assistant" }, timestamp: now() });
 
   if (/dumbstruck/i.test(prompt)) return dumbstruck();
+  if (/cache miss/i.test(prompt)) return cacheMissAnswer();
 
   const parts = thoughtful
     ? ["Weighing ", "up the ", "trade-offs ", "of every ", "possible ", "shape ", "of this ", "answer. "]
@@ -603,6 +604,42 @@ async function dumbstruck() {
   const message = { role: "assistant", content: [{ type: "thinking", thinking }], stopReason: "stop" };
   history.push(message);
   send({ type: "message_end", message, timestamp: now() });
+  send({ type: "turn_end", timestamp: now() });
+  send({ type: "agent_end", willRetry: false, timestamp: now() });
+  settle();
+}
+
+/**
+ * Two answers where the prompt of the second came back uncached, so the page has a miss to name.
+ */
+async function cacheMissAnswer() {
+  const first = {
+    role: "assistant",
+    content: [{ type: "text", text: "Der Cache steht noch. " }],
+    provider: "fake",
+    model: "fake-model",
+    timestamp: now(),
+    usage: { input: 1000, output: 20, cacheRead: 90_000, cacheWrite: 0, cost: { cacheRead: 0.09, total: 0.1 } },
+    stopReason: "stop",
+  };
+  history.push(first);
+  send({ type: "message_end", message: first, timestamp: now() });
+  send({ type: "turn_end", timestamp: now() });
+
+  await sleep(20);
+  send({ type: "message_start", message: { role: "assistant" }, timestamp: now() });
+
+  const second = {
+    role: "assistant",
+    content: [{ type: "text", text: "Der Cache ist weg. " }],
+    provider: "fake",
+    model: "fake-model",
+    timestamp: now(),
+    usage: { input: 91_000, output: 20, cacheRead: 0, cacheWrite: 0, cost: { input: 0.45, total: 0.45 } },
+    stopReason: "stop",
+  };
+  history.push(second);
+  send({ type: "message_end", message: second, timestamp: now() });
   send({ type: "turn_end", timestamp: now() });
   send({ type: "agent_end", willRetry: false, timestamp: now() });
   settle();

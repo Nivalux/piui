@@ -62,6 +62,8 @@
  * @property {string} [fromId] where the summarised stretch of the chat begins
  * @property {number} [fromSeq] its entry number in the session file
  * @property {Usage} [usage]
+ * @property {string} [provider] which provider answered, on an assistant message
+ * @property {string} [model] which model answered, on an assistant message
  * @property {string} [stopReason]
  * @property {string} [errorMessage]
  * @property {string} [toolCallId]

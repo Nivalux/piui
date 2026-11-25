@@ -2,6 +2,7 @@
 
 /** The page. */
 
+import { cacheTtlMs } from "./cache.js";
 import { live, note, start as stopwatch, took } from "./perf.js";
 import { Transcript } from "./transcript.js";
 import { currentActivityFrame, watchActivity } from "./activity.js";
@@ -1665,7 +1666,14 @@ async function runCommand(route) {
 
     case "session": {
       const { used, size } = state.context;
-      toast(size > 0 ? `${tokens(used)} of ${tokens(size)} in context` : "pi has not counted this context yet", 5000);
+      const waste = transcript.waste;
+      const reaped = waste.missCount > 0 ? ` · ${tokens(waste.missedTokens)} re-billed past the cache` : "";
+      toast(
+        size > 0
+          ? `${tokens(used)} of ${tokens(size)} in context${reaped}`
+          : `pi has not counted this context yet${reaped}`,
+        5000,
+      );
       ask("get_session_stats");
       return true;
     }
@@ -3033,9 +3041,10 @@ function paintBlock(node, block, before = null) {
       node.append(markdownBox(block.text ?? "", "body"));
       const foot = element("div", "foot");
       if (block.usage) foot.append(span(usageLine(block.usage)));
+      if (block.cacheMiss) foot.append(span(cacheMissLine(block.cacheMiss), "warn"));
       if (block.stopReason === "aborted") foot.append(span("aborted", "warn"));
       if (block.error) foot.append(span(block.error, "warn"));
-      if ((block.usage || block.error) && foot.childNodes.length > 0) node.append(foot);
+      if ((block.usage || block.cacheMiss || block.error) && foot.childNodes.length > 0) node.append(foot);
       node.append(messageActions(block, block.text ?? ""));
       return;
     }
@@ -4591,6 +4600,13 @@ function groupBy(items, key) {
     out.set(key(item), list);
   }
   return out;
+}
+
+/** @param {import("./cache.js").Miss} miss */
+function cacheMissLine(miss) {
+  const idle = miss.idleMs >= cacheTtlMs ? ` after ${ago(miss.idleMs)} idle` : "";
+  const price = miss.missedCost >= 0.01 ? ` ${cost(miss.missedCost)}` : "";
+  return `cache miss · ${tokens(miss.missedTokens)} re-billed${price}${miss.modelChanged ? " after a model switch" : idle}`;
 }
 
 /** @param {import("./protocol.js").Usage} usage */

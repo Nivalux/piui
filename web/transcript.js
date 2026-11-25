@@ -13,6 +13,7 @@
  * - `{kind:"error", text}`
  */
 
+import { CacheWatch, notice } from "./cache.js";
 import { toolSummary } from "./format.js";
 import { blocks, imagesOf } from "./protocol.js";
 
@@ -49,6 +50,7 @@ import { blocks, imagesOf } from "./protocol.js";
  * @property {number} [doneAt]
  * @property {number} [durationMs] how long the tool says it ran
  * @property {boolean} [lastWord] a thought the turn stopped on, with no reply after it
+ * @property {import("./cache.js").Miss | null} [cacheMiss] what this answer paid for a prompt the cache let go
  */
 
 let nextId = 0;
@@ -81,6 +83,7 @@ export class Transcript {
   #usage = null;
   /** @type {Message[]} */
   #queue = [];
+  #cache = new CacheWatch();
 
   /** @returns {Block[]} */
   get blocks() {
@@ -107,6 +110,11 @@ export class Transcript {
     return this.#queue;
   }
 
+  /** @returns {import("./cache.js").Waste} everything re-billed past the cache since this chat was read */
+  get waste() {
+    return this.#cache.waste;
+  }
+
   clear() {
     this.#blocks = [];
     this.#tools.clear();
@@ -114,6 +122,7 @@ export class Transcript {
     this.#current = { text: [], thinking: [] };
     this.#usage = null;
     this.#queue = [];
+    this.#cache = new CacheWatch();
   }
 
   /**
@@ -400,8 +409,10 @@ export class Transcript {
       if (thought) thought.lastWord = true;
     }
 
+    const miss = this.#cache.see(message);
     const last = this.#current.text[this.#current.text.length - 1];
     if (last) {
+      last.cacheMiss = notice(miss);
       last.usage = message.usage ?? null;
       last.stopReason = message.stopReason ?? null;
       if (message.errorMessage) last.error = message.errorMessage;
@@ -418,6 +429,7 @@ export class Transcript {
    */
   #message(message, replayed) {
     if (message.role === "compactionSummary") {
+      this.#cache.forget();
       this.#push({
         kind: "compaction",
         id: nextId++,
@@ -430,6 +442,7 @@ export class Transcript {
     }
 
     if (message.role === "branchSummary") {
+      this.#cache.forget();
       this.#push({
         kind: "compaction",
         id: nextId++,
@@ -472,8 +485,11 @@ export class Transcript {
     }
 
     const parts = blocks(message.content);
+    const miss = this.#cache.see(message);
     /** @type {Block | undefined} */
     let thought;
+    /** @type {Block | undefined} */
+    let said;
     for (const part of parts) {
       if (part.type === "thinking") {
         thought = { kind: "thinking", id: nextId++, text: part.thinking ?? "", done: true };
@@ -481,7 +497,8 @@ export class Transcript {
       } else if (part.type === "text") {
         const text = part.text ?? "";
         if (text.trim().length === 0 && !message.usage) continue;
-        this.#push({ kind: "text", id: nextId++, text, done: true, usage: message.usage ?? null });
+        said = { kind: "text", id: nextId++, text, done: true, usage: message.usage ?? null };
+        this.#push(said);
       } else if (part.type === "toolCall") {
         const block = this.#tool(part.id ?? `call-${nextId++}`, part.name);
         block.args = /** @type {Record<string, unknown>} */ (part.arguments ?? null);
@@ -489,6 +506,7 @@ export class Transcript {
       }
     }
 
+    if (said) said.cacheMiss = notice(miss);
     if (thought && message.stopReason === "stop" && !parts.some((part) => part.type === "text")) {
       thought.lastWord = true;
     }
@@ -508,6 +526,8 @@ export class Transcript {
       this.#push({ kind: "status", id: nextId++, level: "info", text: "Kompaktierung abgebrochen" });
       return true;
     }
+
+    this.#cache.forget();
 
     this.#push({
       kind: "compaction",

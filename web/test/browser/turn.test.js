@@ -190,6 +190,21 @@ test("closed tool details stay empty and reopen with the latest progress", { ski
   await page.waitForFunction(() => document.getElementById("abort")?.hasAttribute("hidden"));
 });
 
+test("an answer that paid for its prompt again says how much", { skip: blocked }, async () => {
+  await page.click("#new-chat");
+  await page.fill("#input", "cache miss please");
+  await page.click("#send");
+  await page.waitForSelector("#transcript .block.text >> text=Der Cache ist weg.");
+  await page.waitForFunction(() => document.getElementById("abort")?.hasAttribute("hidden"));
+
+  const lines = await page
+    .locator("#transcript .block.text .foot")
+    .evaluateAll((/** @type {Element[]} */ rows) => rows.map((row) => row.textContent ?? ""));
+
+  assert.equal(lines.filter((line) => line.includes("cache miss")).length, 1, `one miss named: ${lines.join(" | ")}`);
+  assert.match(lines.join(" "), /cache miss · 91k re-billed \$0\.45/);
+});
+
 test("the page threw nothing", { skip: blocked }, async () => {
   assert.deepEqual(crashes, []);
 });

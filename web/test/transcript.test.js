@@ -529,3 +529,61 @@ test("a stored blank is dropped unless it carries the count of its turn", () => 
   );
   assert.equal(transcript.blocks[0].usage?.output, 9);
 });
+
+/**
+ * @param {number} at
+ * @param {number} input
+ * @param {number} cacheRead
+ * @returns {import("../protocol.js").Message}
+ */
+function priced(at, input, cacheRead) {
+  return {
+    role: /** @type {const} */ ("assistant"),
+    content: [{ type: "text", text: "said" }],
+    provider: "acme",
+    model: "big",
+    timestamp: at,
+    usage: { input, output: 5, cacheRead, cacheWrite: 0, cost: {} },
+  };
+}
+
+test("an answer whose prompt came back uncached says so beside the line that counts it", () => {
+  const transcript = new Transcript();
+  for (const message of [priced(1_700_000_000_000, 1000, 90_000), priced(1_700_000_060_000, 91_000, 0)]) {
+    transcript.event({ type: "message_start", message: { role: "assistant", content: [] } });
+    transcript.event({
+      type: "message_update",
+      assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: "said" },
+    });
+    transcript.event({ type: "message_end", message });
+  }
+
+  const said = transcript.blocks.filter((block) => block.kind === "text");
+  assert.equal(said.length, 2);
+  assert.equal(said[0].cacheMiss, null);
+  assert.equal(said[1].cacheMiss?.missedTokens, 91_000);
+  assert.equal(transcript.waste.missCount, 1);
+});
+
+test("a stored chat counts its misses from where a compaction began", () => {
+  const cached = priced(1_700_000_000_000, 1000, 90_000);
+  const uncached = priced(1_700_000_060_000, 91_000, 0);
+
+  const plain = new Transcript();
+  plain.replay([cached, uncached]);
+  assert.equal(plain.blocks[1].cacheMiss?.missedTokens, 91_000);
+
+  const compacted = new Transcript();
+  compacted.replay([cached, { role: "compactionSummary", summary: "kept", tokensBefore: 91_000 }, uncached]);
+  assert.equal(compacted.blocks[2].cacheMiss, null);
+  assert.equal(compacted.waste.missCount, 0);
+});
+
+test("a compaction that was called off leaves the comparison alone", () => {
+  const transcript = new Transcript();
+  transcript.event({ type: "message_end", message: priced(1_700_000_000_000, 1000, 90_000) });
+  transcript.event({ type: "compaction_end", aborted: true, reason: "manual" });
+  transcript.event({ type: "message_end", message: priced(1_700_000_060_000, 91_000, 0) });
+
+  assert.equal(transcript.waste.missCount, 1);
+});
