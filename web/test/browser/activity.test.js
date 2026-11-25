@@ -7,13 +7,18 @@ after(stop);
 
 test("activity ticker pauses when hidden, reduced or unused", { skip: blocked }, async () => {
   assert.ok(await page.evaluate(async () => (await document.fonts.load('14px "piui activity"', "⠋")).length > 0));
+  await page.waitForFunction(
+    () => [...document.querySelectorAll(".spinner")].every((node) => node.getBoundingClientRect().width === 0),
+    undefined,
+    { timeout: 30000 },
+  );
   await page.evaluate(() => {
     window.activityTimers = new Set();
     window.originalActivitySet = window.setInterval;
     window.originalActivityClear = window.clearInterval;
     window.setInterval = (...args) => {
       const id = window.originalActivitySet(...args);
-      if (args[1] === 250) window.activityTimers.add(id);
+      if (args[1] === 125) window.activityTimers.add(id);
       return id;
     };
     window.clearInterval = (id) => {

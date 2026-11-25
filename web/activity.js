@@ -1,6 +1,6 @@
 const frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
-export const activityInterval = 250;
+export const activityInterval = 125;
 let currentFrame = frames[0];
 
 export function currentActivityFrame() {
