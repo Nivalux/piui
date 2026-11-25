@@ -3023,7 +3023,10 @@ function paintBlock(node, block, before = null) {
         block.lastWord === true,
         (body) => {
           const text = block.text ?? "";
-          body.append(markdownBox(text, "thinking-body"), messageActions(block, text));
+          const tally = requestFoot(block);
+          body.append(markdownBox(text, "thinking-body"));
+          if (tally) body.append(tally);
+          body.append(messageActions(block, text));
         },
         kept,
       );
@@ -3033,6 +3036,7 @@ function paintBlock(node, block, before = null) {
         summary.append(span(truncate(block.done ? firstLine(text) : lastLine(text), 90), "title"));
       }
       if (block.lastWord) summary.append(span("nothing after", "state"));
+      if (block.cacheMiss) summary.append(span(cacheChip(block.cacheMiss), "state warn"));
       node.append(fold);
       break;
     }
@@ -3045,6 +3049,7 @@ function paintBlock(node, block, before = null) {
       if (block.stopReason === "aborted") foot.append(span("aborted", "warn"));
       if (block.error) foot.append(span(block.error, "warn"));
       if ((block.usage || block.cacheMiss || block.error) && foot.childNodes.length > 0) node.append(foot);
+      if (block.turn) node.append(element("div", "foot turn", turnLine(block.turn)));
       node.append(messageActions(block, block.text ?? ""));
       return;
     }
@@ -3079,6 +3084,8 @@ function paintBlock(node, block, before = null) {
           else if (view.text.length > 0) body.append(boxed(view.text, "body"));
           if (view.chips.length > 0) body.append(chipRow(view.chips));
           if (body.childNodes.length === 0) body.append(span(block.done ? "no output" : "nothing back yet", "muted"));
+          const tally = requestFoot(block);
+          if (tally) body.append(tally);
           const told = view.command.length > 0 ? view.command : String(block.args?.command ?? "");
           body.append(messageActions(block, told.length > 0 ? told : view.text));
         },
@@ -3090,6 +3097,7 @@ function paintBlock(node, block, before = null) {
       const state = span(block.done ? (block.isError ? "failed" : elapsed(block)) : "", "state");
       if (!block.done) state.append(liveClock(block));
       summary.append(span(block.toolName ?? "tool", "name"), span(block.title ?? "", "title"), hint, state);
+      if (block.cacheMiss) summary.append(span(cacheChip(block.cacheMiss), "state warn"));
       if (block.isError) summary.prepend(span("⚠", "flag"));
       if (!block.done) summary.prepend(spinner());
 
@@ -3121,6 +3129,7 @@ function paintBlock(node, block, before = null) {
         kept,
       );
       summary.append(span(block.text ?? "compacted", "name"));
+      if (block.usage) summary.append(span(billedLine(block.usage), "state"));
       node.append(fold);
       break;
     }
@@ -4611,10 +4620,69 @@ function cacheMissLine(miss) {
 
 /** @param {import("./protocol.js").Usage} usage */
 function usageLine(usage) {
-  const parts = [`${tokens(usage.input ?? 0)} in`, `${tokens(usage.output ?? 0)} out`];
+  const parts = [`${tokens(usage.input ?? 0)} new`, `${tokens(usage.output ?? 0)} out`];
   if (usage.cacheRead) parts.push(`${tokens(usage.cacheRead)} Cache`);
+  if (usage.cacheWrite) parts.push(`${tokens(usage.cacheWrite)} to cache`);
   if (usage.cost?.total) parts.push(cost(usage.cost.total));
   return parts.join(" · ");
+}
+
+/** @param {import("./cache.js").Miss} miss */
+function cacheChip(miss) {
+  return `cache miss · ${tokens(miss.missedTokens)}`;
+}
+
+/**
+ * What one request carried, read out inside the fold it produced.
+ *
+ * @param {import("./protocol.js").Usage} usage
+ */
+function requestLine(usage) {
+  const parts = [`${tokens(usage.input ?? 0)} new`];
+  if (usage.cacheRead) parts.push(`${tokens(usage.cacheRead)} from cache`);
+  if (usage.cacheWrite) parts.push(`${tokens(usage.cacheWrite)} to cache`);
+  if (usage.output) parts.push(`${tokens(usage.output)} out`);
+  if (usage.cost?.total) parts.push(cost(usage.cost.total));
+  return parts.join(" · ");
+}
+
+/**
+ * Everything one question cost, over every request it took.
+ *
+ * @param {import("./transcript.js").Tally} turn
+ */
+function turnLine(turn) {
+  const parts = [
+    turn.requests === 1 ? "1 request" : `${turn.requests} requests`,
+    `${tokens(turn.input)} new`,
+    `${tokens(turn.cacheRead)} from cache`,
+  ];
+  if (turn.cacheWrite > 0) parts.push(`${tokens(turn.cacheWrite)} to cache`);
+  parts.push(`${tokens(turn.output)} out`);
+  if (turn.cost > 0) parts.push(cost(turn.cost));
+  if (turn.missed > 0) {
+    parts.push(`${tokens(turn.missed)} re-billed${turn.missedCost >= 0.01 ? ` ${cost(turn.missedCost)}` : ""}`);
+  }
+  return `turn · ${parts.join(" · ")}`;
+}
+
+/** @param {import("./protocol.js").Usage} usage */
+function billedLine(usage) {
+  const all = (usage.input ?? 0) + (usage.cacheRead ?? 0) + (usage.cacheWrite ?? 0) + (usage.output ?? 0);
+  return `${tokens(all)} billed${usage.cost?.total ? ` (~${cost(usage.cost.total)})` : ""}`;
+}
+
+/**
+ * The request behind a fold, for the body a reader opens to ask what this cost.
+ *
+ * @param {Block} block
+ */
+function requestFoot(block) {
+  if (!block.request && !block.cacheMiss) return null;
+  const foot = element("div", "foot");
+  if (block.request) foot.append(span(requestLine(block.request)));
+  if (block.cacheMiss) foot.append(span(cacheMissLine(block.cacheMiss), "warn"));
+  return foot;
 }
 
 function grow() {

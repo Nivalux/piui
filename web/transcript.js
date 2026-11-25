@@ -51,7 +51,25 @@ import { blocks, imagesOf } from "./protocol.js";
  * @property {number} [durationMs] how long the tool says it ran
  * @property {boolean} [lastWord] a thought the turn stopped on, with no reply after it
  * @property {import("./cache.js").Miss | null} [cacheMiss] what this answer paid for a prompt the cache let go
+ * @property {Usage | null} [request] the one request that produced this fold
+ * @property {Tally | null} [turn] everything the question cost, over every request it took
  */
+
+/**
+ * @typedef {Object} Tally
+ * @property {number} requests
+ * @property {number} input
+ * @property {number} cacheRead
+ * @property {number} cacheWrite
+ * @property {number} output
+ * @property {number} cost
+ * @property {number} missed
+ * @property {number} missedCost
+ */
+
+function blankTally() {
+  return { requests: 0, input: 0, cacheRead: 0, cacheWrite: 0, output: 0, cost: 0, missed: 0, missedCost: 0 };
+}
 
 let nextId = 0;
 
@@ -84,6 +102,10 @@ export class Transcript {
   /** @type {Message[]} */
   #queue = [];
   #cache = new CacheWatch();
+  /** @type {Tally} */
+  #tally = blankTally();
+  /** @type {Block | null} */
+  #lastAnswer = null;
 
   /** @returns {Block[]} */
   get blocks() {
@@ -123,6 +145,8 @@ export class Transcript {
     this.#usage = null;
     this.#queue = [];
     this.#cache = new CacheWatch();
+    this.#tally = blankTally();
+    this.#lastAnswer = null;
   }
 
   /**
@@ -138,6 +162,7 @@ export class Transcript {
       this.#running = true;
       return;
     }
+    this.#endTurn();
     this.settle();
   }
 
@@ -157,11 +182,15 @@ export class Transcript {
 
       case "agent_end":
         this.#closeMessage();
-        if (frame.willRetry !== true) this.#running = false;
+        if (frame.willRetry !== true) {
+          this.#running = false;
+          this.#endTurn();
+        }
         return false;
 
       case "agent_settled":
         this.#running = false;
+        this.#endTurn();
         this.settle();
         return true;
 
@@ -410,17 +439,61 @@ export class Transcript {
     }
 
     const miss = this.#cache.see(message);
+    const told = notice(miss);
+    this.#collect(message.usage ?? null, miss);
+
     const last = this.#current.text[this.#current.text.length - 1];
     if (last) {
-      last.cacheMiss = notice(miss);
+      last.cacheMiss = told;
       last.usage = message.usage ?? null;
       last.stopReason = message.stopReason ?? null;
       if (message.errorMessage) last.error = message.errorMessage;
+    }
+    for (const thought of compact(this.#current.thinking)) {
+      thought.request = message.usage ?? null;
+      thought.cacheMiss = told;
+    }
+    for (const part of parts) {
+      if (part.type !== "toolCall" || !part.id) continue;
+      const told2 = this.#tools.get(part.id);
+      if (told2) {
+        told2.request = message.usage ?? null;
+        told2.cacheMiss = told;
+      }
     }
 
     this.#usage = message.usage ?? this.#usage;
     this.#closeMessage();
     return true;
+  }
+
+  /**
+   * Adds one request to the running total of the turn.
+   *
+   * @param {Usage | null} usage
+   * @param {import("./cache.js").Miss | undefined} miss
+   */
+  #collect(usage, miss) {
+    if (usage) {
+      this.#tally.requests += 1;
+      this.#tally.input += usage.input ?? 0;
+      this.#tally.cacheRead += usage.cacheRead ?? 0;
+      this.#tally.cacheWrite += usage.cacheWrite ?? 0;
+      this.#tally.output += usage.output ?? 0;
+      this.#tally.cost += usage.cost?.total ?? 0;
+    }
+    if (miss) {
+      this.#tally.missed += miss.missedTokens;
+      this.#tally.missedCost += miss.missedCost;
+    }
+  }
+
+  /** Hands the total of a finished turn to the answer it ended with. */
+  #endTurn() {
+    const answer = this.#lastAnswer;
+    if (answer && this.#tally.requests > 0 && this.#blocks.includes(answer)) answer.turn = { ...this.#tally };
+    this.#tally = blankTally();
+    this.#lastAnswer = null;
   }
 
   /**
@@ -454,6 +527,7 @@ export class Transcript {
     }
 
     if (message.role === "user") {
+      this.#endTurn();
       const images = /** @type {Image[]} */ (
         imagesOf(message.content).map((part) => ({ mimeType: part.mimeType ?? "image/png", data: part.data ?? "" }))
       );
@@ -486,6 +560,8 @@ export class Transcript {
 
     const parts = blocks(message.content);
     const miss = this.#cache.see(message);
+    const told = notice(miss);
+    this.#collect(message.usage ?? null, miss);
     /** @type {Block | undefined} */
     let thought;
     /** @type {Block | undefined} */
@@ -499,14 +575,21 @@ export class Transcript {
         if (text.trim().length === 0 && !message.usage) continue;
         said = { kind: "text", id: nextId++, text, done: true, usage: message.usage ?? null };
         this.#push(said);
+        this.#lastAnswer = said;
       } else if (part.type === "toolCall") {
         const block = this.#tool(part.id ?? `call-${nextId++}`, part.name);
         block.args = /** @type {Record<string, unknown>} */ (part.arguments ?? null);
         block.startedAt ??= stamped(message);
+        block.request = message.usage ?? null;
+        block.cacheMiss = told;
       }
     }
 
-    if (said) said.cacheMiss = notice(miss);
+    if (thought) {
+      thought.request = message.usage ?? null;
+      thought.cacheMiss = told;
+    }
+    if (said) said.cacheMiss = told;
     if (thought && message.stopReason === "stop" && !parts.some((part) => part.type === "text")) {
       thought.lastWord = true;
     }
@@ -521,6 +604,7 @@ export class Transcript {
       result && typeof result === "object" ? /** @type {{summary?: string}} */ (result).summary : undefined;
     const before =
       result && typeof result === "object" ? /** @type {{tokensBefore?: number}} */ (result).tokensBefore : undefined;
+    const billed = result && typeof result === "object" ? /** @type {{usage?: Usage}} */ (result).usage : undefined;
 
     if (frame.aborted === true) {
       this.#push({ kind: "status", id: nextId++, level: "info", text: "Kompaktierung abgebrochen" });
@@ -534,6 +618,7 @@ export class Transcript {
       id: nextId++,
       text: typeof before === "number" ? `${before} tokens compacted` : "context compacted",
       summary: summary ?? frame.errorMessage ?? null,
+      usage: billed ?? null,
     });
     return true;
   }
@@ -634,6 +719,7 @@ export class Transcript {
     /** @type {Block} */
     const block = { kind, id: nextId++, text: "", done: false };
     list[index] = block;
+    if (kind === "text") this.#lastAnswer = block;
     this.#push(block);
     return block;
   }

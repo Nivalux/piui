@@ -613,9 +613,23 @@ async function dumbstruck() {
  * Two answers where the prompt of the second came back uncached, so the page has a miss to name.
  */
 async function cacheMissAnswer() {
+  send({
+    type: "message_update",
+    assistantMessageEvent: { type: "thinking_delta", contentIndex: 0, delta: "Erst nachdenken. " },
+    timestamp: now(),
+  });
+  send({
+    type: "message_update",
+    assistantMessageEvent: { type: "text_delta", contentIndex: 1, delta: "Der Cache steht noch. " },
+    timestamp: now(),
+  });
+
   const first = {
     role: "assistant",
-    content: [{ type: "text", text: "Der Cache steht noch. " }],
+    content: [
+      { type: "thinking", thinking: "Erst nachdenken. " },
+      { type: "text", text: "Der Cache steht noch. " },
+    ],
     provider: "fake",
     model: "fake-model",
     timestamp: now(),

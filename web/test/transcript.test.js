@@ -587,3 +587,130 @@ test("a compaction that was called off leaves the comparison alone", () => {
 
   assert.equal(transcript.waste.missCount, 1);
 });
+
+/**
+ * @param {Transcript} transcript
+ * @param {import("../protocol.js").Message} message
+ */
+function spoke(transcript, message) {
+  transcript.event({ type: "message_start", message: { role: "assistant", content: [] } });
+  transcript.event({
+    type: "message_update",
+    assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: "said" },
+  });
+  transcript.event({ type: "message_end", message });
+}
+
+/**
+ * @param {string} text
+ * @param {number} input
+ * @param {number} cacheRead
+ * @returns {import("../protocol.js").Message}
+ */
+function step(text, input, cacheRead) {
+  return {
+    role: /** @type {const} */ ("assistant"),
+    content: [{ type: "text", text }],
+    provider: "acme",
+    model: "big",
+    timestamp: 1_700_000_000_000,
+    usage: { input, output: 200, cacheRead, cacheWrite: 0, cost: { total: 1 } },
+    stopReason: "stop",
+  };
+}
+
+test("the answer of a long turn counts every request the question took", () => {
+  const transcript = new Transcript();
+  transcript.event({ type: "message_start", message: { role: "user", content: [{ type: "text", text: "do it" }] } });
+  spoke(transcript, step("first", 900, 40_000));
+  spoke(transcript, step("then", 120, 41_000));
+  spoke(transcript, step("done", 60, 42_000));
+  transcript.event({ type: "agent_end", willRetry: false });
+
+  const said = transcript.blocks.filter((block) => block.kind === "text");
+  assert.equal(said.length, 3);
+  assert.equal(said[0].turn, undefined);
+  assert.deepEqual(said[2].turn, {
+    requests: 3,
+    input: 1080,
+    cacheRead: 123_000,
+    cacheWrite: 0,
+    output: 600,
+    cost: 3,
+    missed: 0,
+    missedCost: 0,
+  });
+});
+
+test("the next question starts its own count", () => {
+  const transcript = new Transcript();
+  transcript.event({ type: "message_start", message: { role: "user", content: [{ type: "text", text: "one" }] } });
+  spoke(transcript, step("first", 900, 40_000));
+  transcript.event({ type: "agent_end", willRetry: false });
+  transcript.event({ type: "message_start", message: { role: "user", content: [{ type: "text", text: "two" }] } });
+  spoke(transcript, step("again", 700, 43_000));
+  spoke(transcript, step("done", 60, 44_000));
+  transcript.event({ type: "agent_end", willRetry: false });
+
+  const said = transcript.blocks.filter((block) => block.kind === "text");
+  assert.equal(said[0].turn?.requests, 1);
+  assert.equal(said[1].turn, undefined);
+  assert.equal(said[2].turn?.requests, 2);
+});
+
+test("a thought and a tool say what the request behind them carried", () => {
+  const transcript = new Transcript();
+  transcript.replay([
+    { role: "user", content: [{ type: "text", text: "go" }] },
+    {
+      role: "assistant",
+      content: [
+        { type: "thinking", thinking: "hm" },
+        { type: "toolCall", id: "c1", name: "bash", arguments: { command: "ls" } },
+      ],
+      provider: "acme",
+      model: "big",
+      timestamp: 1_700_000_000_000,
+      usage: { input: 120, output: 300, cacheRead: 40_000, cacheWrite: 0, cost: { total: 1 } },
+      stopReason: "toolUse",
+    },
+    { role: "toolResult", toolCallId: "c1", toolName: "bash", content: "ok", isError: false },
+    step("done", 60, 40_400),
+  ]);
+
+  const thought = transcript.blocks.find((block) => block.kind === "thinking");
+  const tool = transcript.blocks.find((block) => block.kind === "tool");
+  assert.equal(thought?.request?.input, 120);
+  assert.equal(tool?.request?.cacheRead, 40_000);
+
+  const said = transcript.blocks.filter((block) => block.kind === "text");
+  assert.equal(said[said.length - 1].turn?.requests, 2);
+});
+
+test("a thought that streamed live keeps the count of the message it streamed with", () => {
+  const transcript = new Transcript();
+  transcript.event({ type: "message_start", message: { role: "assistant", content: [] } });
+  transcript.event({
+    type: "message_update",
+    assistantMessageEvent: { type: "thinking_delta", contentIndex: 0, delta: "hm" },
+  });
+  transcript.event({
+    type: "message_end",
+    message: {
+      role: "assistant",
+      content: [
+        { type: "thinking", thinking: "hm" },
+        { type: "text", text: "said" },
+      ],
+      provider: "acme",
+      model: "big",
+      timestamp: 1_700_000_000_000,
+      usage: { input: 120, output: 300, cacheRead: 40_000, cacheWrite: 0, cost: { total: 1 } },
+      stopReason: "stop",
+    },
+  });
+
+  const thought = transcript.blocks.find((block) => block.kind === "thinking");
+  assert.equal(thought?.request?.input, 120);
+  assert.equal(thought?.cacheMiss, null);
+});

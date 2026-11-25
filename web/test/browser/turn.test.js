@@ -203,6 +203,14 @@ test("an answer that paid for its prompt again says how much", { skip: blocked }
 
   assert.equal(lines.filter((line) => line.includes("cache miss")).length, 1, `one miss named: ${lines.join(" | ")}`);
   assert.match(lines.join(" "), /cache miss · 91k re-billed \$0\.45/);
+
+  const turn = await page.locator("#transcript .foot.turn").last().textContent();
+  assert.match(turn ?? "", /turn · 2 requests · 92k new · 90k from cache · 40 out · \$0\.550 · 91k re-billed \$0\.450/);
+
+  const thought = page.locator("#transcript .block.thinking").first();
+  await thought.locator("summary").click();
+  const carried = await thought.locator(".fold-body .foot").first().textContent();
+  assert.match(carried ?? "", /1\.0k new · 90k from cache · 20 out · \$0\.100/);
 });
 
 test("the page threw nothing", { skip: blocked }, async () => {

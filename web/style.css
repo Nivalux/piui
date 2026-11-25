@@ -1217,6 +1217,12 @@ pre,
   gap: 8px;
 }
 
+.block .foot.turn {
+  display: block;
+  margin-top: 2px;
+  opacity: 0.75;
+}
+
 .thumb {
   max-height: 120px;
   max-width: 200px;
