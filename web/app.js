@@ -1206,7 +1206,6 @@ function connect(id) {
 
   source.onopen = () => {
     state.connected = true;
-    void loadTabs();
     // One mode, the one the reader chose, and it takes everything the reader
     // queued at once rather than one message per completed turn: two thoughts
     // typed in a row belong to one instruction, and answering them one at a time
@@ -1331,6 +1330,7 @@ async function sendCommand(command) {
  */
 function handle(frame, from) {
   const started = stopwatch();
+  const mine = from === undefined || from === state.active;
   if (isPiuiEvent(frame)) {
     if (frame.event === "running") {
       const tab = state.tabs.find((item) => item.id === (from ?? state.active));
@@ -1338,7 +1338,8 @@ function handle(frame, from) {
         tab.running = frame.running === true;
         tabsTouched += 1;
       }
-      render();
+      if (mine) render();
+      else renderSidebar();
     } else if (frame.event === "tab") {
       replaceTab(frame.tab);
       render();
@@ -1359,13 +1360,14 @@ function handle(frame, from) {
         stream = null;
         renderFooter();
       }
-      render();
+      if (mine) render();
+      else renderSidebar();
       if (asked) void wake(gone);
     }
     return;
   }
 
-  if (from !== undefined && from !== state.active) return;
+  if (!mine) return;
 
   // The first frame of a stream is a bare TabInfo, without a type at all.
   if (!frame.type && frame.id) {
