@@ -1,6 +1,34 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { isKnownTool, jobBody, toolView } from "../toolview.js";
+import { isKnownTool, jobBody, toolHint, toolView } from "../toolview.js";
+
+test("summary hints agree with detailed tool views", () => {
+  const cases = [
+    { name: "read", args: { path: "a" }, text: "one\ntwo\n", details: null },
+    { name: "bash", args: { command: "echo" }, text: "one\ntwo", details: null },
+    { name: "write", args: { path: "a", content: "one\ntwo\n" }, text: "", details: null },
+    { name: "edit", args: { path: "a", edits: [{ old: "a", new: "b" }] }, text: "ok", details: null },
+    { name: "job_run", args: { command: "echo" }, text: "status: running\noutput", details: { status: "running" } },
+    { name: "job_wait", args: { job: "j1" }, text: "done", details: { status: "exited", exitCode: 0 } },
+    { name: "unknown", args: {}, text: "output", details: null },
+  ];
+  for (const item of cases) {
+    assert.equal(
+      toolHint(item.name, item.args, item.text, item.details),
+      toolView(item.name, item.args, item.text, item.details).hint,
+    );
+  }
+});
+
+test("job summary does not inspect detailed arguments", () => {
+  const args = {
+    command: "echo",
+    get extra() {
+      throw new Error("detail arguments were read");
+    },
+  };
+  assert.equal(toolHint("job_run", args, "status: running\noutput", { status: "running" }), "running");
+});
 
 test("a read names the range it covered", () => {
   const view = toolView("read", { path: "/src/a.zig", offset: 10, limit: 3 }, "one\ntwo\nthree", null);

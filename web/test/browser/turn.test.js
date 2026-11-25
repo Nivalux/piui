@@ -28,6 +28,8 @@ test("with thinking turned off the line stays and only the words beside it go", 
   await page.click("#send");
   await page.waitForSelector("#transcript .block.text >> text=Beide Tools");
 
+  for (const summary of await page.locator("#transcript .block.thinking summary").all()) await summary.click();
+
   const thoughts = () =>
     page.locator("#transcript .block.thinking").evaluateAll((/** @type {Element[]} */ rows) =>
       rows.map((row) => ({
@@ -159,6 +161,33 @@ test("clicking a running tool opens it and keeps it open", { skip: blocked }, as
     "finishing must not close it",
   );
   assert.match(await summary.innerText(), /6\.\ds/, "a finished row says how long it ran");
+});
+
+test("closed tool details stay empty and reopen with the latest progress", { skip: blocked }, async () => {
+  await page.click("#new-chat");
+  await page.fill("#input", "and now the long one");
+  await page.click("#send");
+  const row = page.locator("#transcript .block.tool", { hasText: "sleep 6" }).first();
+  await row.locator(".spinner").waitFor({ state: "visible" });
+  await row.locator(".hint").filter({ hasText: "2 lines" }).waitFor({ state: "visible" });
+  assert.equal(await row.locator(".fold-body").evaluate((node) => node.childElementCount), 0);
+  await row.locator("summary").click();
+  await row.locator(".pre").waitFor({ state: "visible" });
+  assert.match(await row.locator(".pre").innerText(), /tick 1/);
+  const cursor = await row.locator(".pre").evaluate((node) => ({
+    content: getComputedStyle(node, "::after").content,
+    animation: getComputedStyle(node, "::after").animationName,
+  }));
+  assert.doesNotMatch(cursor.content, /▍/);
+  assert.equal(cursor.animation, "none");
+  await row.locator("summary").click();
+  await row.locator(".pre").waitFor({ state: "detached" });
+  assert.equal(await row.locator(".fold-body").evaluate((node) => node.childElementCount), 0);
+  await row.locator(".hint").filter({ hasText: "3 lines" }).waitFor({ state: "visible" });
+  await row.locator("summary").click();
+  await row.locator(".pre").filter({ hasText: "tick 2" }).waitFor({ state: "visible" });
+  await row.locator(".pre").filter({ hasText: "tick 3" }).waitFor({ state: "visible" });
+  await page.waitForFunction(() => document.getElementById("abort")?.hasAttribute("hidden"));
 });
 
 test("the page threw nothing", { skip: blocked }, async () => {

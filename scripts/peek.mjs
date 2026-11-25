@@ -179,6 +179,13 @@ try {
 
     if (options.shot) await page.screenshot({ path: path.resolve(String(options.shot)), fullPage: false });
 
+    if (options.grep) {
+      await page.evaluate(async () => {
+        for (const fold of document.querySelectorAll("#transcript details")) fold.setAttribute("open", "");
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+    }
+
     const rows = await page.evaluate(() =>
       Array.from(document.querySelectorAll("#transcript .block")).map((node, index) => {
         const summary = node.querySelector("details > summary");

@@ -27,7 +27,7 @@ import { isUnread, splitTabs } from "./tabs.js";
 import { lineage } from "./forks.js";
 import { Meter } from "./rate.js";
 import { parseDiff } from "./diff.js";
-import { toolView } from "./toolview.js";
+import { toolHint, toolView } from "./toolview.js";
 import { markdownNode, parseMarkdown } from "./markdown.js";
 import { flattenResult as flatten, imageDataUrl, isPiuiEvent, parseFrame } from "./protocol.js";
 import { TermView } from "./termview.js";
@@ -242,6 +242,7 @@ function pinBottom() {
 const signatures = new Map();
 /** @type {Map<number, boolean>} block id → whether the reader left this fold open */
 const folds = new Map();
+const foldScrolls = new Map();
 /** @type {HTMLElement | null} the transcript row the pointer is currently down on */
 let pressed = null;
 /** @type {{entryId: string, text: string}[]} */
@@ -1150,6 +1151,7 @@ async function openTab(id) {
   stream?.close();
   stream = null;
   transcript.clear();
+  foldScrolls.clear();
   transcriptStart = -1;
   meter.reset();
   forgetGrowth();
@@ -1450,6 +1452,7 @@ function response(frame) {
     }
     toast(frame.command === "clone" ? "Cloned: this chat is a copy of where it stood" : "A fresh session", 4000);
     transcript.clear();
+    foldScrolls.clear();
     forgetGrowth();
     painted.clear();
     signatures.clear();
@@ -3001,14 +3004,21 @@ function paintBlock(node, block, before = null) {
 
     case "thinking": {
       const text = block.text ?? "";
-      const { fold, summary, body } = foldFor(block, false, block.lastWord === true);
+      const { fold, summary } = foldFor(
+        block,
+        block.lastWord === true,
+        (body) => {
+          const text = block.text ?? "";
+          body.append(markdownBox(text, "thinking-body"), messageActions(block, text));
+        },
+        kept,
+      );
       if (block.lastWord) node.classList.add("last-word");
       summary.append(span(block.done ? "thoughts" : "thinking", "name"));
       if (state.ui.show_thinking === true) {
         summary.append(span(truncate(block.done ? firstLine(text) : lastLine(text), 90), "title"));
       }
       if (block.lastWord) summary.append(span("nothing after", "state"));
-      body.append(markdownBox(text, "thinking-body"), messageActions(block, text));
       node.append(fold);
       break;
     }
@@ -3025,40 +3035,49 @@ function paintBlock(node, block, before = null) {
     }
 
     case "tool": {
+      const pictures = block.images ?? [];
+      const name = block.toolName ?? "tool";
       const shown = block.result ?? block.progress;
-      const pictures = /** @type {import("./transcript.js").Image[]} */ (block.images ?? []);
-      const view = toolView(
-        block.toolName ?? "tool",
-        block.args ?? null,
-        shown === null || shown === undefined ? "" : flatten(shown),
+      const hintText = toolHint(
+        name,
+        block.args,
+        name === "read" || name === "bash" ? flatten(shown) : "",
         block.details,
         before,
         pictures.length,
       );
-
-      const { fold, summary, body } = foldFor(block, false);
+      const { fold, summary } = foldFor(
+        block,
+        false,
+        (body) => {
+          const view = toolView(
+            name,
+            block.args,
+            flatten(block.result ?? block.progress),
+            block.details,
+            before,
+            pictures.length,
+          );
+          if (view.command.length > 0) body.append(commandRow("command", view.command));
+          if (view.input.length > 0) body.append(argumentRow(view.input));
+          if (view.rows !== null && view.rows.length > 0) body.append(diffRows(view.rows));
+          else if (view.text.length > 0) body.append(boxed(view.text, "body"));
+          if (view.chips.length > 0) body.append(chipRow(view.chips));
+          if (body.childNodes.length === 0) body.append(span(block.done ? "no output" : "nothing back yet", "muted"));
+          const told = view.command.length > 0 ? view.command : String(block.args?.command ?? "");
+          body.append(messageActions(block, told.length > 0 ? told : view.text));
+        },
+        kept,
+      );
       if (block.isError) fold.classList.add("error");
       const hint = span("", "hint");
-      for (const part of hintParts(view.hint)) hint.append(span(part.text, part.kind));
+      for (const part of hintParts(hintText)) hint.append(span(part.text, part.kind));
       const state = span(block.done ? (block.isError ? "failed" : elapsed(block)) : "", "state");
       if (!block.done) state.append(liveClock(block));
       summary.append(span(block.toolName ?? "tool", "name"), span(block.title ?? "", "title"), hint, state);
       if (block.isError) summary.prepend(span("⚠", "flag"));
       if (!block.done) summary.prepend(spinner());
 
-      if (view.command.length > 0) body.append(commandRow("command", view.command));
-      if (view.input.length > 0) body.append(argumentRow(view.input));
-      if (view.rows !== null && view.rows.length > 0) {
-        body.append(diffRows(view.rows));
-      } else if (view.text.length > 0) {
-        const out = boxed(view.text, "body");
-        if (!block.done) out.classList.add("live");
-        body.append(out);
-      }
-      if (view.chips.length > 0) body.append(chipRow(view.chips));
-      if (body.childNodes.length === 0) body.append(span(block.done ? "no output" : "nothing back yet", "muted"));
-      const told = view.command.length > 0 ? view.command : String(block.args?.command ?? "");
-      body.append(messageActions(block, told.length > 0 ? told : view.text));
       node.append(fold);
 
       // A picture goes outside the fold. Reading it is usually why the file was
@@ -3077,10 +3096,16 @@ function paintBlock(node, block, before = null) {
     }
 
     case "compaction": {
-      const { fold, summary, body } = foldFor(block, false);
+      const { fold, summary } = foldFor(
+        block,
+        false,
+        (body) => {
+          if (block.summary) body.append(boxed(block.summary, "body"));
+          body.append(messageActions(block, block.summary ?? block.text ?? ""));
+        },
+        kept,
+      );
       summary.append(span(block.text ?? "compacted", "name"));
-      if (block.summary) body.append(boxed(block.summary, "body"));
-      body.append(messageActions(block, block.summary ?? block.text ?? ""));
       node.append(fold);
       break;
     }
@@ -3095,7 +3120,6 @@ function paintBlock(node, block, before = null) {
     }
   }
 
-  for (const empty of node.querySelectorAll(".fold-body:empty")) empty.remove();
   restoreScroll(node, kept);
 }
 
@@ -3154,30 +3178,34 @@ async function forkAt(entryId) {
   await sendCommand({ type: "fork", entryId });
 }
 
-/**
- * A fold that keeps the state the reader picked. Nothing opens itself: a
- * transcript that expands on its own while pi works is noise, and the reader
- * who wants the detail clicks once and keeps it open.
- *
- * Repainting happens while a tool streams, and a fold that snaps shut mid-read
- * is unusable.
- *
- * The summary is a plain line in the flow of the chat; only what is open gets a
- * box, so a long transcript stays quiet until someone asks for the detail.
- *
- * @param {Block} block
- * @param {boolean} opened
- * @returns {{fold: HTMLDetailsElement, summary: HTMLElement, body: HTMLElement}}
- */
-function foldFor(block, opened, open = false) {
-  const fold = /** @type {HTMLDetailsElement} */ (document.createElement("details"));
+/** @param {Block} block @param {boolean} forceOpen @param {(body: HTMLElement) => void} populate @param {Map<string, number[]>} kept */
+function foldFor(block, forceOpen, populate, kept) {
+  const fold = document.createElement("details");
   const summary = document.createElement("summary");
   const body = element("div", "fold-body");
-
-  fold.open = open || (folds.get(block.id) ?? opened);
-  fold.addEventListener("toggle", () => folds.set(block.id, fold.open));
+  let saved = kept.size > 0 ? kept : (foldScrolls.get(block.id) ?? new Map());
+  let filled = false;
+  const fill = () => {
+    if (filled) return;
+    populate(body);
+    filled = true;
+    restoreScroll(body, saved);
+  };
+  fold.open = forceOpen || (folds.get(block.id) ?? false);
   fold.append(summary, body);
-  return { fold, summary, body };
+  if (fold.open) fill();
+  fold.addEventListener("toggle", () => {
+    if (!fold.isConnected) return;
+    folds.set(block.id, fold.open);
+    if (fold.open) fill();
+    else if (filled) {
+      saved = scrollOf(body);
+      foldScrolls.set(block.id, saved);
+      body.replaceChildren();
+      filled = false;
+    }
+  });
+  return { fold, summary };
 }
 
 /**

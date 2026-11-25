@@ -1849,19 +1849,6 @@ pre,
     monospace;
 }
 
-.pre.live::after {
-  content: "▍";
-  color: var(--accent);
-  animation: piui-blink 1s steps(2, start) infinite;
-  will-change: opacity;
-}
-
-@keyframes piui-blink {
-  to {
-    opacity: 0;
-  }
-}
-
 .attachments {
   display: flex;
   flex-wrap: wrap;

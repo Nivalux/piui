@@ -63,10 +63,11 @@ test("a folded line keeps its buttons inside the fold", { skip: blocked }, async
 
   assert.equal(await tool.locator("> .msg-actions").count(), 0, "nothing hangs under a folded line");
   const inside = tool.locator("details .fold-body .msg-actions");
-  assert.equal(await inside.count(), 1);
-  assert.equal(await inside.isVisible(), false, "shut with the fold it is in");
+  assert.equal(await inside.count(), 0);
+  assert.equal(await tool.locator(".fold-body").evaluate((node) => node.childElementCount), 0);
 
   await tool.locator("details summary").click();
+  await inside.waitFor({ state: "visible" });
   assert.equal(await inside.isVisible(), true, "open with it");
 
   await hold("");

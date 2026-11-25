@@ -47,6 +47,27 @@ export function toolView(name, args, text, details, before = null, images = 0) {
   }
 }
 
+/** @param {string} name @param {Record<string, unknown> | null | undefined} args @param {string} text @param {unknown} details @param {string | null} [before] @param {number} [images] */
+export function toolHint(name, args, text, details, before = null, images = 0) {
+  if (name === "job_run" || name === "job_wait") return jobHint(details);
+  if (name === "read") return images > 0 ? "picture" : text.length > 0 ? `${text.split("\n").length} lines` : "empty";
+  if (name === "bash") {
+    const lines = text.length === 0 ? 0 : text.split("\n").length;
+    return lines > 1 ? `${lines} lines` : "";
+  }
+  if (name === "write" || name === "edit") return toolView(name, args, text, details, before, images).hint;
+  return "";
+}
+
+/** @param {unknown} details */
+function jobHint(details) {
+  const given = typeof details === "object" && details !== null ? details : {};
+  const status = String(Reflect.get(given, "status") ?? "");
+  const value = Reflect.get(given, "exitCode");
+  const code = value === undefined || value === null ? null : Number(value);
+  return code === null ? status : `${status || "exited"} ${code}`;
+}
+
 /**
  * Whether a tool has anything shaped for it.
  *
@@ -186,9 +207,8 @@ function jobTool(args, text, details, inTitle) {
 
   // No result yet means pi has not reported anything: the row already says
   // "running", so inventing a status here would be a lie about the job.
-  const hint = code === null ? status : `${status || "exited"} ${code}`;
   return {
-    hint,
+    hint: jobHint(details),
     chips,
     input: rest(args, inTitle),
     command: cutOff(args, "command"),
