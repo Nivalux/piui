@@ -37,7 +37,9 @@ test("a chat that comes back compacted says where it began", { skip: blocked }, 
   assert.match(await block.innerText(), /114904 tokens compacted/);
 
   await block.locator("> details > summary").click();
-  await page.waitForFunction(() => document.querySelector("#transcript .block.compaction details")?.open === true);
+  await page.waitForFunction(
+    () => (document.querySelector("#transcript .block.compaction .fold-body")?.textContent ?? "").length > 0,
+  );
   assert.match(
     await block.locator(".fold-body").innerText(),
     /the hub owns every pi/,
