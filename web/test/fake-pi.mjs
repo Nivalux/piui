@@ -569,7 +569,7 @@ async function fencedAnswer() {
  */
 async function writtenCall() {
   const lines = [];
-  for (let line = 1; line <= 40; line += 1) lines.push(`const line${line} = "ein Stueck Text, das hier steht";`);
+  for (let line = 1; line <= 400; line += 1) lines.push(`const line${line} = "ein Stueck Text, das hier steht";`);
   const content = lines.join("\n");
   const target = path.join(process.cwd(), "big.js");
 

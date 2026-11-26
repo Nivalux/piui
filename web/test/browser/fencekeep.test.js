@@ -50,3 +50,32 @@ test("a box that is finished keeps its button while the answer goes on", async (
   assert.equal(kept.button, "kept", "and the button beside it is still the same element");
   assert.equal(kept.actions, "kept", "the buttons under the answer were not rebuilt either");
 });
+
+test("a call that is still being written is not painted again for its arguments", async () => {
+  await openFreshChat();
+  await idle();
+
+  await page.fill("#input", "write it out");
+  await page.click("#send");
+
+  await page.waitForSelector("#transcript .block.tool summary", { timeout: 20000 });
+  await new Promise((resolve) => setTimeout(resolve, 400));
+
+  await page.evaluate(() => {
+    const row = document.querySelector("#transcript .block.tool summary");
+    if (row !== null) row.dataset.tag = "kept";
+  });
+
+  await new Promise((resolve) => setTimeout(resolve, 1500));
+
+  const kept = await page.evaluate(() => {
+    const block = document.querySelector("#transcript .block.tool");
+    return {
+      summary: block?.querySelector("summary")?.dataset.tag ?? "",
+      title: block?.querySelector(".title")?.textContent ?? "",
+    };
+  });
+
+  assert.equal(kept.title, "write", "still writing the call, so still streaming");
+  assert.equal(kept.summary, "kept", "the row stood still while its arguments arrived");
+});

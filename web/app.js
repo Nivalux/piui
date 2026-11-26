@@ -2874,6 +2874,17 @@ function groupHeader(label, count, open) {
 
 let transcriptStart = -1;
 
+/**
+ * What a tool call is still being written into is nowhere on the page, so it has
+ * no business deciding that its row has to be painted again.
+ *
+ * @param {string} key
+ * @param {unknown} value
+ */
+function notPainted(key, value) {
+  return key === "argsText" ? undefined : value;
+}
+
 function renderTranscript() {
   const started = stopwatch();
   if (transcriptStart < 0 && transcript.blocks.length > 0) {
@@ -2898,7 +2909,7 @@ function renderTranscript() {
     }
     if (node !== nextNode) el.transcript.insertBefore(node, nextNode);
     nextNode = node.nextSibling;
-    const signature = `${thoughts}${forkStamp} ${JSON.stringify(block)}`;
+    const signature = `${thoughts}${forkStamp} ${JSON.stringify(block, notPainted)}`;
     signatureChars += signature.length;
     if (signatures.get(block.id) === signature) continue;
 
