@@ -4,8 +4,11 @@
 # touching a recipe is its summary and a longer note goes above a blank line.
 addr := "127.0.0.1:7788"
 
-# A suite that cannot hang: a minute to a test, and the runner leaves whatever child forgot to.
-node_flags := "--test-timeout=15000 --test-force-exit"
+# A suite that cannot hang: twenty-five seconds to a test, and the runner leaves whatever child forgot to.
+#
+# Four files at a time, and the next one comes off the queue as a slot frees. A browser test wants
+# a second or two alone and several times that once every core has a chromium of its own.
+node_flags := "--test-timeout=25000 --test-force-exit --test-concurrency=4"
 
 # what a reviewer runs before pushing: format, every test, and the binary
 check: fmt-check lint test build

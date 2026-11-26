@@ -62,8 +62,9 @@ pub fn build(b: *std.Build) void {
     const js = b.addSystemCommand(&.{
         "node",
         "--test",
-        "--test-timeout=15000",
+        "--test-timeout=25000",
         "--test-force-exit",
+        "--test-concurrency=4",
         "web/test/**/*.test.js",
     });
     js.step.dependOn(b.getInstallStep());

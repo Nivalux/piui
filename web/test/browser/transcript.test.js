@@ -261,7 +261,18 @@ test("scrolling up stops the follow, the arrow brings it back", { skip: blocked 
   assert.equal(await page.locator("#jump").isVisible(), false);
 
   await runTurn("make it tall");
-  assert.ok((await gap()) < 60, "the arrow re-armed the follow");
+  const followed = await page
+    .waitForFunction(
+      () => {
+        const box = /** @type {HTMLElement} */ (document.getElementById("transcript"));
+        return box.scrollHeight - box.scrollTop - box.clientHeight < 60;
+      },
+      null,
+      { timeout: 5000 },
+    )
+    .then(() => true)
+    .catch(() => false);
+  assert.equal(followed, true, "the arrow re-armed the follow");
 });
 
 test("opening a chat lands on its newest line", { skip: blocked }, async () => {
