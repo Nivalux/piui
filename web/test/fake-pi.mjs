@@ -329,6 +329,7 @@ async function turn(prompt) {
   if (/dumbstruck/i.test(prompt)) return dumbstruck();
   if (/cache miss/i.test(prompt)) return cacheMissAnswer();
   if (/keep the fence/i.test(prompt)) return growingFence();
+  if (/write it out/i.test(prompt)) return writtenCall();
 
   const parts = thoughtful
     ? ["Weighing ", "up the ", "trade-offs ", "of every ", "possible ", "shape ", "of this ", "answer. "]
@@ -556,6 +557,78 @@ async function fencedAnswer() {
   send({ type: "message_update", assistantMessageEvent: { type: "text_end", contentIndex: 0 }, timestamp: now() });
 
   history.push({ role: "assistant", content: [{ type: "text", text }] });
+  send({ type: "message_end", message: { role: "assistant" }, timestamp: now() });
+  send({ type: "turn_end", timestamp: now() });
+  send({ type: "agent_end", willRetry: false, timestamp: now() });
+  settle();
+}
+
+/**
+ * A tool call whose arguments arrive in front of the page, piece by piece, and
+ * a run that then takes its time, so the two can be told apart.
+ */
+async function writtenCall() {
+  const lines = [];
+  for (let line = 1; line <= 40; line += 1) lines.push(`const line${line} = "ein Stueck Text, das hier steht";`);
+  const content = lines.join("\n");
+  const target = path.join(process.cwd(), "big.js");
+
+  send({
+    type: "message_update",
+    assistantMessageEvent: { type: "toolcall_start", id: "call_big", toolName: "write" },
+    timestamp: now(),
+  });
+
+  const step = 120;
+  for (let at = 0; at < content.length; at += step) {
+    send({
+      type: "message_update",
+      assistantMessageEvent: { type: "toolcall_delta", toolCallId: "call_big", delta: content.slice(at, at + step) },
+      timestamp: now(),
+    });
+    await sleep(25);
+  }
+
+  send({
+    type: "message_update",
+    assistantMessageEvent: {
+      type: "toolcall_end",
+      toolCall: { id: "call_big", name: "write", arguments: { path: target, content } },
+    },
+    timestamp: now(),
+  });
+
+  send({
+    type: "tool_execution_start",
+    toolCallId: "call_big",
+    toolName: "write",
+    args: { path: target, content },
+    timestamp: now(),
+  });
+  await sleep(600);
+  send({
+    type: "tool_execution_end",
+    toolCallId: "call_big",
+    toolName: "write",
+    durationMs: 2600,
+    result: { content: [{ type: "text", text: `wrote ${target}` }] },
+    isError: false,
+    timestamp: now(),
+  });
+
+  const text = "Geschrieben.";
+  send({
+    type: "message_update",
+    assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: text },
+    timestamp: now(),
+  });
+  history.push({
+    role: "assistant",
+    content: [
+      { type: "toolCall", id: "call_big", name: "write", arguments: { path: target, content } },
+      { type: "text", text },
+    ],
+  });
   send({ type: "message_end", message: { role: "assistant" }, timestamp: now() });
   send({ type: "turn_end", timestamp: now() });
   send({ type: "agent_end", willRetry: false, timestamp: now() });

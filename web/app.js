@@ -22,6 +22,7 @@ import {
   relativeTime,
   shortPath,
   tokens,
+  toolSummary,
   truncate,
 } from "./format.js";
 import { isUnread, splitTabs } from "./tabs.js";
@@ -1214,6 +1215,7 @@ async function openTab(id) {
   const tab = active();
   el.title.textContent = tab ? labelOf(tab) : "";
   el.cwd.textContent = tab ? tab.cwd : "";
+  retitle();
 
   state.model = "";
   state.modelKey = "";
@@ -1600,7 +1602,23 @@ function replaceTab(tab) {
   const index = state.tabs.findIndex((item) => item.id === tab.id);
   if (index >= 0) state.tabs[index] = tab;
   else state.tabs.unshift(tab);
+  if (tab.id === state.active) retitle();
   renderSidebar();
+}
+
+/**
+ * The folder the chat runs in is what a tool line tells its paths from, and it
+ * can be known only after the tab fact arrived: the lines titled before it are
+ * written again.
+ */
+function retitle() {
+  const root = active()?.cwd ?? "";
+  if (transcript.root === root) return;
+  transcript.root = root;
+  for (const block of transcript.blocks) {
+    if (block.kind !== "tool") continue;
+    block.title = toolSummary(block.toolName ?? "tool", block.args ?? undefined, root);
+  }
 }
 
 async function closeTab() {

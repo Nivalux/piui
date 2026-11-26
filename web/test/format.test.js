@@ -14,6 +14,7 @@ import {
   hintParts,
   perSecond,
   preview,
+  projectPath,
   relativeTime,
   shortPath,
   badge,
@@ -53,6 +54,20 @@ test("a tool gets a headline out of whatever it was handed", () => {
   assert.equal(toolSummary("grep", { pattern: "pub fn", path: "src" }), "pub fn", "searching beats the directory");
   assert.equal(toolSummary("unknown", { anything: 4 }), "anything: 4");
   assert.equal(toolSummary("unknown", undefined), "unknown");
+});
+
+test("a path the chat is working in is told from the chat", () => {
+  assert.equal(projectPath("/work/app/src/main.zig", "/work/app"), "./src/main.zig");
+  assert.equal(projectPath("/work/app/src/main.zig", "/work/app/"), "./src/main.zig");
+  assert.equal(projectPath("/work/apple/main.zig", "/work/app"), "/work/apple/main.zig");
+  assert.equal(projectPath("/work/app", "/work/app"), "/work/app");
+  assert.equal(projectPath("/work/app/main.zig", ""), "/work/app/main.zig");
+  assert.equal(toolSummary("read", { path: "/work/app/main.zig" }, "/work/app"), "./main.zig");
+  assert.equal(
+    toolSummary("edit", { path: "/work/app/a.go", edits: [{ oldText: "x" }, { oldText: "y" }] }, "/work/app"),
+    "./a.go · 2 edits",
+  );
+  assert.equal(toolSummary("read", { path: "/other/main.zig" }, "/work/app"), "/other/main.zig");
 });
 
 test("paths shorten from the left, so the tail stays readable", () => {

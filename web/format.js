@@ -223,14 +223,30 @@ export function perSecond(perSecondValue) {
 }
 
 /**
+ * A path inside the folder the chat runs in is told from that folder, so the
+ * part that repeats in every line of the chat drops out. Anything else keeps
+ * its full shape, because there is nothing to tell it from.
+ *
+ * @param {string} path
+ * @param {string} [root]
+ * @returns {string}
+ */
+export function projectPath(path, root = "") {
+  const base = root.endsWith("/") ? root.slice(0, -1) : root;
+  if (base.length === 0 || !path.startsWith(`${base}/`)) return path;
+  return `./${path.slice(base.length + 1)}`;
+}
+
+/**
  * One line describing a tool call: the argument a human would recognise, not the
  * whole JSON. `bash` shows its command, the file tools their path.
  *
  * @param {string} toolName
  * @param {unknown} args
+ * @param {string} [root] the folder the chat runs in
  * @returns {string}
  */
-export function toolSummary(toolName, args) {
+export function toolSummary(toolName, args, root = "") {
   const record = typeof args === "object" && args !== null ? /** @type {Record<string, unknown>} */ (args) : {};
 
   const command = record.command;
@@ -241,8 +257,9 @@ export function toolSummary(toolName, args) {
 
   const file = record.path ?? record.file ?? record.notebook_path;
   if (typeof file === "string" && file.trim().length > 0) {
+    const shown = truncate(firstLine(projectPath(file, root)), 90);
     const edits = Array.isArray(record.edits) ? record.edits.length : 0;
-    return edits > 0 ? `${truncate(firstLine(file), 80)} · ${edits} edits` : truncate(firstLine(file), 90);
+    return edits > 0 ? `${truncate(shown, 80)} · ${edits} edits` : shown;
   }
 
   for (const [key, value] of Object.entries(record)) {

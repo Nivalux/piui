@@ -85,6 +85,9 @@ export function toolRun(block) {
 }
 
 export class Transcript {
+  /** The folder the chat runs in, so a tool line tells its paths from there. */
+  root = "";
+
   /** @type {Block[]} */
   #blocks = [];
   /** @type {Map<string, Block>} tool call id → block */
@@ -215,7 +218,7 @@ export class Transcript {
       case "tool_execution_start": {
         const block = this.#tool(frame.toolCallId ?? "", frame.toolName);
         block.args = frame.args ?? null;
-        block.title = toolSummary(block.toolName ?? "tool", block.args ?? undefined);
+        block.title = toolSummary(block.toolName ?? "tool", block.args ?? undefined, this.root);
         block.startedAt ??= stamp(frame);
         return true;
       }
@@ -385,7 +388,7 @@ export class Transcript {
         if (!call?.id) return false;
         const block = this.#tool(call.id, call.name);
         block.args = /** @type {Record<string, unknown>} */ (call.arguments ?? null);
-        block.title = toolSummary(call.name ?? "tool", block.args ?? undefined);
+        block.title = toolSummary(call.name ?? "tool", block.args ?? undefined, this.root);
         return true;
       }
 
@@ -580,6 +583,7 @@ export class Transcript {
       } else if (part.type === "toolCall") {
         const block = this.#tool(part.id ?? `call-${nextId++}`, part.name);
         block.args = /** @type {Record<string, unknown>} */ (part.arguments ?? null);
+        block.title = toolSummary(part.name ?? block.toolName ?? "tool", block.args ?? undefined, this.root);
         block.startedAt ??= stamped(message);
         block.request = message.usage ?? null;
         block.cacheMiss = told;
@@ -664,7 +668,7 @@ export class Transcript {
     const existing = this.#tools.get(key);
     if (existing) {
       if (name && existing.toolName !== "tool") existing.toolName = name;
-      if (name) existing.title = toolSummary(name, existing.args ?? undefined);
+      if (name) existing.title = toolSummary(name, existing.args ?? undefined, this.root);
       return existing;
     }
 
@@ -674,7 +678,7 @@ export class Transcript {
       id: nextId++,
       toolCallId: key,
       toolName: name ?? "tool",
-      title: toolSummary(name ?? "tool", undefined),
+      title: toolSummary(name ?? "tool", undefined, this.root),
       args: null,
       done: false,
     };
