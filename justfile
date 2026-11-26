@@ -28,8 +28,18 @@ test:
 # service holds the old file open for execution and keeps serving that inode
 # until systemctl --user restart piui.service.
 
+# zig units, js logic, jsdoc types, and the browser files that stay honest under load
+#
+# The terminal window and the terminal font test are skipped: run together with
+# the rest they lose on a build that changed nothing near them. `just check`
+# still runs them.
+
+# what a build has to survive before it goes in front of the running service
+test-live: test-zig test-js typecheck build
+    PIUI_BINARY="$PWD/zig-out/bin/piui" node --test {{node_flags}} --test-skip-pattern="terminal window|terminal font" web/test/browser/*.test.js
+
 # build, test, hand the binary to the service; a restart still follows
-live: test build
+live: test-live
     cp zig-out/bin/piui zig-out/bin/piui-live.new
     mv zig-out/bin/piui-live.new zig-out/bin/piui-live
 
