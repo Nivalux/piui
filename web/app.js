@@ -386,6 +386,16 @@ function showEmptyState() {
 class AuthError extends Error {}
 
 /**
+ * A read with a last moment to answer, so a socket that stopped cannot be waited on forever.
+ *
+ * @param {number} ms
+ * @returns {RequestInit}
+ */
+function deadline(ms) {
+  return { signal: AbortSignal.timeout(ms) };
+}
+
+/**
  * @param {string} path
  * @param {RequestInit} [init]
  * @returns {Promise<Response>}
@@ -397,9 +407,12 @@ async function request(path, init) {
   return response;
 }
 
-/** @param {string} path */
-async function getJSON(path) {
-  return jsonOf(await request(path));
+/**
+ * @param {string} path
+ * @param {RequestInit} [init]
+ */
+async function getJSON(path, init) {
+  return jsonOf(await request(path, init));
 }
 
 /**
@@ -670,11 +683,17 @@ function onKey(event) {
 
 // -------------------------------------------------------------------- tabs
 
+/** @type {boolean} */
+let tabsRead = false;
+
 async function loadTabs() {
+  if (tabsRead) return;
   const asked = tabsTouched;
-  const list = await getJSON("/api/tabs");
-  if (tabsTouched !== asked) return;
-  state.tabs = Array.isArray(list) ? list : [];
+  tabsRead = true;
+  const list = await getJSON("/api/tabs", deadline(10000)).catch(() => null);
+  tabsRead = false;
+  if (tabsTouched !== asked || !Array.isArray(list)) return;
+  state.tabs = list;
   renderSidebar();
 }
 
@@ -692,8 +711,14 @@ let tabsTouched = 0;
 /** What each shell called itself, from the title escape it last sent. */
 const shellTitles = new Map();
 
+/** @type {boolean} */
+let shellsRead = false;
+
 async function loadShells() {
-  const answer = await getJSON("/api/pty").catch(() => null);
+  if (shellsRead) return;
+  shellsRead = true;
+  const answer = await getJSON("/api/pty", deadline(10000)).catch(() => null);
+  shellsRead = false;
   state.shells = Array.isArray(answer?.shells) ? answer.shells : [];
   renderViews();
 }
@@ -889,12 +914,18 @@ function showShell(id) {
   view.focus();
 }
 
+/** @type {boolean} */
+let sessionsRead = false;
+
 /**
  * Past chats, for resuming. Everything comes back and the sidebar narrows it by
  * folder, so switching tabs never has to refetch.
  */
 async function loadSessions() {
-  const list = await getJSON("/api/sessions").catch(() => null);
+  if (sessionsRead) return;
+  sessionsRead = true;
+  const list = await getJSON("/api/sessions", deadline(60000)).catch(() => null);
+  sessionsRead = false;
   state.sessions = Array.isArray(list) ? list : [];
   lineageOf = lineage(state.sessions.map((entry) => ({ ...entry, title: sessionTitle(entry) })));
   renderSidebar();
@@ -1265,6 +1296,9 @@ function connect(id) {
   };
 }
 
+/** @type {boolean} */
+let healthRead = false;
+
 /**
  * Whether the server is still there at all.
  *
@@ -1272,9 +1306,15 @@ function connect(id) {
  * panels. Coming back is automatic, and a reload only happens when the server
  * is running different code than the one this page was written against — a
  * tab that survived a restart would otherwise keep an old script forever.
+ *
+ * One read at a time: the poll that follows a wedged one would otherwise be the
+ * third, and the tenth.
  */
 async function watchServer() {
-  const health = await getJSON("/api/health").catch(() => null);
+  if (healthRead) return;
+  healthRead = true;
+  const health = await getJSON("/api/health", deadline(6000)).catch(() => null);
+  healthRead = false;
   if (!health) {
     if (!state.offline) {
       state.offline = true;
@@ -1426,8 +1466,8 @@ function handle(frame, from) {
   // Pi only knows what the next request will cost once a turn is through, and one
   // answer can run several turns: asking at every one of them is what keeps the
   // context ring moving during a long answer rather than only at its end.
-  if (frame.type === "agent_settled" || frame.type === "turn_end") {
-    ask("get_session_stats");
+  if (frame.type === "agent_settled" || frame.type === "turn_end") ask("get_session_stats");
+  if (frame.type === "agent_settled") {
     render();
     void refreshPanel();
   }
@@ -3637,8 +3677,15 @@ function pickThinking() {
 
 let refreshGeneration = 0;
 
+/** @type {AbortController | null} */
+let gitRead = null;
+let gitWanted = false;
+
 async function refreshGit() {
   if (!state.active) {
+    gitRead?.abort();
+    gitRead = null;
+    gitWanted = false;
     status = null;
     statusFor = "";
     gitReading = false;
@@ -3646,11 +3693,11 @@ async function refreshGit() {
     return;
   }
   const id = state.active;
-  const generation = ++refreshGeneration;
 
   // A chat in another folder has git of its own. On a share that takes a second
   // to answer, the panel would otherwise go on wearing the folder the chat
-  // before it lived in, so the read of a new chat clears what it is about to replace.
+  // before it lived in, so the read of a new chat clears what it is about to
+  // replace and gives up the read of the folder it left.
   if (id !== statusFor) {
     statusFor = id;
     status = null;
@@ -3663,14 +3710,30 @@ async function refreshGit() {
     renderSidebar();
     showGitReading();
     showFileReading();
+    gitRead?.abort();
   }
+  if (gitRead) {
+    gitWanted = true;
+    return;
+  }
+  const generation = ++refreshGeneration;
 
+  const control = new AbortController();
+  gitRead = control;
   try {
     status = /** @type {GitStatus} */ (
-      await getJSON(`/api/git/status?id=${encodeURIComponent(id)}&base=${encodeURIComponent(state.base)}`)
+      await getJSON(`/api/git/status?id=${encodeURIComponent(id)}&base=${encodeURIComponent(state.base)}`, {
+        signal: control.signal,
+      })
     );
   } catch {
     status = null;
+  }
+  gitRead = null;
+  if (gitWanted) {
+    gitWanted = false;
+    void refreshGit();
+    return;
   }
   if (id !== state.active || generation !== refreshGeneration) return;
 
@@ -4275,11 +4338,16 @@ function refreshOpenDiff() {
   if (view?.kind === "diff") void showFileDiff(view.path);
 }
 
+/** @type {boolean} */
+let filesRead = false;
+
 async function loadFiles() {
   const id = state.active;
-  if (!id) return;
+  if (!id || filesRead) return;
 
-  const payload = await getJSON(`/api/files?id=${encodeURIComponent(id)}`).catch(() => null);
+  filesRead = true;
+  const payload = await getJSON(`/api/files?id=${encodeURIComponent(id)}`, deadline(60000)).catch(() => null);
+  filesRead = false;
   if (id !== state.active) return;
 
   state.files = Array.isArray(payload?.files) ? payload.files : [];
