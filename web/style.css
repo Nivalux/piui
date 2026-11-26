@@ -2525,7 +2525,7 @@ pre,
   scrollbar-gutter: stable;
 }
 
-.term-screen {
+.term-live {
   position: relative;
 }
 
@@ -2535,10 +2535,6 @@ pre,
   min-height: 1.35em;
   font-kerning: none;
   font-variant-ligatures: none;
-}
-
-.term-row.past {
-  opacity: 0.55;
 }
 
 .term-caret {

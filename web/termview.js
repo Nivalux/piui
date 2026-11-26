@@ -41,10 +41,17 @@ export class TermView {
     this.screen.setAttribute("aria-multiline", "true");
     this.screen.setAttribute("aria-label", "Terminal");
 
+    this.past = document.createElement("div");
+    this.past.className = "term-past";
+
+    this.live = document.createElement("div");
+    this.live.className = "term-live";
+
     this.caret = document.createElement("div");
     this.caret.className = "term-caret";
-    this.screen.append(this.caret);
+    this.live.append(this.caret);
 
+    this.screen.append(this.past, this.live);
     this.scroll.append(this.screen);
     this.scroll.addEventListener("scroll", () => this.watchScroll());
 
@@ -215,10 +222,12 @@ export class TermView {
     this.lastPaint = painted;
 
     const step = (/** @type {string} */ ch) => this.pitch(ch);
+    const past = [];
+    for (const line of out.history) past.push(rowNode(line, "term-row past", step));
     const rows = [];
-    for (const line of out.history) rows.push(rowNode(line, "term-row past", step));
     for (const line of out.screen) rows.push(rowNode(line, "term-row", step));
-    this.screen.replaceChildren(this.caret, ...rows);
+    this.past.replaceChildren(...past);
+    this.live.replaceChildren(this.caret, ...rows);
 
     this.caret.hidden = !out.cursor.visible;
     this.caret.classList.toggle("term-underline", out.cursor.style === "underline");
