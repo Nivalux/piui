@@ -328,6 +328,7 @@ async function turn(prompt) {
 
   if (/dumbstruck/i.test(prompt)) return dumbstruck();
   if (/cache miss/i.test(prompt)) return cacheMissAnswer();
+  if (/keep the fence/i.test(prompt)) return growingFence();
 
   const parts = thoughtful
     ? ["Weighing ", "up the ", "trade-offs ", "of every ", "possible ", "shape ", "of this ", "answer. "]
@@ -553,6 +554,39 @@ async function fencedAnswer() {
     await sleep(30);
   }
   send({ type: "message_update", assistantMessageEvent: { type: "text_end", contentIndex: 0 }, timestamp: now() });
+
+  history.push({ role: "assistant", content: [{ type: "text", text }] });
+  send({ type: "message_end", message: { role: "assistant" }, timestamp: now() });
+  send({ type: "turn_end", timestamp: now() });
+  send({ type: "agent_end", willRetry: false, timestamp: now() });
+  settle();
+}
+
+/**
+ * An answer whose fenced block is finished long before its turn is, with room
+ * between the words, so a test can see what the later words do to the box that
+ * was already on the page.
+ */
+async function growingFence() {
+  const pieces = [
+    "Erst ein Absatz.\n\n",
+    "```js\nconst kept = 1;\n```\n\n",
+    "Danach ",
+    "wachst ",
+    "der Text weiter.\n\n",
+    "Und noch ein Stuck.",
+  ];
+  let text = "";
+  for (const piece of pieces) {
+    text += piece;
+    send({
+      type: "message_update",
+      assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: piece },
+      usage: { input: 40, output: 8, cacheRead: 0, cacheWrite: 0, cost: { total: 0.01 } },
+      timestamp: now(),
+    });
+    await sleep(220);
+  }
 
   history.push({ role: "assistant", content: [{ type: "text", text }] });
   send({ type: "message_end", message: { role: "assistant" }, timestamp: now() });

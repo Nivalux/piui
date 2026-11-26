@@ -3061,6 +3061,8 @@ function paint(node, block, before = null) {
 function paintBlock(node, block, before = null) {
   const kept = scrollOf(node);
 
+  if (block.kind === "text" && paintText(node, block)) return;
+
   node.replaceChildren();
 
   switch (block.kind) {
@@ -3099,15 +3101,15 @@ function paintBlock(node, block, before = null) {
     }
 
     case "text": {
-      node.append(markdownBox(block.text ?? "", "body"));
-      const foot = element("div", "foot");
-      if (block.usage) foot.append(span(usageLine(block.usage)));
-      if (block.cacheMiss) foot.append(span(cacheMissLine(block.cacheMiss), "warn"));
-      if (block.stopReason === "aborted") foot.append(span("aborted", "warn"));
-      if (block.error) foot.append(span(block.error, "warn"));
-      if ((block.usage || block.cacheMiss || block.error) && foot.childNodes.length > 0) node.append(foot);
-      if (block.turn) node.append(element("div", "foot turn", turnLine(block.turn)));
-      node.append(messageActions(block, block.text ?? ""));
+      const held = {
+        box: element("div", "md body"),
+        foot: element("div", "foot"),
+        turn: element("div", "foot turn"),
+        actions: messageActions(block, block.text ?? ""),
+      };
+      textPaint.set(node, held);
+      node.append(held.box, held.foot, held.turn, held.actions);
+      paintText(node, block);
       return;
     }
 
@@ -3209,16 +3211,36 @@ function paintBlock(node, block, before = null) {
  * @param {string} text
  */
 function messageActions(block, text) {
-  const row = element("div", "msg-actions");
+  return fillMessageActions(element("div", "msg-actions"), block, text);
+}
+
+/** @type {WeakMap<HTMLElement, string>} */
+const copyText = new WeakMap();
+
+/**
+ * The row of a block that is still being written keeps its buttons, so the one
+ * the pointer rests on does not blink out with every word. What it copies is
+ * read when it is clicked, not when it was built.
+ *
+ * @param {HTMLElement} row
+ * @param {Block} block
+ * @param {string} text
+ */
+function fillMessageActions(row, block, text) {
+  copyText.set(row, text);
+  const prompt = turnPrompt(block);
+  const entryId = prompt === null ? "" : entryOf(prompt);
+  const key = `${text.trim().length > 0 ? "copy " : ""}${entryId}`;
+  if (row.dataset.key === key) return row;
+  row.dataset.key = key;
+  row.replaceChildren();
 
   if (text.trim().length > 0) {
-    const copy = iconButton("copy", "copy message", () => void copyMessage(text));
+    const copy = iconButton("copy", "copy message", () => void copyMessage(copyText.get(row) ?? ""));
     copy.title = "Copy this to the clipboard";
     row.append(copy);
   }
 
-  const prompt = turnPrompt(block);
-  const entryId = prompt === null ? "" : entryOf(prompt);
   if (entryId.length > 0) {
     const fork = iconButton("fork", "fork here", () => void forkAt(entryId));
     fork.title = `Start this chat over from: ${truncate(prompt?.text ?? "", 70)}`;
@@ -3326,14 +3348,94 @@ function liveClock(block) {
  * @param {string} className
  */
 function markdownBox(text, className) {
+  return fillMarkdown(element("div", `md ${className}`), text);
+}
+
+/** @type {WeakMap<HTMLElement, {keys: string[], parts: HTMLElement[]}>} */
+const mdPaint = new WeakMap();
+
+/**
+ * A box that already holds part of a text keeps the pieces that did not change,
+ * so their buttons, their scroll and the reader's selection stay where they are
+ * while only the piece still growing is written again.
+ *
+ * @param {HTMLElement} box
+ * @param {string} text
+ */
+function fillMarkdown(box, text) {
   const started = stopwatch();
-  const box = element("div", `md ${className}`);
-  box.append(markdownNode(parseMarkdown(text)));
-  const fences = /** @type {NodeListOf<HTMLElement>} */ (box.querySelectorAll("pre.md-code"));
-  for (const fence of fences) fenceCopy(fence);
+  const list = parseMarkdown(text);
+  const keys = list.map((item) => JSON.stringify(item));
+  const held = mdPaint.get(box) ?? { keys: [], parts: [] };
+
+  let from = 0;
+  while (from < held.keys.length && from < keys.length && held.keys[from] === keys[from]) from += 1;
+  for (const part of held.parts.slice(from)) part.remove();
+  held.parts.length = from;
+  held.keys.length = from;
+
+  for (let index = from; index < list.length; index += 1) {
+    box.append(markdownNode([list[index]]));
+    const top = /** @type {HTMLElement} */ (box.lastElementChild);
+    for (const fence of /** @type {HTMLElement[]} */ (Array.from(top.querySelectorAll("pre.md-code")))) {
+      fenceCopy(fence);
+    }
+    if (top.matches("pre.md-code")) fenceCopy(top);
+    held.parts.push(/** @type {HTMLElement} */ (box.lastElementChild));
+    held.keys.push(keys[index]);
+  }
+
+  mdPaint.set(box, held);
   if (live.on) note("markdown boxes", 1, text.length);
   took("markdownBox", started);
   return box;
+}
+
+/** @type {WeakMap<HTMLElement, {box: HTMLElement, foot: HTMLElement, turn: HTMLElement, actions: HTMLElement}>} */
+const textPaint = new WeakMap();
+
+/**
+ * An answer that is still arriving is written into what is already on the page
+ * instead of beside it: the code boxes it finished keep their copy buttons.
+ *
+ * @param {HTMLElement} node
+ * @param {Block} block
+ * @returns {boolean} false when this node holds no answer yet
+ */
+function paintText(node, block) {
+  const held = textPaint.get(node);
+  if (held === undefined) return false;
+
+  fillMarkdown(held.box, block.text ?? "");
+
+  const lines = [];
+  if (block.usage) lines.push(span(usageLine(block.usage)));
+  if (block.cacheMiss) lines.push(span(cacheMissLine(block.cacheMiss), "warn"));
+  if (block.stopReason === "aborted") lines.push(span("aborted", "warn"));
+  if (block.error) lines.push(span(block.error, "warn"));
+  held.foot.replaceChildren(...lines);
+  place(node, held.foot, lines.length > 0, held.turn.parentNode === node ? held.turn : held.actions);
+
+  held.turn.textContent = block.turn ? turnLine(block.turn) : "";
+  place(node, held.turn, block.turn !== undefined, held.actions);
+
+  fillMessageActions(held.actions, block, block.text ?? "");
+  return true;
+}
+
+/**
+ * @param {HTMLElement} node
+ * @param {HTMLElement} piece
+ * @param {boolean} on
+ * @param {Node | null} before
+ */
+function place(node, piece, on, before) {
+  if (!on) {
+    piece.remove();
+    return;
+  }
+  if (piece.parentNode === node && piece.nextSibling === before) return;
+  node.insertBefore(piece, before);
 }
 
 /**
