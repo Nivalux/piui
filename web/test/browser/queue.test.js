@@ -104,6 +104,30 @@ test("a steering message with a picture leaves the strip once the chat has taken
   await idle();
 });
 
+test("a page reloaded in the middle of a run reads the queue back", { skip: blocked }, async () => {
+  await openFreshChat();
+  await busyWith("hold the run for 15000");
+  await steer("a first thought");
+  await steer("a second thought");
+
+  await page.reload();
+  await page.waitForSelector("#queue .queued", { timeout: 15000 });
+  const strip = await page.evaluate(() => document.getElementById("queue")?.innerText ?? "");
+
+  await page.waitForSelector("#queue button", { timeout: 15000 });
+  await page.click("#queue button");
+  await page.waitForFunction(
+    () => {
+      const box = /** @type {HTMLTextAreaElement} */ (document.getElementById("input"));
+      return box.value.includes("a first thought") && box.value.includes("a second thought");
+    },
+    undefined,
+    { timeout: 15000 },
+  );
+  assert.ok(strip.includes("2"), `the strip said ${JSON.stringify(strip)}`);
+  await idle();
+});
+
 test("a steering message pi refuses goes back to the editor rather than waiting", { skip: blocked }, async () => {
   await openFreshChat();
   await busyWith("stream the answer");
