@@ -1,6 +1,9 @@
 // @ts-check
 
 import { after, before, test } from "node:test";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import assert from "node:assert/strict";
 import { blocked, idle, openFreshChat, page, start, stop } from "./harness.mjs";
 
@@ -73,6 +76,45 @@ test("a thought pi never acknowledged comes back instead of vanishing", { skip: 
     { timeout: 15000 },
   );
   assert.ok((await editorText()).includes("an unconfirmed thought"));
+  await idle();
+});
+
+test("a steering message with a picture leaves the strip once the chat has taken it", { skip: blocked }, async () => {
+  const png =
+    "iVBORw0KGgoAAAANSUhEUgAAACAAAAAUCAYAAADskT9PAAAANUlEQVR4nGN4kOP1Hx4WEZXCiynVzzDqgFEHjDqA1hYQ0j/qgFEHjDph4MuBUQeMOmCgHQAARi3M/RQC5ogAAAAASUVORK5CYII=";
+  const picture = path.join(os.tmpdir(), "piui-steered-picture.png");
+  fs.writeFileSync(picture, png, "base64");
+
+  await openFreshChat();
+  await busyWith("hold the run for 5000");
+  await page.setInputFiles("#attach-input", picture);
+  await steer("look at this picture");
+
+  await page.waitForFunction(() => document.getElementById("queue")?.hidden === true, undefined, { timeout: 15000 });
+  assert.equal(
+    await page.evaluate(() => document.querySelector("#tab-list .tab.active .spinner") !== null),
+    true,
+    "the strip emptied while the chat was still working",
+  );
+  await page.waitForFunction(
+    () => document.querySelector("#transcript")?.textContent?.includes("look at this picture") === true,
+    undefined,
+    { timeout: 15000 },
+  );
+  await idle();
+});
+
+test("a steering message pi refuses goes back to the editor rather than waiting", { skip: blocked }, async () => {
+  await openFreshChat();
+  await busyWith("stream the answer");
+  await page.fill("#input", "a thought that is refused");
+  await page.keyboard.press("Enter");
+
+  await page.waitForFunction(() => document.querySelector("#input")?.value.includes("refused") === true, undefined, {
+    timeout: 15000,
+  });
+  assert.ok((await editorText()).includes("a thought that is refused"));
+  assert.equal(await page.evaluate(() => document.getElementById("queue")?.hidden), true, "nothing is left waiting");
   await idle();
 });
 

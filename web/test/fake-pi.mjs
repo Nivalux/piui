@@ -67,9 +67,30 @@ function textOf(message) {
     .join("\n");
 }
 
+/** Which of the messages sent to this fake carried a picture of its own. */
+const imaged = new Set();
+
+/** The line real Pi writes under a message whose picture it resized. */
+const resizedNote =
+  "[Image: original 2600x900, displayed at 2000x692. Multiply coordinates by 1.30 to map to original image.]";
+
+/**
+ * Remember that this command came with a picture, so the message Pi later puts
+ * into the chat carries the resize note real Pi appends to one.
+ *
+ * @param {{message?: string, images?: unknown}} command
+ */
+function tookPicture(command) {
+  const text = String(command.message ?? "");
+  if (Array.isArray(command.images) && command.images.length > 0) imaged.add(text);
+  return text;
+}
+
 /** @param {string} text */
 function asked(text) {
-  const message = { role: "user", content: [{ type: "text", text }] };
+  const content = [{ type: "text", text }];
+  if (imaged.delete(text)) content.push({ type: "text", text: resizedNote });
+  const message = { role: "user", content };
   history.push(message);
   forks.push({ entryId: `e${++forkSeq}`, text });
   return message;
@@ -252,7 +273,8 @@ async function answer(line) {
       return reply("set_follow_up_mode", {});
 
     case "steer": {
-      const text = String(command.message ?? "");
+      const text = tookPicture(command);
+      if (/refused/i.test(text)) return reply("steer", { message: "pi kept that one out of the run" }, false);
       if (!swallowed(text)) {
         queue.steering.push(text);
         announceQueue();
@@ -261,7 +283,7 @@ async function answer(line) {
     }
 
     case "follow_up":
-      queue.followUp.push(String(command.message ?? ""));
+      queue.followUp.push(tookPicture(command));
       announceQueue();
       return reply("follow_up", { disposition: "queued" });
 
@@ -274,7 +296,7 @@ async function answer(line) {
     }
 
     case "prompt":
-      asked(String(command.message ?? ""));
+      asked(tookPicture(command));
       send({ type: "response", command: "prompt", success: true, data: {} });
       return turn(command.message ?? "");
 
@@ -287,8 +309,8 @@ async function answer(line) {
  * @param {string} command
  * @param {Record<string, unknown>} data
  */
-function reply(command, data) {
-  send({ type: "response", command, success: true, data });
+function reply(command, data, ok = true) {
+  send({ type: "response", command, success: ok, data });
 }
 
 /**
@@ -344,8 +366,9 @@ async function turn(prompt) {
     await sleep(thoughtful ? 260 : 30);
   }
 
-  if (/hold the run/i.test(prompt)) {
-    await sleep(1200);
+  const heldFor = /hold the run for (\d+)/i.exec(prompt);
+  if (heldFor || /hold the run/i.test(prompt)) {
+    await sleep(heldFor ? Number(heldFor[1]) : 1200);
     deliver("steering");
     return streamAnswer();
   }

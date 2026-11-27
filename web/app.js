@@ -1441,6 +1441,7 @@ function handle(frame, from) {
   }
   if (frame.type === "queue_update") {
     const tabId = state.active ?? "";
+    retireAnswered(tabId);
     const held = {
       steering: strings(frame.steering),
       followUp: strings(frame.followUp),
@@ -1535,6 +1536,11 @@ function response(frame) {
   if (frame.command === "export_html") {
     const path = typeof data.path === "string" ? data.path : "";
     toast(path.length > 0 ? `Exported to ${path}` : "Exported", 6000);
+    return;
+  }
+
+  if (frame.command === "steer" || frame.command === "follow_up") {
+    answeredSend(state.active ?? "", frame.success === true, typeof data.message === "string" ? data.message : "");
     return;
   }
 
@@ -1870,7 +1876,7 @@ async function send() {
   grow();
   clearAttachments();
   hidePalette();
-  hold(tabId, text);
+  hold(tabId, text, running);
 
   try {
     await postJSON(`/api/cmd?id=${encodeURIComponent(tabId)}`, command);
@@ -1879,7 +1885,7 @@ async function send() {
       release(tabId, text);
       const again = await wake(tabId);
       if (again) {
-        hold(again, text);
+        hold(again, text, running);
         await postJSON(`/api/cmd?id=${encodeURIComponent(again)}`, command).catch(() => {
           release(again, text);
           toast("send failed");
@@ -1894,7 +1900,7 @@ async function send() {
   }
 }
 
-/** @type {Map<string, {text: string}[]>} */
+/** @type {Map<string, {text: string, queued: boolean, answered: boolean}[]>} */
 const pending = new Map();
 
 /**
@@ -1904,12 +1910,59 @@ const pending = new Map();
  *
  * @param {string} tabId
  * @param {string} text
+ * @param {boolean} queued whether Pi was asked to hold it rather than start a chat of its own
  */
-function hold(tabId, text) {
+function hold(tabId, text, queued) {
   const items = pending.get(tabId) ?? [];
-  items.push({ text });
+  items.push({ text, queued, answered: false });
   pending.set(tabId, items);
   renderQueue();
+}
+
+/**
+ * Pi's answer to a `steer` or `follow_up` means the message is in its hands. The
+ * page keeps its own copy of the text until Pi next says what the queue holds,
+ * because that is the word which can tell a message still waiting from one
+ * already delivered or rewritten on the way in.
+ *
+ * What Pi refuses never reaches the chat at all, so it goes back to the editor
+ * rather than hanging in the strip as though it were waiting.
+ *
+ * @param {string} tabId
+ * @param {boolean} taken
+ * @param {string} reason
+ */
+function answeredSend(tabId, taken, reason) {
+  const items = pending.get(tabId);
+  if (!items) return;
+  const item = items.find((entry) => entry.queued && !entry.answered);
+  if (!item) return;
+  if (taken) {
+    item.answered = true;
+    renderQueue();
+    return;
+  }
+  items.splice(items.indexOf(item), 1);
+  if (items.length === 0) pending.delete(tabId);
+  el.input.value = [el.input.value, item.text].filter((line) => line).join("\n\n");
+  grow();
+  toast(reason.length > 0 ? reason : "Pi did not take that message");
+  renderQueue();
+}
+
+/**
+ * Pi has just said exactly what it holds, so a message it answered for is no
+ * longer this page's to remember, whatever its own text turned into.
+ *
+ * @param {string} tabId
+ */
+function retireAnswered(tabId) {
+  const items = pending.get(tabId);
+  if (!items) return;
+  for (let index = items.length - 1; index >= 0; index -= 1) {
+    if (items[index].queued && items[index].answered) items.splice(index, 1);
+  }
+  if (items.length === 0) pending.delete(tabId);
 }
 
 /**
@@ -2056,6 +2109,21 @@ function handedBack(cleared, mine) {
 }
 
 /**
+ * Pi appends a line of its own to every message whose picture it resized, and a
+ * second one when it had to convert the format. Neither was typed, so both are
+ * gone before a message that arrived is compared with the one that was sent.
+ *
+ * @param {string} text
+ */
+function withoutPiNotes(text) {
+  return text
+    .split("\n")
+    .filter((line) => !/^\s*\[Image\b/.test(line))
+    .join("\n")
+    .trim();
+}
+
+/**
  * Once Pi puts a message in the transcript it is no longer pending, and a run
  * that settled took everything with it.
  *
@@ -2076,7 +2144,7 @@ function retirePending(frame) {
   const message = /** @type {{role?: string, content?: unknown}} */ (frame.message ?? null);
   if (message?.role !== "user") return;
 
-  const text = flatten(message.content).trim();
+  const text = withoutPiNotes(flatten(message.content));
 
   // A message that has just landed in the chat cannot still be waiting in a
   // queue, whatever the last word Pi said about that queue was.
