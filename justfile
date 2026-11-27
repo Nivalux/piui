@@ -10,6 +10,10 @@ addr := "127.0.0.1:7788"
 # a second or two alone and several times that once every core has a chromium of its own.
 node_flags := "--test-timeout=25000 --test-force-exit --test-concurrency=4"
 
+# Two browser files at a time on the way onto the running service. With four, files that lose nothing
+# on their own run out of their seconds, and a gate that says no at random teaches you to ignore it.
+live_flags := "--test-timeout=25000 --test-force-exit --test-concurrency=2"
+
 # what a reviewer runs before pushing: format, every test, and the binary
 check: fmt-check lint test build
 
@@ -39,7 +43,7 @@ test:
 
 # what a build has to survive before it goes in front of the running service
 test-live: test-zig test-js typecheck build
-    PIUI_BINARY="$PWD/zig-out/bin/piui" node --test {{node_flags}} --test-skip-pattern="terminal window|terminal font" web/test/browser/*.test.js
+    PIUI_BINARY="$PWD/zig-out/bin/piui" node --test {{live_flags}} --test-skip-pattern="terminal window|terminal font" web/test/browser/*.test.js
 
 # build, test, hand the binary to the service; a restart still follows
 live: test-live
