@@ -12,6 +12,7 @@ import {
   chatId,
   crashes,
   git,
+  gitOther,
   gitProject,
   noGit,
   openFreshChat,
@@ -26,6 +27,16 @@ import {
 
 before(start);
 after(stop);
+
+/**
+ * What the side panel shows right now. The side that is folded away leaves its
+ * text out, so this asks about the one a reader can see.
+ *
+ * @returns {Promise<string>}
+ */
+async function panelText() {
+  return page.evaluate(() => document.getElementById("side-panel")?.innerText ?? "");
+}
 
 test("both panels fold away and come back", { skip: blocked }, async () => {
   await showPanel(true);
@@ -189,6 +200,213 @@ test("the folder side of the panel belongs to the chat on screen just as much", 
   await page.waitForFunction(() => document.querySelector("#file-list .panel-wait") === null, undefined, {
     timeout: 30000,
   });
+});
+
+test("a chat that takes over the screen takes its folder into the panel with it", {
+  skip: blocked || noGit,
+}, async () => {
+  await openProjectChat(gitProject);
+  await showPanel(true);
+  const home = await chatId();
+  await page.waitForFunction(
+    () => (document.getElementById("side-panel")?.innerText ?? "").includes("fresh.md"),
+    undefined,
+    { timeout: 30000 },
+  );
+
+  const slow = async (/** @type {any} */ route) => {
+    await new Promise((resolve) => setTimeout(resolve, 1200));
+    await route.continue().catch(() => {});
+  };
+  await page.route("**/api/git/status**", slow);
+  await page.route("**/api/files**", slow);
+  try {
+    await openProjectChat(gitOther);
+    const away = await panelText();
+    assert.ok(
+      !away.includes("fresh.md") && !away.includes("notes.md"),
+      `the new chat wore the folder before it:\n${away}`,
+    );
+
+    await page.click("#panel-files-tab");
+    const listing = await panelText();
+    assert.ok(
+      !listing.includes("keep.txt") && !listing.includes("notes.md"),
+      `the folder side still held the chat before it:\n${listing}`,
+    );
+
+    await switchTo(home);
+    const back = await panelText();
+    assert.ok(
+      !back.includes("stranger.md") && !back.includes("abroad.md"),
+      `the chat came back to the folder of the one it left:\n${back}`,
+    );
+  } finally {
+    await page.unroute("**/api/git/status**");
+    await page.unroute("**/api/files**");
+    await page.click("#panel-diff-tab");
+  }
+
+  await page.waitForFunction(
+    () => (document.getElementById("side-panel")?.innerText ?? "").includes("fresh.md"),
+    undefined,
+    { timeout: 30000 },
+  );
+
+  await openProjectChat(gitOther);
+  await page.waitForFunction(
+    () => (document.getElementById("side-panel")?.innerText ?? "").includes("stranger.md"),
+    undefined,
+    { timeout: 30000 },
+  );
+  const there = await panelText();
+  assert.ok(!there.includes("fresh.md"), `the other folder still showed through:\n${there}`);
+  assert.match(await branchName(), /trunk/, "the badges name the branch of the folder on screen");
+
+  await switchTo(home);
+  await page.waitForFunction(
+    () => (document.getElementById("side-panel")?.innerText ?? "").includes("fresh.md"),
+    undefined,
+    { timeout: 30000 },
+  );
+  assert.match(await branchName(), /main/, "and they change back with the folder");
+});
+
+test("two chats in one folder keep their panel between them instead of blanking it", {
+  skip: blocked || noGit,
+}, async () => {
+  await openProjectChat(gitProject);
+  const home = await chatId();
+  await showPanel(true);
+  await page.waitForFunction(
+    () => (document.getElementById("side-panel")?.innerText ?? "").includes("fresh.md"),
+    undefined,
+    { timeout: 30000 },
+  );
+
+  await openProjectChat(gitProject);
+  assert.ok(
+    (await panelText()).includes("fresh.md"),
+    "a chat in the folder already on screen does not throw its listing away",
+  );
+
+  await switchTo(home);
+  assert.ok((await panelText()).includes("fresh.md"), "and neither does the way back");
+});
+
+/** @returns {Promise<string>} */
+async function branchName() {
+  return page.evaluate(() => document.getElementById("branch")?.innerText ?? "");
+}
+
+test("a file that answers late is read for the chat it was asked of, not the one on screen", {
+  skip: blocked || noGit,
+}, async () => {
+  await openProjectChat(gitProject);
+  const home = await chatId();
+  await showPanel(true);
+  await page.click("#panel-files-tab");
+  await notesRow();
+
+  let late = false;
+  await page.route("**/api/file**", async (route) => {
+    const first = new URL(route.request().url()).searchParams.get("id") === home;
+    if (first) await new Promise((resolve) => setTimeout(resolve, 2500));
+    await route.continue().catch(() => {});
+    if (first) late = true;
+  });
+
+  try {
+    await page.locator("#file-list .file-row", { hasText: "notes.md" }).first().click();
+
+    await openProjectChat(gitOther);
+    await page.click("#panel-files-tab");
+    await notesRow();
+    await page.locator("#file-list .file-row", { hasText: "notes.md" }).first().click();
+
+    await page.waitForFunction(
+      () => (document.getElementById("file-view")?.innerText ?? "").includes("git-other"),
+      undefined,
+      { timeout: 30000 },
+    );
+
+    const until = Date.now() + 15000;
+    while (!late && Date.now() < until) await new Promise((resolve) => setTimeout(resolve, 100));
+    assert.ok(late, "the read of the chat that was left behind never came back to be tested");
+    await page.waitForTimeout(500);
+
+    const shown = await page.evaluate(() => document.getElementById("file-view")?.innerText ?? "");
+    assert.ok(!shown.includes("git-project"), `the patch of a chat long gone took the screen:\n${shown.slice(0, 160)}`);
+  } finally {
+    await page.unroute("**/api/file**");
+  }
+
+  /** Wait until the folder side offers the file both projects keep under the same name. */
+  async function notesRow() {
+    await page.waitForFunction(
+      () =>
+        [...document.querySelectorAll("#file-list .file-row .file-name")].some(
+          (name) => name.textContent === "notes.md",
+        ),
+      undefined,
+      { timeout: 30000 },
+    );
+  }
+});
+
+test("a patch that answers late is read for the chat it was asked of, not the one on screen", {
+  skip: blocked || noGit,
+}, async () => {
+  await openProjectChat(gitProject);
+  const home = await chatId();
+  await showPanel(true);
+  await page.click("#panel-diff-tab");
+  await changedNotes();
+
+  let late = false;
+  await page.route("**/api/git/diff**", async (route) => {
+    const first = new URL(route.request().url()).searchParams.get("id") === home;
+    if (first) await new Promise((resolve) => setTimeout(resolve, 6000));
+    await route.continue().catch(() => {});
+    if (first) late = true;
+  });
+
+  try {
+    await page.locator("#diff-body .st-row", { hasText: "notes.md" }).first().click();
+
+    await openProjectChat(gitOther);
+    await page.click("#panel-diff-tab");
+    await changedNotes();
+    await page.locator("#diff-body .st-row", { hasText: "notes.md" }).first().click();
+    await page.waitForFunction(
+      () => (document.getElementById("file-view")?.innerText ?? "").includes("only-in-the-other-folder"),
+      undefined,
+      { timeout: 30000 },
+    );
+
+    const until = Date.now() + 20000;
+    while (!late && Date.now() < until) await new Promise((resolve) => setTimeout(resolve, 100));
+    assert.ok(late, "the patch of the chat that was left behind never came back to be tested");
+    await page.waitForTimeout(500);
+
+    const shown = await page.evaluate(() => document.getElementById("file-view")?.innerText ?? "");
+    assert.ok(
+      shown.includes("only-in-the-other-folder"),
+      `a patch from elsewhere replaced this one:\n${shown.slice(0, 160)}`,
+    );
+    assert.ok(!shown.includes("two"), `the patch of a chat long gone took the screen:\n${shown.slice(0, 160)}`);
+  } finally {
+    await page.unroute("**/api/git/diff**");
+  }
+
+  /** Wait until the diff side offers the file both projects keep under the same name. */
+  async function changedNotes() {
+    await page.waitForFunction(
+      () => [...document.querySelectorAll("#diff-body .st-row")].some((row) => row.textContent?.includes("notes.md")),
+      undefined,
+      { timeout: 30000 },
+    );
+  }
 });
 
 test("the branch sits in the title bar and both places pick the same base", { skip: blocked || noGit }, async () => {

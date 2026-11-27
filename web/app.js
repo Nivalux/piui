@@ -300,8 +300,8 @@ const perProject = 6;
 const attachments = [];
 /** @type {GitStatus | null} */
 let status = null;
-/** @type {string} the chat the status in hand was read for, "" before the first read */
-let statusFor = "";
+/** @type {string} the folder the badges, the diff list and the listing in hand belong to, "" before the first read */
+let statusHome = "";
 /** Whether the git of the chat on screen is still on its way from the server. */
 let gitReading = false;
 /** The folder the Files tab is showing. A query ignores it: typing searches the project. */
@@ -3886,24 +3886,27 @@ async function refreshGit() {
     gitRead = null;
     gitWanted = false;
     status = null;
-    statusFor = "";
+    statusHome = "";
     gitReading = false;
     renderBranch();
     return;
   }
   const id = state.active;
+  const home = active()?.cwd ?? id;
 
   // A chat in another folder has git of its own. On a share that takes a second
   // to answer, the panel would otherwise go on wearing the folder the chat
-  // before it lived in, so the read of a new chat clears what it is about to
-  // replace and gives up the read of the folder it left.
-  if (id !== statusFor) {
-    statusFor = id;
+  // before it lived in, so the read of a new folder clears what it is about to
+  // replace and gives up the read of the folder it left. Two chats in one folder
+  // do share their git, so moving between them reads again without emptying first.
+  if (home !== statusHome) {
+    statusHome = home;
     status = null;
     gitReading = true;
     state.files = [];
     state.filesTruncated = false;
     filesDir = "";
+    el.fileFilter.value = "";
     el.base.textContent = "reading";
     renderBranch();
     renderSidebar();
@@ -3919,14 +3922,16 @@ async function refreshGit() {
 
   const control = new AbortController();
   gitRead = control;
+  /** @type {GitStatus | null} */
+  let read = null;
   try {
-    status = /** @type {GitStatus} */ (
+    read = /** @type {GitStatus} */ (
       await getJSON(`/api/git/status?id=${encodeURIComponent(id)}&base=${encodeURIComponent(state.base)}`, {
         signal: control.signal,
       })
     );
   } catch {
-    status = null;
+    read = null;
   }
   gitRead = null;
   if (gitWanted) {
@@ -3936,6 +3941,7 @@ async function refreshGit() {
   }
   if (id !== state.active || generation !== refreshGeneration) return;
 
+  status = read;
   gitReading = false;
   el.base.textContent = status?.label ?? state.base;
   renderBranch();
@@ -4116,8 +4122,10 @@ function openBaseMenu(anchor) {
   draw();
   field.focus();
 
-  void getJSON(`/api/git/branches?id=${encodeURIComponent(state.active)}`)
+  const asked = state.active;
+  void getJSON(`/api/git/branches?id=${encodeURIComponent(asked)}`)
     .then((found) => {
+      if (asked !== state.active) return;
       menu.branches = /** @type {{names: {name: string}[]}} */ (found).names.map((row) => row.name);
       if (baseMenu === menu) draw();
     })
@@ -4349,7 +4357,7 @@ async function showFile(path) {
   );
 
   const shown = state.views[state.activeView];
-  if (shown?.kind !== "file" || shown.path !== path) return;
+  if (id !== state.active || shown?.kind !== "file" || shown.path !== path) return;
   if (!content) {
     el.fileBody.replaceChildren(element("div", "file-empty", "this file could not be read"));
     return;
@@ -4407,7 +4415,7 @@ async function showFileDiff(path) {
   }
 
   const shown = state.views[state.activeView];
-  if (shown?.kind !== "diff" || shown.path !== path) return;
+  if (id !== state.active || shown?.kind !== "diff" || shown.path !== path) return;
   if (trouble.length > 0) {
     el.fileBody.replaceChildren(element("div", "file-empty", trouble));
     return;
@@ -4539,14 +4547,24 @@ function refreshOpenDiff() {
 
 /** @type {boolean} */
 let filesRead = false;
+let filesWanted = false;
 
 async function loadFiles() {
   const id = state.active;
-  if (!id || filesRead) return;
+  if (!id) return;
+  if (filesRead) {
+    filesWanted = true;
+    return;
+  }
 
   filesRead = true;
   const payload = await getJSON(`/api/files?id=${encodeURIComponent(id)}`, deadline(60000)).catch(() => null);
   filesRead = false;
+  if (filesWanted) {
+    filesWanted = false;
+    void loadFiles();
+    return;
+  }
   if (id !== state.active) return;
 
   state.files = Array.isArray(payload?.files) ? payload.files : [];

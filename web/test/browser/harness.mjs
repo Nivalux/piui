@@ -37,6 +37,7 @@ let goneProject = "";
 
 /** A repository with one edit and one new file, for the diff panel. */
 let gitProject = "";
+let gitOther = "";
 
 /** Every command the stand-in for pi was sent, so a test can read what asked. */
 let commandsFile = "";
@@ -386,6 +387,20 @@ export async function start() {
     git(gitProject, ["commit", "-qm", "start"]);
     fs.writeFileSync(path.join(gitProject, "notes.md"), "one\ntwo\n");
     fs.writeFileSync(path.join(gitProject, "fresh.md"), "brand new\n");
+
+    gitOther = path.join(dir, "git-other");
+    fs.mkdirSync(gitOther, { recursive: true });
+    fs.writeFileSync(path.join(gitOther, "abroad.md"), "one\n");
+    fs.writeFileSync(path.join(gitOther, "ledger.txt"), "stay\n");
+    fs.writeFileSync(path.join(gitOther, "notes.md"), "elsewhere\n");
+    git(gitOther, ["init", "-q", "-b", "trunk"]);
+    git(gitOther, ["config", "user.email", "piui@example.invalid"]);
+    git(gitOther, ["config", "user.name", "piui"]);
+    git(gitOther, ["add", "."]);
+    git(gitOther, ["commit", "-qm", "start"]);
+    fs.writeFileSync(path.join(gitOther, "abroad.md"), "one\ntwo\n");
+    fs.writeFileSync(path.join(gitOther, "stranger.md"), "brand new\n");
+    fs.writeFileSync(path.join(gitOther, "notes.md"), "elsewhere\nonly-in-the-other-folder\n");
   }
 
   const port = await freePort();
@@ -567,6 +582,7 @@ export {
   freePort,
   gap,
   git,
+  gitOther,
   gitProject,
   hold,
   goneProject,
