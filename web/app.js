@@ -235,10 +235,18 @@ const growth = new ResizeObserver(() => {
 /** @type {Element | null} */
 let watched = null;
 
+/**
+ * The line the last pin left the reader on, and nothing at all until a pin has happened. A scroll
+ * that lands back on it is the one that pin itself caused: a reader moving, or older messages
+ * joining above, puts the position somewhere else by a margin no pin accounts for.
+ */
+let pinned = Number.POSITIVE_INFINITY;
+
 /** Move the chat to its newest line, but only when it is not already there. */
 function pinBottom() {
   const box = el.transcript;
   if (box.scrollHeight - box.scrollTop - box.clientHeight > 1) box.scrollTop = box.scrollHeight;
+  pinned = box.scrollTop;
 }
 /** @type {Map<number, string>} */
 const signatures = new Map();
@@ -1204,6 +1212,7 @@ async function openTab(id) {
   renderQueue();
   el.transcript.replaceChildren();
   state.follow = true;
+  pinned = Number.POSITIVE_INFINITY;
   el.jump.hidden = true;
 
   state.views = [{ kind: "chat" }, ...terminalViews(id)];
@@ -3082,7 +3091,9 @@ function scrollGap() {
  * back. Scrolling to the bottom is the opposite decision, so it re-arms it.
  */
 function watchScroll() {
-  state.follow = scrollGap() < 60;
+  const line = Math.min(pinned, el.transcript.scrollHeight - el.transcript.clientHeight);
+  state.follow = Math.abs(el.transcript.scrollTop - line) < 2 || scrollGap() < 60;
+  if (state.follow) pinned = el.transcript.scrollTop;
   el.jump.hidden = state.follow;
   if (!state.follow && el.transcript.scrollTop < 200 && transcriptStart > 0) {
     const height = el.transcript.scrollHeight;
@@ -3095,7 +3106,7 @@ function watchScroll() {
 
 function jumpToEnd() {
   const started = stopwatch();
-  el.transcript.scrollTop = el.transcript.scrollHeight;
+  pinBottom();
   state.follow = true;
   el.jump.hidden = true;
   took("jumpToEnd", started);

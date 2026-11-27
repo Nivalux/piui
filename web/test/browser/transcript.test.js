@@ -261,18 +261,66 @@ test("scrolling up stops the follow, the arrow brings it back", { skip: blocked 
   assert.equal(await page.locator("#jump").isVisible(), false);
 
   await runTurn("make it tall");
-  const followed = await page
-    .waitForFunction(
-      () => {
+
+  const until = Date.now() + 8000;
+  let seen = await glance();
+  while (!seen.atEnd && Date.now() < until) {
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    seen = await glance();
+  }
+  assert.ok(seen.atEnd, `the arrow re-armed the follow: ${JSON.stringify(seen)}`);
+
+  /** Where the reading position sits, and whether the way back is offered. */
+  async function glance() {
+    const where = /** @type {{gap: number, offered: boolean}} */ (
+      await page.evaluate(() => {
         const box = /** @type {HTMLElement} */ (document.getElementById("transcript"));
-        return box.scrollHeight - box.scrollTop - box.clientHeight < 60;
-      },
-      null,
-      { timeout: 5000 },
-    )
-    .then(() => true)
-    .catch(() => false);
-  assert.equal(followed, true, "the arrow re-armed the follow");
+        return {
+          gap: Math.round(box.scrollHeight - box.scrollTop - box.clientHeight),
+          offered: document.getElementById("jump")?.hidden !== true,
+        };
+      })
+    );
+    return { atEnd: where.gap < 60, ...where };
+  }
+});
+
+test("a scroll that lands where the chat pinned the reader keeps it following", { skip: blocked }, async () => {
+  await openFreshChat();
+  await runTurn("make it tall");
+  await idle();
+
+  const room = await page.evaluate(() => {
+    const box = /** @type {HTMLElement} */ (document.getElementById("transcript"));
+    box.scrollTop = box.scrollTop - 200;
+    return box.scrollHeight - box.clientHeight;
+  });
+  assert.ok(room > 400, `the answer left nothing to scroll: ${room}`);
+
+  await page.evaluate(() => {
+    const box = /** @type {HTMLElement} */ (document.getElementById("transcript"));
+    box.scrollTop = box.scrollHeight;
+  });
+  await idle();
+
+  const grown = /** @type {{gap: number, offered: boolean}} */ (
+    await page.evaluate(() => {
+      const box = /** @type {HTMLElement} */ (document.getElementById("transcript"));
+      const filler = document.createElement("div");
+      filler.style.flex = "0 0 400px";
+      box.append(filler);
+      box.dispatchEvent(new Event("scroll"));
+      const read = {
+        gap: Math.round(box.scrollHeight - box.scrollTop - box.clientHeight),
+        offered: document.getElementById("jump")?.hidden !== true,
+      };
+      filler.remove();
+      return read;
+    })
+  );
+
+  assert.ok(grown.gap >= 60, `the newest line moved too little to tell the two apart: ${JSON.stringify(grown)}`);
+  assert.equal(grown.offered, false, `a scroll the chat caused itself ended the follow: ${JSON.stringify(grown)}`);
 });
 
 test("opening a chat lands on its newest line", { skip: blocked }, async () => {
