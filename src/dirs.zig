@@ -93,6 +93,41 @@ fn earlier(_: void, left: Entry, right: Entry) bool {
     return std.ascii.orderIgnoreCase(left.name, right.name) == .lt;
 }
 
+/// A folder as a person wrote it in the settings: `~` is their home, `/` the root, and anything
+/// else counts from the folder piui was started in. A workdir comes back absolute either way,
+/// because a relative one reaches the file lister as a string it cannot open and lands a chat in a
+/// folder nobody asked for.
+pub fn wanted(a: std.mem.Allocator, home: []const u8, here: []const u8, path: []const u8) ![]const u8 {
+    if (std.mem.eql(u8, path, "~")) return clean(a, home);
+    if (std.mem.startsWith(u8, path, "~/")) {
+        const joined = try std.mem.join(a, "/", &.{ home, path[2..] });
+        return clean(a, joined);
+    }
+    if (std.mem.startsWith(u8, path, "/")) return clean(a, path);
+    const joined = try std.mem.join(a, "/", &.{ here, path });
+    return clean(a, joined);
+}
+
+test "a wanted folder means home, the root, or the folder piui started in" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    try std.testing.expectEqualStrings("/home/pi", try wanted(a, "/home/pi", "/srv/piui", "~"));
+    try std.testing.expectEqualStrings("/home/pi/.piui/scratch", try wanted(a, "/home/pi", "/srv/piui", "~/.piui/scratch"));
+    try std.testing.expectEqualStrings("/srv/piui/scratch", try wanted(a, "/home/pi", "/srv/piui", "scratch"));
+    try std.testing.expectEqualStrings("/data/chats", try wanted(a, "/home/pi", "/srv/piui", "/data/chats/"));
+}
+
+test "a folder a person wrote means their home, not a folder called tilde" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    const path = try wanted(a, "/home/pi", "/cache/projects/piui", "~/.piui/scratch");
+    try std.testing.expect(!std.mem.startsWith(u8, path, "/cache/projects/piui/~"));
+}
+
 test "a path is cleaned without a filesystem" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();

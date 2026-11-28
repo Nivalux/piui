@@ -2,6 +2,7 @@ const std = @import("std");
 const Io = std.Io;
 const piui = @import("piui");
 const auth = piui.auth;
+const dirs = piui.dirs;
 const hub = piui.hub;
 const git = piui.git;
 const json = piui.json;
@@ -34,7 +35,8 @@ pub fn main(minimal: std.process.Init.Minimal) !void {
     }
 
     const config = try settings.Settings.load(a, io, config_path);
-    const resolved = resolve(a, over, config.server, home, agent);
+    const here = dirs.current(a, io) catch ".";
+    const resolved = resolve(a, over, config.server, home, here, agent);
 
     Io.Dir.cwd().createDirPath(io, resolved.scratch_root) catch {};
 
@@ -61,7 +63,7 @@ pub fn main(minimal: std.process.Init.Minimal) !void {
         .sessions_root = resolved.sessions_root,
         .idle_after_ms = resolved.idle_seconds * 1000,
         .state_path = tabs_path,
-        .restored = hub.Hub.loadSaved(a, io, tabs_path),
+        .restored = healed(a, home, here, hub.Hub.loadSaved(a, io, tabs_path)),
     };
 
     var group: Io.Group = .init;
@@ -122,13 +124,29 @@ fn serve(web: *server.Server, connection: std.Io.net.Stream) void {
     web.serve(connection);
 }
 
+/// A workdir saved by an older piui can still be the relative string it wrote `~` into. The folder
+/// it names is real, so the path is finished the way it was finished back then, and the chat finds
+/// its files again.
+fn healed(a: std.mem.Allocator, home: []const u8, here: []const u8, saved: []const hub.Saved) []const hub.Saved {
+    const copy = a.dupe(hub.Saved, saved) catch return saved;
+    for (copy) |*entry| entry.cwd = dirs.wanted(a, home, here, entry.cwd) catch entry.cwd;
+    return copy;
+}
+
 fn reap(center: *hub.Hub, stop: *std.atomic.Value(bool)) void {
     center.reap(stop);
 }
 
 /// Command line, then config file, then the built-in default: a flag has to win over a file that
 /// was written weeks ago, and the file over a default.
-fn resolve(a: std.mem.Allocator, over: Overrides, file: settings.Server, home: []const u8, agent: []const u8) struct {
+fn resolve(
+    a: std.mem.Allocator,
+    over: Overrides,
+    file: settings.Server,
+    home: []const u8,
+    here: []const u8,
+    agent: []const u8,
+) struct {
     host: []const u8,
     port: u16,
     pi_bin: []const u8,
@@ -154,10 +172,20 @@ fn resolve(a: std.mem.Allocator, over: Overrides, file: settings.Server, home: [
         .host = host,
         .port = port,
         .pi_bin = over.pi_bin orelse file.pi,
-        .sessions_root = over.sessions_root orelse
-            (if (file.sessions.len > 0) file.sessions else std.fs.path.join(a, &.{ agent, "sessions" }) catch "."),
-        .scratch_root = over.scratch_root orelse
-            (if (file.scratch.len > 0) file.scratch else std.fs.path.join(a, &.{ home, ".piui", "scratch" }) catch "."),
+        .sessions_root = dirs.wanted(
+            a,
+            home,
+            here,
+            over.sessions_root orelse
+                (if (file.sessions.len > 0) file.sessions else std.fs.path.join(a, &.{ agent, "sessions" }) catch "."),
+        ) catch ".",
+        .scratch_root = dirs.wanted(
+            a,
+            home,
+            here,
+            over.scratch_root orelse
+                (if (file.scratch.len > 0) file.scratch else std.fs.path.join(a, &.{ home, ".piui", "scratch" }) catch "."),
+        ) catch ".",
         .idle_seconds = over.idle_seconds orelse file.idle_seconds,
     };
 }
