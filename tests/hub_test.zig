@@ -201,10 +201,85 @@ test "cleaning up drops the throw-away folders older builds of piui wrote, and t
     try sessionAt(io, "tmp/hub-sweep-older/store/piui-read/keep.jsonl", "/srv/project");
 
     try testing.expectEqual(@as(usize, 4), h.clearScratchSessions());
-    try Io.Dir.access(.cwd(), io, "tmp/hub-sweep-older/store/--d--/four.jsonl", .{});
     try Io.Dir.access(.cwd(), io, "tmp/hub-sweep-older/store/piui-read/keep.jsonl", .{});
+    try Io.Dir.access(.cwd(), io, "tmp/hub-sweep-older/store/--d--/four.jsonl", .{});
     try testing.expectError(
         error.FileNotFound,
         Io.Dir.access(.cwd(), io, "tmp/hub-sweep-older/store/piui-read/123-2.jsonl", .{}),
     );
+}
+
+test "a project's broom drops its chats and leaves its folder alone" {
+    var threaded: Io.Threaded = .init(testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    var h = try opened("tmp/hub-drop-project", io, arena.allocator());
+    defer Io.Dir.cwd().deleteTree(io, "tmp/hub-drop-project") catch {};
+
+    try sessionAt(io, "tmp/hub-drop-project/store/--one--/a.jsonl", "/srv/app");
+    try sessionAt(io, "tmp/hub-drop-project/store/--one--/b.jsonl", "/srv/app");
+    try sessionAt(io, "tmp/hub-drop-project/store/--two--/c.jsonl", "/srv/other");
+    try Io.Dir.cwd().createDirPath(io, "tmp/hub-drop-project/work");
+    try Io.Dir.cwd().writeFile(io, .{ .sub_path = "tmp/hub-drop-project/work/notes.md", .data = "keep" });
+
+    try testing.expectEqual(@as(usize, 2), h.dropProject("/srv/app"));
+    try testing.expectError(
+        error.FileNotFound,
+        Io.Dir.access(.cwd(), io, "tmp/hub-drop-project/store/--one--", .{}),
+    );
+    try Io.Dir.access(.cwd(), io, "tmp/hub-drop-project/store/--two--/c.jsonl", .{});
+    try Io.Dir.access(.cwd(), io, "tmp/hub-drop-project/work/notes.md", .{});
+}
+
+test "a project's broom takes every throw-away chat of a scratch group" {
+    var threaded: Io.Threaded = .init(testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    var h = try opened("tmp/hub-drop-scratch", io, arena.allocator());
+    defer Io.Dir.cwd().deleteTree(io, "tmp/hub-drop-scratch") catch {};
+
+    try sessionAt(io, "tmp/hub-drop-scratch/store/--s1--/a.jsonl", "tmp/hub-drop-scratch/scratch/9-1");
+    try sessionAt(io, "tmp/hub-drop-scratch/store/--s2--/b.jsonl", "tmp/hub-drop-scratch/scratch/9-2");
+    try sessionAt(io, "tmp/hub-drop-scratch/store/--p--/c.jsonl", "/srv/app");
+
+    try testing.expectEqual(@as(usize, 2), h.dropProject("tmp/hub-drop-scratch/scratch"));
+    try Io.Dir.access(.cwd(), io, "tmp/hub-drop-scratch/store/--p--/c.jsonl", .{});
+    try Io.Dir.access(.cwd(), io, "tmp/hub-drop-scratch/scratch", .{});
+}
+
+test "one chat goes by its file, and nothing outside the session folder" {
+    var threaded: Io.Threaded = .init(testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    var h = try opened("tmp/hub-drop-one", io, arena.allocator());
+    defer Io.Dir.cwd().deleteTree(io, "tmp/hub-drop-one") catch {};
+
+    try sessionAt(io, "tmp/hub-drop-one/store/--one--/a.jsonl", "/srv/app");
+    try Io.Dir.cwd().createDirPath(io, "tmp/hub-drop-one/work");
+    try Io.Dir.cwd().writeFile(io, .{ .sub_path = "tmp/hub-drop-one/work/notes.md", .data = "keep" });
+
+    try testing.expect(!h.dropSession("tmp/hub-drop-one/work/notes.md"));
+    try testing.expect(!h.dropSession("tmp/hub-drop-one/store/../work/notes.md"));
+    try Io.Dir.access(.cwd(), io, "tmp/hub-drop-one/work/notes.md", .{});
+
+    try testing.expect(h.dropSession("tmp/hub-drop-one/store/--one--/a.jsonl"));
+    try testing.expectError(
+        error.FileNotFound,
+        Io.Dir.access(.cwd(), io, "tmp/hub-drop-one/store/--one--", .{}),
+    );
+}
+
+test "a group holds its own folder, and everything under a throw-away one" {
+    try testing.expect(hub.bucketed("/srv/app", "/srv/app"));
+    try testing.expect(hub.bucketed("/x/scratch/9-1", "/x/scratch"));
+    try testing.expect(hub.bucketed("", ""));
+    try testing.expect(!hub.bucketed("/x/scratchy/9-1", "/x/scratch"));
+    try testing.expect(!hub.bucketed("/srv/app/sub", "/srv/app"));
+    try testing.expect(!hub.bucketed("/srv/app", ""));
 }

@@ -439,6 +439,11 @@ async function postJSON(path, body) {
   );
 }
 
+/** @param {string} path */
+async function deleteJSON(path) {
+  return jsonOf(await request(path, { method: "DELETE" }));
+}
+
 /** @param {Response} response */
 async function jsonOf(response) {
   const text = await response.text();
@@ -1710,6 +1715,72 @@ async function cleanUp() {
 }
 
 /**
+ * Takes one stored chat out of the list Pi keeps. The folder it happened in keeps its files.
+ *
+ * @param {SessionEntry} entry
+ */
+async function dropChat(entry) {
+  const yes = await askUser({
+    title: "Drop this chat?",
+    body: "The chat leaves the list Pi keeps. Its folder, and every file in it, stay as they are.",
+    confirm: "Delete chat",
+  });
+  if (!yes) return;
+  await dropListed(`path=${encodeURIComponent(entry.path)}`, entry.path, "");
+}
+
+/**
+ * Takes every stored chat of one folder out of the list Pi keeps. The folder itself is not touched.
+ *
+ * @param {string} bucket
+ * @param {number} count
+ */
+async function dropBucketChats(bucket, count) {
+  const yes = await askUser({
+    title: `Drop ${count} stored chat${count === 1 ? "" : "s"}?`,
+    body: `Every chat of ${projectLabel(bucket)} leaves the list Pi keeps. The folder, and every file in it, stay as they are.`,
+    confirm: "Delete chats",
+  });
+  if (!yes) return;
+  await dropListed(`cwd=${encodeURIComponent(bucket)}`, "", bucket);
+}
+
+/**
+ * Ends the chats this screen has open on what is about to go, drops them, and reads the list again.
+ *
+ * @param {string} where
+ * @param {string} path
+ * @param {string} bucket
+ */
+async function dropListed(where, path, bucket) {
+  const gone = state.tabs.filter((tab) => (path.length > 0 ? tab.sessionPath === path : inBucket(tab.cwd, bucket)));
+  const answer = await deleteJSON(`/api/sessions?${where}`).catch(() => null);
+  if (!answer) return void toast("dropping that chat failed");
+
+  for (const tab of gone) await closeTabById(tab.id);
+  await reloadSessions();
+  toast(`dropped ${answer.sessions ?? 0} chat${answer.sessions === 1 ? "" : "s"}`);
+}
+
+/**
+ * Whether a chat belongs to the group a heading lists: the folder itself, or, under a group of
+ * throw-away folders, anything beneath it.
+ *
+ * @param {string} cwd
+ * @param {string} bucket
+ */
+function inBucket(cwd, bucket) {
+  if (bucket.length === 0) return cwd.length === 0;
+  return cwd === bucket || (bucket.endsWith("/scratch") && cwd.startsWith(`${bucket}/`));
+}
+
+/** Reads the stored chats again right now, whatever a poll has in flight. */
+async function reloadSessions() {
+  sessionsRead = false;
+  await loadSessions();
+}
+
+/**
  * Run a `/command` this page answers itself; false leaves the line in the field to be fixed.
  *
  * @param {{name: string, run: string, argument: string}} route
@@ -2594,7 +2665,7 @@ function renderSessions(filter) {
   const rows = [];
   for (const [bucket, list] of folders(hits)) {
     const shown = filter.length > 0 || expanded.has(bucket) ? list : list.slice(0, perProject);
-    rows.push(groupLabel(projectLabel(bucket)));
+    rows.push(projectHead(bucket, list.length));
     rows.push(...shown.map((hit) => sessionRow(hit.item, hit.ranges)));
     if (shown.length < list.length) rows.push(moreButton(bucket, list.length - shown.length));
   }
@@ -2659,6 +2730,7 @@ function sessionRow(entry, ranges = []) {
     menuButton(() => [
       { label: "Copy path", run: () => void copyPath(entry.cwd ?? "") },
       { label: "Copy session path", run: () => void copyPath(entry.path) },
+      { label: "Delete chat", danger: true, run: () => void dropChat(entry) },
     ]),
   );
   return row;
@@ -2688,6 +2760,27 @@ function moreButton(bucket, rest) {
     renderSidebar();
   };
   return more;
+}
+
+/**
+ * The heading of one project, carrying a broom for every stored chat of that folder.
+ *
+ * @param {string} bucket
+ * @param {number} count
+ */
+function projectHead(bucket, count) {
+  const head = element("div", "group-label");
+  const name = projectLabel(bucket);
+  head.append(span(name, "group-name"));
+  if (count === 0) return head;
+
+  const sweep = element("button", "group-sweep");
+  sweep.innerHTML = ICONS.sweep;
+  sweep.setAttribute("type", "button");
+  sweep.setAttribute("aria-label", `Drop the ${count} stored chats of ${name}`);
+  sweep.onclick = () => void dropBucketChats(bucket, count);
+  head.append(sweep);
+  return head;
 }
 
 let projectKey = "";
@@ -4837,6 +4930,8 @@ function button(label, onclick) {
 const ICONS = {
   copy: '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M15 5.5A1.5 1.5 0 0 0 13.5 4H5.5A1.5 1.5 0 0 0 4 5.5V13"/></svg>',
   fork: '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><circle cx="7" cy="5.5" r="2.2"/><circle cx="17" cy="5.5" r="2.2"/><circle cx="12" cy="18.5" r="2.2"/><path d="M7 7.7v1.8a2.2 2.2 0 0 0 2.2 2.2h5.6a2.2 2.2 0 0 0 2.2-2.2V7.7"/><path d="M12 11.7v4.6"/></svg>',
+  sweep:
+    '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m9.06 11.9 8.07-8.06a2.85 2.85 0 1 1 4.03 4.03l-8.06 8.08"/><path d="M7.07 14.94c-1.66 0-3 1.35-3 3.02 0 1.33-2.5 1.52-2 2.02 1.08 1.1 2.49 2.02 4 2.02 2.2 0 4-1.8 4-4.04a3.01 3.01 0 0 0-3-3.02z"/></svg>',
 };
 
 /**
@@ -4930,11 +5025,6 @@ function section(title, ...rows) {
   const box = element("div", "setting-group");
   box.append(span(title, "setting-head"), lines);
   return box;
-}
-
-/** @param {string} label */
-function groupLabel(label) {
-  return element("div", "group-label", label);
 }
 
 /**

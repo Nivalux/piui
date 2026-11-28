@@ -1022,21 +1022,53 @@ pub const Hub = struct {
     /// The chats Pi kept for folders piui minted are deleted with the folders, so the session list
     /// does not fill with chats that have nothing on disk left to read.
     pub fn clearScratchSessions(self: *Hub) usize {
-        if (self.sessions_root.len < 2) return 0;
-        const index = sessions.Index{ .allocator = self.allocator, .io = self.io, .root = self.sessions_root };
-        const all = index.list(null) catch return 0;
+        var picked: std.ArrayListUnmanaged([]const u8) = .empty;
+        defer picked.deinit(self.allocator);
+        for (self.chats() orelse return 0) |entry| {
+            if (!self.mints(entry.cwd orelse "")) continue;
+            picked.append(self.allocator, entry.path) catch break;
+        }
+        return self.dropFiles(picked.items);
+    }
 
+    /// Every stored chat of one folder, which is what the broom beside a project in the list asks
+    /// for; the folder the chats happened in is not touched, nor anything inside it.
+    pub fn dropProject(self: *Hub, bucket: []const u8) usize {
+        var picked: std.ArrayListUnmanaged([]const u8) = .empty;
+        defer picked.deinit(self.allocator);
+        for (self.chats() orelse return 0) |entry| {
+            if (!bucketed(entry.cwd orelse "", bucket)) continue;
+            picked.append(self.allocator, entry.path) catch break;
+        }
+        return self.dropFiles(picked.items);
+    }
+
+    /// One stored chat named by the path the list handed out, refusing anything outside Pi's own
+    /// session folder.
+    pub fn dropSession(self: *Hub, path: []const u8) bool {
+        if (!stored(self.sessions_root, path)) return false;
+        const one = [_][]const u8{path};
+        return self.dropFiles(&one) > 0;
+    }
+
+    fn chats(self: *Hub) ?[]sessions.Entry {
+        if (self.sessions_root.len < 2) return null;
+        const index = sessions.Index{ .allocator = self.allocator, .io = self.io, .root = self.sessions_root };
+        return index.list(null) catch null;
+    }
+
+    /// Deletes the given session files, then takes away the folder Pi made for a project once its
+    /// last chat went with them.
+    fn dropFiles(self: *Hub, paths: []const []const u8) usize {
         var emptied: std.ArrayListUnmanaged([]const u8) = .empty;
         defer emptied.deinit(self.allocator);
 
         var removed: usize = 0;
-        for (all) |entry| {
-            const cwd = entry.cwd orelse continue;
-            if (!self.mints(cwd)) continue;
-            Io.Dir.cwd().deleteFile(self.io, entry.path) catch continue;
+        for (paths) |path| {
+            Io.Dir.cwd().deleteFile(self.io, path) catch continue;
             removed += 1;
 
-            const parent = std.fs.path.dirname(entry.path) orelse continue;
+            const parent = std.fs.path.dirname(path) orelse continue;
             if (listed(emptied.items, parent)) continue;
             emptied.append(self.allocator, parent) catch continue;
         }
@@ -1098,6 +1130,23 @@ fn minted(path: []const u8) bool {
         if (base[i] != '-' and !std.ascii.isDigit(base[i])) return false;
     }
     return true;
+}
+
+/// Whether a chat belongs to the group the list shows a folder under: the folder itself, or, for a
+/// group of throw-away folders, anything beneath it.
+pub fn bucketed(cwd: []const u8, bucket: []const u8) bool {
+    if (bucket.len == 0) return cwd.len == 0;
+    if (std.mem.eql(u8, cwd, bucket)) return true;
+    return std.mem.endsWith(u8, bucket, "/scratch") and
+        std.mem.startsWith(u8, cwd, bucket) and
+        cwd.len > bucket.len and
+        cwd[bucket.len] == '/';
+}
+
+/// Whether a path names a file inside Pi's own session folder, and nothing a request made up.
+fn stored(root: []const u8, path: []const u8) bool {
+    return root.len > 1 and std.mem.startsWith(u8, path, root) and
+        path.len > root.len and path[root.len] == '/' and std.mem.indexOf(u8, path, "..") == null;
 }
 
 fn listed(list: []const []const u8, path: []const u8) bool {

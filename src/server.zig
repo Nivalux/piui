@@ -193,6 +193,8 @@ pub const Server = struct {
         }
 
         if (std.mem.eql(u8, path, "/api/sessions")) {
+            if (request.head.method == .DELETE) return self.dropSessions(request, a);
+
             const wanted = if (query(a, target, "cwd")) |cwd|
                 (if (self.options.hub.isScratch(cwd)) null else cwd)
             else
@@ -692,6 +694,44 @@ pub const Server = struct {
 
     fn sendJson(self: *Server, request: *std.http.Server.Request, status: std.http.Status, body: []const u8) !void {
         return self.respond(request, status, "application/json", body);
+    }
+
+    /// Takes stored chats out of Pi's list - one by its file, or every chat of a named folder -
+    /// ending a chat still open first and leaving the folder the chats happened in alone.
+    fn dropSessions(self: *Server, request: *std.http.Server.Request, a: std.mem.Allocator) !void {
+        const io = self.options.io;
+        const file = query(a, request.head.target, "path");
+        const bucket = query(a, request.head.target, "cwd");
+        if (file == null and bucket == null) return self.text(request, .bad_request, "a path or a folder");
+
+        var found = Collector{ .allocator = a, .list = .empty, .io = io };
+        self.options.hub.each(&found, collect);
+
+        var chats: usize = 0;
+        for (found.list.items) |info| {
+            const mine = if (file) |want|
+                std.mem.eql(u8, info.sessionPath orelse "", want)
+            else
+                hub.bucketed(info.cwd, bucket orelse "");
+            if (!mine) continue;
+
+            const tab = self.options.hub.get(info.id) orelse continue;
+            self.options.shells.closeTab(tab.id);
+            self.options.hub.close(tab, "chat dropped");
+            chats += 1;
+        }
+
+        const dropped = if (file) |want|
+            @as(usize, @intFromBool(self.options.hub.dropSession(want)))
+        else
+            self.options.hub.dropProject(bucket orelse "");
+
+        const payload = std.fmt.allocPrint(
+            a,
+            "{{\"ok\":true,\"chats\":{d},\"sessions\":{d}}}",
+            .{ chats, dropped },
+        ) catch return self.text(request, .internal_server_error, "oom");
+        return self.sendJson(request, .ok, payload);
     }
 
     fn respond(self: *Server, request: *std.http.Server.Request, status: std.http.Status, kind: []const u8, body: []const u8) !void {

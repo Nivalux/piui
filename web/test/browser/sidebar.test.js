@@ -324,7 +324,11 @@ test("a session row offers its folder and its session file without opening the c
   await row.locator(".row-menu").click();
   await page.waitForSelector(".row-actions", { state: "visible" });
   await menuHangsUnder(row);
-  assert.deepEqual(await page.locator(".row-action").allInnerTexts(), ["Copy path", "Copy session path"]);
+  assert.deepEqual(await page.locator(".row-action").allInnerTexts(), [
+    "Copy path",
+    "Copy session path",
+    "Delete chat",
+  ]);
   assert.equal(await activeTab(), before, "the chat behind it stayed put");
 
   await page.locator(".row-action", { hasText: "Copy path" }).click();
@@ -491,6 +495,117 @@ test("the broom closes every chat and clears the folders piui made for them", { 
   assert.equal(fs.existsSync(stray), false, "the chat pi kept for a minted folder went with it");
   assert.equal(fs.existsSync(path.dirname(stray)), false, "and the empty folder around it too");
   assert.ok(fs.existsSync(kept), "a chat in a real project is nobody's to delete");
+});
+
+test("a session row drops just that chat and leaves its neighbours alone", { skip: blocked }, async () => {
+  const solo = path.join(sessionsDir, "--solo--", "solo.jsonl");
+  const neighbour = path.join(sessionsDir, "--neighbour--", "neighbour.jsonl");
+  fs.mkdirSync(path.dirname(solo), { recursive: true });
+  fs.mkdirSync(path.dirname(neighbour), { recursive: true });
+  writeSession(solo, {
+    cwd: wiredProject,
+    first: "drop only this one from the list",
+    header: "2026-11-28T10:00:00.000Z",
+    last: "2026-11-28T10:05:00.000Z",
+  });
+  writeSession(neighbour, {
+    cwd: wiredProject,
+    first: "the chat that stays in the list",
+    header: "2026-11-28T10:10:00.000Z",
+    last: "2026-11-28T10:12:00.000Z",
+  });
+
+  await page.reload();
+  const row = page.locator("#session-list .session", { hasText: "drop only this one from the list" }).first();
+  await row.waitFor({ state: "visible", timeout: 15000 });
+
+  await row.locator(".row-menu").click();
+  await page.waitForSelector(".row-actions", { state: "visible" });
+  await page.locator(".row-action", { hasText: "Delete chat" }).click();
+  await page.waitForSelector("#ask-modal", { state: "visible" });
+  await page.locator("#ask-modal button", { hasText: "Cancel" }).click();
+  await page.waitForSelector("#ask-modal", { state: "hidden" });
+  assert.ok(fs.existsSync(solo), "no means the chat stays where it is");
+
+  await row.locator(".row-menu").click();
+  await page.waitForSelector(".row-actions", { state: "visible" });
+  await page.locator(".row-action", { hasText: "Delete chat" }).click();
+  await page.locator("#ask-modal button", { hasText: "Delete chat" }).click();
+
+  await toastSays(/dropped 1 chat\b/);
+  await page.waitForFunction(
+    () =>
+      ![...document.querySelectorAll("#session-list .session")].some((node) =>
+        String(node.textContent).includes("drop only this one"),
+      ),
+    undefined,
+    { timeout: 30000 },
+  );
+  assert.equal(fs.existsSync(solo), false, "the chat is off the disk");
+  assert.equal(fs.existsSync(path.dirname(solo)), false, "and the empty folder Pi made around it too");
+  assert.ok(fs.existsSync(neighbour), "the chat beside it is nobody's to delete");
+});
+
+test("the broom on a project drops every chat of it and keeps the folder", { skip: blocked }, async () => {
+  const work = path.dirname(scratchDir);
+  const swept = path.join(work, "swept-project");
+  const other = path.join(work, "kept-project");
+  fs.mkdirSync(swept, { recursive: true });
+  fs.mkdirSync(other, { recursive: true });
+  fs.writeFileSync(path.join(swept, "notes.md"), "a file of the project itself");
+
+  const folder = path.join(sessionsDir, "--swept--");
+  fs.mkdirSync(folder, { recursive: true });
+  writeSession(path.join(folder, "one.jsonl"), {
+    cwd: swept,
+    first: "the first chat of the swept project",
+    header: "2026-11-28T11:00:00.000Z",
+    last: "2026-11-28T11:05:00.000Z",
+  });
+  writeSession(path.join(folder, "two.jsonl"), {
+    cwd: swept,
+    first: "the second chat of the swept project",
+    header: "2026-11-28T11:10:00.000Z",
+    last: "2026-11-28T11:12:00.000Z",
+  });
+  const stays = path.join(sessionsDir, "--keptone--", "stays.jsonl");
+  fs.mkdirSync(path.dirname(stays), { recursive: true });
+  writeSession(stays, {
+    cwd: other,
+    first: "a chat of the project that stays",
+    header: "2026-11-28T11:20:00.000Z",
+    last: "2026-11-28T11:22:00.000Z",
+  });
+
+  await page.reload();
+  const head = page.locator("#session-list .group-label", { hasText: "swept-project" });
+  await head.waitFor({ state: "visible", timeout: 15000 });
+  await head.hover();
+  assert.ok(await head.locator(".group-sweep").isVisible(), "the heading carries a broom");
+
+  await head.locator(".group-sweep").click();
+  await page.waitForSelector("#ask-modal", { state: "visible" });
+  assert.match(await page.locator("#ask-modal .card-title").innerText(), /drop 2 stored chats/i);
+  await page.locator("#ask-modal button", { hasText: "Cancel" }).click();
+  await page.waitForSelector("#ask-modal", { state: "hidden" });
+  assert.deepEqual(fs.readdirSync(folder).sort(), ["one.jsonl", "two.jsonl"], "no means both chats stay");
+
+  await head.locator(".group-sweep").click();
+  await page.waitForSelector("#ask-modal", { state: "visible" });
+  await page.locator("#ask-modal button", { hasText: "Delete chats" }).click();
+
+  await toastSays(/dropped 2 chats/);
+  await page.waitForFunction(
+    () =>
+      ![...document.querySelectorAll("#session-list .group-label")].some((node) =>
+        String(node.textContent).includes("swept-project"),
+      ),
+    undefined,
+    { timeout: 30000 },
+  );
+  assert.equal(fs.existsSync(folder), false, "the chats and the empty folder Pi made for them are gone");
+  assert.ok(fs.existsSync(stays), "another project's chat is nobody's to delete");
+  assert.ok(fs.existsSync(path.join(swept, "notes.md")), "the project folder and the files in it stay");
 });
 
 test("the page threw nothing", { skip: blocked }, async () => {

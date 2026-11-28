@@ -199,11 +199,44 @@ pre,
 }
 
 .group-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   margin: 12px 4px 4px;
   font-size: 11px;
   letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--fg-soft);
+}
+
+.group-label .group-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.group-sweep {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 3px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  opacity: 0;
+}
+
+.group-label:hover .group-sweep,
+.group-sweep:focus-visible {
+  opacity: 1;
+}
+
+.group-sweep:hover {
+  background: var(--accent-dim);
+  color: var(--fg);
 }
 
 .side-sub {
