@@ -1690,7 +1690,7 @@ async function cleanUp() {
   const chats = state.tabs.length;
   const yes = await askUser({
     title: "Clean up?",
-    body: "Every chat is closed, and the folders piui made for chats without a project are deleted with everything inside them. Project folders are left alone.",
+    body: "Every chat is closed, the folders piui made for chats without a project are deleted with everything inside them, and the chats Pi kept for those folders are dropped. Project folders and project chats in Pi's list are left alone.",
     confirm: "Close and delete",
   });
   if (!yes) return;
@@ -1706,7 +1706,7 @@ async function cleanUp() {
   renderSidebar();
   showEmptyState();
   await loadSessions();
-  toast(`closed ${chats} chats, cleared ${answer.folders ?? 0} folders`);
+  toast(`closed ${chats} chats, cleared ${answer.folders ?? 0} folders and ${answer.sessions ?? 0} sessions`);
 }
 
 /**

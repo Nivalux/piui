@@ -4,6 +4,7 @@
 
 import { after, before, test } from "node:test";
 import fs from "node:fs";
+import path from "node:path";
 import assert from "node:assert/strict";
 import { relativeTime } from "../../format.js";
 import {
@@ -17,12 +18,16 @@ import {
   onePixelPng,
   openFreshChat,
   page,
+  root,
   scratchDir,
+  sessionsDir,
   sidebarIds,
   start,
   stop,
   switchTo,
   toastSays,
+  wiredProject,
+  writeSession,
 } from "./harness.mjs";
 
 before(start);
@@ -140,6 +145,40 @@ test("escape closes the picker without opening anything", { skip: blocked }, asy
   await page.keyboard.press("Escape");
   await page.waitForFunction(() => document.getElementById("dir-modal")?.hidden === true);
   assert.equal(await page.locator("#tab-list .tab").count(), tabs);
+});
+
+test("a highlighted folder name stays one word", { skip: blocked }, async () => {
+  await page.click("#new-project");
+  await page.waitForSelector("#dir-field");
+  await page.fill("#dir-field", `${root}/sc`);
+  await page.waitForFunction(
+    () =>
+      [...document.querySelectorAll("#dir-list .dir-row")].some((row) =>
+        String(row.getAttribute("data-path")).endsWith("/src"),
+      ),
+    null,
+    { timeout: 15000 },
+  );
+
+  const shape = await page.evaluate(() => {
+    const row = [...document.querySelectorAll("#dir-list .dir-row")].find((one) =>
+      String(one.getAttribute("data-path")).endsWith("/src"),
+    );
+    return {
+      marks: row?.querySelectorAll("b").length ?? 0,
+      boxes: row?.children.length ?? 0,
+      name: String(row?.textContent ?? "")
+        .replace("\u25b8", "")
+        .trim(),
+    };
+  });
+  assert.equal(shape.name, "src");
+  assert.equal(shape.marks, 2, "the s and the r are marked apart");
+  assert.equal(shape.boxes, 2, "the arrow and one box for the name, not one per marked run");
+
+  await page.focus("#dir-field");
+  await page.keyboard.press("Escape");
+  await page.waitForSelector("#dir-modal", { state: "hidden" });
 });
 
 test("a chat taken from the session list goes back to its own project", { skip: blocked }, async () => {
@@ -420,6 +459,22 @@ test("the broom closes every chat and clears the folders piui made for them", { 
   const minted = fs.readdirSync(scratchDir);
   assert.ok(minted.length >= 2, `each chat was given a folder, found ${minted.length}`);
 
+  const stray = path.join(sessionsDir, "--scratch-chat--", "stray.jsonl");
+  fs.mkdirSync(path.dirname(stray), { recursive: true });
+  writeSession(stray, {
+    cwd: path.join(scratchDir, minted[0]),
+    first: "download those pictures",
+    header: "2026-11-28T09:00:00.000Z",
+    last: "2026-11-28T09:05:00.000Z",
+  });
+  const kept = path.join(sessionsDir, "kept-project.jsonl");
+  writeSession(kept, {
+    cwd: wiredProject,
+    first: "a chat in a real project",
+    header: "2026-11-28T09:10:00.000Z",
+    last: "2026-11-28T09:12:00.000Z",
+  });
+
   await page.click("#sweep");
   await page.waitForSelector("#ask-modal", { state: "visible" });
   assert.match(await page.locator("#ask-modal .card-title").innerText(), /clean up/i);
@@ -433,6 +488,9 @@ test("the broom closes every chat and clears the folders piui made for them", { 
   await page.waitForFunction(() => document.querySelectorAll("#tab-list .tab").length === 0, null, { timeout: 15000 });
   await toastSays(/cleared/);
   assert.deepEqual(fs.readdirSync(scratchDir), [], "the folders piui minted are gone with what was in them");
+  assert.equal(fs.existsSync(stray), false, "the chat pi kept for a minted folder went with it");
+  assert.equal(fs.existsSync(path.dirname(stray)), false, "and the empty folder around it too");
+  assert.ok(fs.existsSync(kept), "a chat in a real project is nobody's to delete");
 });
 
 test("the page threw nothing", { skip: blocked }, async () => {

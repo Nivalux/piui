@@ -132,3 +132,53 @@ test "cleaning up empties the folders piui minted and keeps the root itself" {
     var walker = dir.iterate();
     try testing.expectEqual(@as(?Io.Dir.Entry, null), try walker.next(io));
 }
+
+fn sessionAt(io: Io, comptime path: []const u8, comptime cwd: []const u8) !void {
+    try Io.Dir.cwd().createDirPath(io, std.fs.path.dirname(path) orelse ".");
+    try Io.Dir.cwd().writeFile(io, .{
+        .sub_path = path,
+        .data = "{\"type\":\"session\",\"cwd\":\"" ++ cwd ++ "\",\"timestamp\":\"2026-11-28T00:00:00.000Z\"}\n",
+    });
+}
+
+test "cleaning up drops the chats pi kept for the folders it minted" {
+    var threaded: Io.Threaded = .init(testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    var h = try opened("tmp/hub-sweep-sessions", io, arena.allocator());
+    defer Io.Dir.cwd().deleteTree(io, "tmp/hub-sweep-sessions") catch {};
+
+    try sessionAt(io, "tmp/hub-sweep-sessions/store/--minted--/one.jsonl", "tmp/hub-sweep-sessions/scratch/99-1");
+    try sessionAt(io, "tmp/hub-sweep-sessions/store/project/two.jsonl", "/tmp/some-project");
+
+    try testing.expectEqual(@as(usize, 1), h.clearScratchSessions());
+    try testing.expectError(
+        error.FileNotFound,
+        Io.Dir.access(.cwd(), io, "tmp/hub-sweep-sessions/store/--minted--", .{}),
+    );
+    try Io.Dir.access(.cwd(), io, "tmp/hub-sweep-sessions/store/project/two.jsonl", .{});
+    try Io.Dir.access(.cwd(), io, "tmp/hub-sweep-sessions/store/gone.jsonl", .{});
+}
+
+test "a chat that named its throw-away folder relatively is dropped too" {
+    var threaded: Io.Threaded = .init(testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    var h = try opened("tmp/hub-sweep-relative", io, arena.allocator());
+    defer Io.Dir.cwd().deleteTree(io, "tmp/hub-sweep-relative") catch {};
+
+    h.scratch_root = "tmp/hub-sweep-relative/.piui/scratch";
+    h.home = "tmp/hub-sweep-relative";
+    h.here = "tmp/hub-sweep-relative";
+    try sessionAt(io, "tmp/hub-sweep-relative/store/--tilde--/one.jsonl", "~/.piui/scratch/99-1");
+
+    try testing.expectEqual(@as(usize, 1), h.clearScratchSessions());
+    try testing.expectError(
+        error.FileNotFound,
+        Io.Dir.access(.cwd(), io, "tmp/hub-sweep-relative/store/--tilde--", .{}),
+    );
+}

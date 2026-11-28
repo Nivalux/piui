@@ -100,26 +100,27 @@ export function rank(query, items, texts) {
 }
 
 /**
- * Wrap the matched ranges of `text` for display.
+ * Wrap the matched ranges of `text` for display. The whole word comes back as one node, because a
+ * row that lays its parts out with a gap would otherwise put that gap between every letter.
  *
  * @param {string} text
  * @param {[number, number][]} ranges
  * @param {string} tag
- * @returns {DocumentFragment | Text}
+ * @returns {HTMLElement | Text}
  */
 export function highlight(text, ranges, tag = "i") {
   const value = String(text);
   if (ranges.length === 0) return document.createTextNode(value);
 
-  const fragment = document.createDocumentFragment();
+  const word = document.createElement("span");
   let at = 0;
   for (const [from, to] of ranges) {
-    if (from > at) fragment.append(document.createTextNode(value.slice(at, from)));
+    if (from > at) word.append(document.createTextNode(value.slice(at, from)));
     const mark = document.createElement(tag);
     mark.textContent = value.slice(from, to);
-    fragment.append(mark);
+    word.append(mark);
     at = to;
   }
-  if (at < value.length) fragment.append(document.createTextNode(value.slice(at)));
-  return fragment;
+  if (at < value.length) word.append(document.createTextNode(value.slice(at)));
+  return word;
 }

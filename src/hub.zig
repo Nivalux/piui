@@ -1,6 +1,7 @@
 const std = @import("std");
 const Io = std.Io;
 const child = @import("child.zig");
+const dirs = @import("dirs.zig");
 const framing = @import("framing.zig");
 const protocol = @import("protocol.zig");
 const json = @import("json.zig");
@@ -247,6 +248,10 @@ pub const Hub = struct {
     scratch_root: []const u8,
     sessions_root: []const u8 = "",
     idle_after_ms: i64,
+    /// The home folder and the folder piui was started in, kept because a chat written before paths
+    /// were understood may name its throw-away folder relatively.
+    home: []const u8 = "",
+    here: []const u8 = "",
     /// Where the open tabs get remembered, empty turns that off.
     state_path: []const u8 = "",
     /// What was open when the previous process stopped.
@@ -1014,9 +1019,46 @@ pub const Hub = struct {
         return removed;
     }
 
+    /// The chats Pi kept for folders piui minted are deleted with the folders, so the session list
+    /// does not fill with chats that have nothing on disk left to read.
+    pub fn clearScratchSessions(self: *Hub) usize {
+        if (self.sessions_root.len < 2) return 0;
+        const index = sessions.Index{ .allocator = self.allocator, .io = self.io, .root = self.sessions_root };
+        const all = index.list(null) catch return 0;
+
+        var emptied: std.ArrayListUnmanaged([]const u8) = .empty;
+        defer emptied.deinit(self.allocator);
+
+        var removed: usize = 0;
+        for (all) |entry| {
+            const cwd = entry.cwd orelse continue;
+            if (!self.mints(cwd)) continue;
+            Io.Dir.cwd().deleteFile(self.io, entry.path) catch continue;
+            removed += 1;
+
+            const parent = std.fs.path.dirname(entry.path) orelse continue;
+            if (listed(emptied.items, parent)) continue;
+            emptied.append(self.allocator, parent) catch continue;
+        }
+
+        for (emptied.items) |folder| {
+            if (folderEmpty(self, folder)) Io.Dir.cwd().deleteTree(self.io, folder) catch {};
+        }
+        return removed;
+    }
+
     /// True for the throw-away directories a chat with no project runs in.
     pub fn isScratch(self: *Hub, cwd: []const u8) bool {
         return self.scratch_root.len > 0 and std.mem.startsWith(u8, cwd, self.scratch_root);
+    }
+
+    /// Whether a workdir is one of the throw-away folders, read the way it was written when the chat
+    /// began: a chat from before piui understood `~` still names its folder relatively.
+    fn mints(self: *Hub, cwd: []const u8) bool {
+        if (self.isScratch(cwd)) return true;
+        if (self.home.len == 0) return false;
+        const healed = dirs.wanted(self.allocator, self.home, self.here, cwd) catch return false;
+        return self.isScratch(healed);
     }
 
     fn resolveCwd(self: *Hub, cwd: ?[]const u8) ![]u8 {
@@ -1040,3 +1082,16 @@ pub const Hub = struct {
         return path;
     }
 };
+
+fn listed(list: []const []const u8, path: []const u8) bool {
+    for (list) |one| if (std.mem.eql(u8, one, path)) return true;
+    return false;
+}
+
+fn folderEmpty(self: *Hub, folder: []const u8) bool {
+    var dir = Io.Dir.cwd().openDir(self.io, folder, .{ .iterate = true }) catch return false;
+    defer dir.close(self.io);
+
+    var walker = dir.iterate();
+    return (walker.next(self.io) catch null) == null;
+}

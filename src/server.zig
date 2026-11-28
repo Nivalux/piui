@@ -118,10 +118,12 @@ pub const Server = struct {
                 chats += 1;
             }
 
+            const dropped = self.options.hub.clearScratchSessions();
+            const folders = self.options.hub.clearScratch();
             const payload = std.fmt.allocPrint(
                 a,
-                "{{\"ok\":true,\"chats\":{d},\"folders\":{d}}}",
-                .{ chats, self.options.hub.clearScratch() },
+                "{{\"ok\":true,\"chats\":{d},\"folders\":{d},\"sessions\":{d}}}",
+                .{ chats, folders, dropped },
             ) catch return self.text(request, .internal_server_error, "oom");
             return self.sendJson(request, .ok, payload);
         }

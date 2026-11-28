@@ -62,6 +62,8 @@ pub fn main(minimal: std.process.Init.Minimal) !void {
         .scratch_root = resolved.scratch_root,
         .sessions_root = resolved.sessions_root,
         .idle_after_ms = resolved.idle_seconds * 1000,
+        .home = home,
+        .here = here,
         .state_path = tabs_path,
         .restored = healed(a, home, here, hub.Hub.loadSaved(a, io, tabs_path)),
     };
