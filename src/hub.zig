@@ -1056,6 +1056,7 @@ pub const Hub = struct {
     /// began: a chat from before piui understood `~` still names its folder relatively.
     fn mints(self: *Hub, cwd: []const u8) bool {
         if (self.isScratch(cwd)) return true;
+        if (minted(cwd)) return true;
         if (self.home.len == 0) return false;
         const healed = dirs.wanted(self.allocator, self.home, self.here, cwd) catch return false;
         return self.isScratch(healed);
@@ -1082,6 +1083,22 @@ pub const Hub = struct {
         return path;
     }
 };
+
+/// A folder piui minted for a chat with no project, in any layout it has written so far: a
+/// directory named scratch, or a numbered run inside one.
+fn minted(path: []const u8) bool {
+    const base = std.fs.path.basename(path);
+    if (!std.mem.eql(u8, std.fs.path.basename(std.fs.path.dirname(path) orelse ""), "scratch")) {
+        return std.mem.eql(u8, base, "scratch");
+    }
+    var i: usize = 0;
+    while (i < base.len and std.ascii.isDigit(base[i])) i += 1;
+    if (i == 0 or i == base.len or base[i] != '-') return false;
+    while (i < base.len) : (i += 1) {
+        if (base[i] != '-' and !std.ascii.isDigit(base[i])) return false;
+    }
+    return true;
+}
 
 fn listed(list: []const []const u8, path: []const u8) bool {
     for (list) |one| if (std.mem.eql(u8, one, path)) return true;

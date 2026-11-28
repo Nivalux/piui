@@ -182,3 +182,29 @@ test "a chat that named its throw-away folder relatively is dropped too" {
         Io.Dir.access(.cwd(), io, "tmp/hub-sweep-relative/store/--tilde--", .{}),
     );
 }
+
+test "cleaning up drops the throw-away folders older builds of piui wrote, and the copies of them" {
+    var threaded: Io.Threaded = .init(testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    var h = try opened("tmp/hub-sweep-older", io, arena.allocator());
+    defer Io.Dir.cwd().deleteTree(io, "tmp/hub-sweep-older") catch {};
+
+    h.scratch_root = "tmp/hub-sweep-older/now";
+    try sessionAt(io, "tmp/hub-sweep-older/store/--a--/one.jsonl", "/srv/scratch/123-2");
+    try sessionAt(io, "tmp/hub-sweep-older/store/--b--/two.jsonl", "/tmp/scratch");
+    try sessionAt(io, "tmp/hub-sweep-older/store/--c--/three.jsonl", "/tmp/scratch/934-2");
+    try sessionAt(io, "tmp/hub-sweep-older/store/--d--/four.jsonl", "/srv/scratchpad/notes");
+    try sessionAt(io, "tmp/hub-sweep-older/store/piui-read/123-2.jsonl", "/srv/scratch/123-2");
+    try sessionAt(io, "tmp/hub-sweep-older/store/piui-read/keep.jsonl", "/srv/project");
+
+    try testing.expectEqual(@as(usize, 4), h.clearScratchSessions());
+    try Io.Dir.access(.cwd(), io, "tmp/hub-sweep-older/store/--d--/four.jsonl", .{});
+    try Io.Dir.access(.cwd(), io, "tmp/hub-sweep-older/store/piui-read/keep.jsonl", .{});
+    try testing.expectError(
+        error.FileNotFound,
+        Io.Dir.access(.cwd(), io, "tmp/hub-sweep-older/store/piui-read/123-2.jsonl", .{}),
+    );
+}
