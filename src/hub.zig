@@ -979,6 +979,41 @@ pub const Hub = struct {
         try body.append(self.allocator, '\n');
     }
 
+    /// Every folder piui minted under its own scratch root, deleted, and the root itself kept. A
+    /// folder that will not go away is passed over, so one stuck mount does not hold up the rest.
+    pub fn clearScratch(self: *Hub) usize {
+        if (self.scratch_root.len < 2) return 0;
+        var dir = Io.Dir.cwd().openDir(self.io, self.scratch_root, .{ .iterate = true }) catch return 0;
+        defer dir.close(self.io);
+
+        const Item = struct { name: []const u8, folder: bool };
+        var names: std.ArrayListUnmanaged(Item) = .empty;
+        defer names.deinit(self.allocator);
+
+        var iterator = dir.iterate();
+        while (true) {
+            const item = iterator.next(self.io) catch break;
+            const entry = item orelse break;
+            if (entry.name.len == 0) continue;
+            const kept = Item{
+                .name = self.allocator.dupe(u8, entry.name) catch break,
+                .folder = entry.kind == .directory,
+            };
+            names.append(self.allocator, kept) catch break;
+        }
+
+        var removed: usize = 0;
+        for (names.items) |item| {
+            if (item.folder) {
+                dir.deleteTree(self.io, item.name) catch continue;
+            } else {
+                dir.deleteFile(self.io, item.name) catch continue;
+            }
+            removed += 1;
+        }
+        return removed;
+    }
+
     /// True for the throw-away directories a chat with no project runs in.
     pub fn isScratch(self: *Hub, cwd: []const u8) bool {
         return self.scratch_root.len > 0 and std.mem.startsWith(u8, cwd, self.scratch_root);

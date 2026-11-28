@@ -177,6 +177,13 @@ pre,
   flex: 1;
 }
 
+.side-head .button.icon {
+  flex: 0;
+  display: inline-flex;
+  align-items: center;
+  padding-inline: 9px;
+}
+
 .filter {
   padding: 6px 9px;
   border-radius: 7px;

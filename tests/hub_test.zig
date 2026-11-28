@@ -110,3 +110,25 @@ test "the copy keeps every line and moves only the folder" {
     const kept = try Io.Dir.cwd().readFileAlloc(io, "tmp/hub-copy/store/gone.jsonl", arena.allocator(), .unlimited);
     try testing.expectEqualStrings(gone_chat, kept);
 }
+
+test "cleaning up empties the folders piui minted and keeps the root itself" {
+    var threaded: Io.Threaded = .init(testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    var h = try opened("tmp/hub-sweep", io, arena.allocator());
+    defer Io.Dir.cwd().deleteTree(io, "tmp/hub-sweep") catch {};
+
+    try Io.Dir.cwd().createDirPath(io, "tmp/hub-sweep/scratch/one/inner");
+    try Io.Dir.cwd().writeFile(io, .{ .sub_path = "tmp/hub-sweep/scratch/one/photo.jpg", .data = "picture" });
+    try Io.Dir.cwd().writeFile(io, .{ .sub_path = "tmp/hub-sweep/scratch/loose.txt", .data = "loose" });
+
+    try testing.expectEqual(@as(usize, 2), h.clearScratch());
+    try Io.Dir.access(.cwd(), io, "tmp/hub-sweep/scratch", .{});
+
+    var dir = try Io.Dir.cwd().openDir(io, "tmp/hub-sweep/scratch", .{ .iterate = true });
+    defer dir.close(io);
+    var walker = dir.iterate();
+    try testing.expectEqual(@as(?Io.Dir.Entry, null), try walker.next(io));
+}

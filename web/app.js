@@ -96,6 +96,7 @@ const ids = {
   filter: "filter",
   newChat: "new-chat",
   newProject: "new-project",
+  sweep: "sweep",
   newItem: "new-item",
   terminal: "terminal",
   title: "tab-title",
@@ -501,6 +502,7 @@ function askForToken() {
 function wire() {
   el.newChat.onclick = () => void createTab({});
   el.newProject.onclick = () => void createProject();
+  el.sweep.onclick = () => void cleanUp();
   el.newItem.onclick = () => void openTerminalTab(active());
   el.dirModal.onclick = /** @param {MouseEvent} event */ (event) => {
     if (event.target === el.dirModal) el.dirModal.hidden = true;
@@ -1678,6 +1680,33 @@ async function closeTabById(id) {
 
   showEmptyState();
   await loadSessions();
+}
+
+/**
+ * Ends every chat and clears the folders piui minted for chats with no project, files in them
+ * included. A folder a project was opened in is never named by this.
+ */
+async function cleanUp() {
+  const chats = state.tabs.length;
+  const yes = await askUser({
+    title: "Clean up?",
+    body: "Every chat is closed, and the folders piui made for chats without a project are deleted with everything inside them. Project folders are left alone.",
+    confirm: "Close and delete",
+  });
+  if (!yes) return;
+
+  const answer = await postJSON("/api/cleanup", {}).catch(() => null);
+  if (!answer) return void toast("clean up failed");
+
+  for (const shell of [...state.shells]) dropShell(shell.id);
+  state.tabs = [];
+  state.active = null;
+  stream?.close();
+  stream = null;
+  renderSidebar();
+  showEmptyState();
+  await loadSessions();
+  toast(`closed ${chats} chats, cleared ${answer.folders ?? 0} folders`);
 }
 
 /**

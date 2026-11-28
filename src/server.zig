@@ -104,6 +104,28 @@ pub const Server = struct {
             return self.openTab(request, a);
         }
 
+        if (std.mem.eql(u8, path, "/api/cleanup")) {
+            if (request.head.method != .POST) return self.text(request, .bad_request, "post");
+
+            var found = Collector{ .allocator = a, .list = .empty, .io = io };
+            self.options.hub.each(&found, collect);
+
+            var chats: usize = 0;
+            for (found.list.items) |info| {
+                const tab = self.options.hub.get(info.id) orelse continue;
+                self.options.shells.closeTab(tab.id);
+                self.options.hub.close(tab, "cleaned up");
+                chats += 1;
+            }
+
+            const payload = std.fmt.allocPrint(
+                a,
+                "{{\"ok\":true,\"chats\":{d},\"folders\":{d}}}",
+                .{ chats, self.options.hub.clearScratch() },
+            ) catch return self.text(request, .internal_server_error, "oom");
+            return self.sendJson(request, .ok, payload);
+        }
+
         if (std.mem.eql(u8, path, "/api/events")) {
             const tab = self.tabFor(request, a) orelse return self.text(request, .not_found, "no such tab");
             return self.events(request, tab);

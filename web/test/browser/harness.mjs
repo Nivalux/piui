@@ -32,6 +32,8 @@ let base = "";
 let wiredProject = "";
 /** @type {string} */
 let sessionsDir = "";
+/** The folder piui mints a chat's working directory in. */
+let scratchDir = "";
 /** A project folder that was deleted after its chat was written. */
 let goneProject = "";
 
@@ -404,6 +406,7 @@ export async function start() {
   }
 
   const port = await freePort();
+  scratchDir = path.join(dir, "scratch");
   fs.writeFileSync(
     path.join(dir, "config.json"),
     JSON.stringify({
@@ -412,7 +415,7 @@ export async function start() {
         port,
         pi: fakePi,
         sessions,
-        scratch: path.join(dir, "scratch"),
+        scratch: scratchDir,
         idle_seconds: 600,
       },
       ui: { theme: "dark", sidebar: true, files: true, show_thinking: true, send_on_enter: true, send_mode: "steer" },
@@ -601,6 +604,7 @@ export {
   root,
   runTurn,
   runner,
+  scratchDir,
   sessionsDir,
   showPanel,
   sidebarIds,

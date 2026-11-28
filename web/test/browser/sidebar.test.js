@@ -17,6 +17,7 @@ import {
   onePixelPng,
   openFreshChat,
   page,
+  scratchDir,
   sidebarIds,
   start,
   stop,
@@ -410,6 +411,28 @@ test("a working chat says how long; the spinner says the rest", { skip: blocked 
   assert.doesNotMatch(status, /working/, "the spinner is that word");
   assert.match(status, /^[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]\s*\d+[smhd]$/, `only the indicator and time: ${status}`);
   await idle();
+});
+
+test("the broom closes every chat and clears the folders piui made for them", { skip: blocked }, async () => {
+  await openFreshChat();
+  await openFreshChat();
+  await page.waitForFunction(() => document.querySelectorAll("#tab-list .tab").length >= 2, null, { timeout: 15000 });
+  const minted = fs.readdirSync(scratchDir);
+  assert.ok(minted.length >= 2, `each chat was given a folder, found ${minted.length}`);
+
+  await page.click("#sweep");
+  await page.waitForSelector("#ask-modal", { state: "visible" });
+  assert.match(await page.locator("#ask-modal .card-title").innerText(), /clean up/i);
+  await page.locator("#ask-modal button", { hasText: "Cancel" }).click();
+  await page.waitForSelector("#ask-modal", { state: "hidden" });
+  assert.deepEqual(fs.readdirSync(scratchDir), minted, "no means the folders stay where they are");
+
+  await page.click("#sweep");
+  await page.waitForSelector("#ask-modal", { state: "visible" });
+  await page.locator("#ask-modal button", { hasText: "Close and delete" }).click();
+  await page.waitForFunction(() => document.querySelectorAll("#tab-list .tab").length === 0, null, { timeout: 15000 });
+  await toastSays(/cleared/);
+  assert.deepEqual(fs.readdirSync(scratchDir), [], "the folders piui minted are gone with what was in them");
 });
 
 test("the page threw nothing", { skip: blocked }, async () => {
