@@ -1425,6 +1425,10 @@ function handle(frame, from) {
     return;
   }
 
+  const owner = from ?? state.active ?? "";
+  if (frame.type === "queue_update") holdQueue(owner, frame);
+  retirePending(owner, frame);
+
   if (!mine) return;
 
   // The first frame of a stream is a bare TabInfo, without a type at all.
@@ -1455,20 +1459,6 @@ function handle(frame, from) {
     meter.addUsage(frame.message.usage);
     meter.turn(frame.message.usage?.output ?? 0, Date.now() - turnStartedAt);
   }
-  if (frame.type === "queue_update") {
-    const tabId = state.active ?? "";
-    retireAnswered(tabId);
-    const held = {
-      steering: strings(frame.steering),
-      followUp: strings(frame.followUp),
-    };
-    heldQueues.set(tabId, held);
-    // Pi has just said exactly what it holds, so a count from before that says
-    // nothing any more.
-    state.queued = 0;
-    renderQueue();
-  }
-
   if (frame.type === "session_info_changed") {
     const tab = active();
     if (tab) tab.sessionName = frame.name ?? null;
@@ -1477,7 +1467,6 @@ function handle(frame, from) {
 
   if (frame.type === "message_start" && frame.message?.role === "user") ask("get_fork_messages");
 
-  retirePending(frame);
   const reducer = stopwatch();
   if (transcript.event(frame)) markDirty();
   took("transcript reducer", reducer);
@@ -1500,6 +1489,7 @@ function response(frame) {
     const tab = active();
     const messages = Array.isArray(data.messages) ? data.messages : [];
     transcript.replay(messages, !!tab?.running);
+    if (tab) retireTranscribed(tab.id, messages);
     // A reload should not have to wait for the next answer to know how fast
     // this model has been writing. The stored chat already says so.
     meter.history(messages);
@@ -2233,20 +2223,38 @@ function withoutPiNotes(text) {
 }
 
 /**
+ * What Pi says it holds, filed under the chat whose stream said it, which is
+ * not always the one on screen.
+ *
+ * @param {string} tabId
+ * @param {Frame} frame
+ */
+function holdQueue(tabId, frame) {
+  retireAnswered(tabId);
+  heldQueues.set(tabId, {
+    steering: strings(frame.steering),
+    followUp: strings(frame.followUp),
+  });
+  if (tabId !== state.active) return;
+  state.queued = 0;
+  renderQueue();
+}
+
+/**
  * Once Pi puts a message in the transcript it is no longer pending, and a run
  * that settled took everything with it.
  *
+ * @param {string} tabId the chat whose stream carried the frame
  * @param {Frame} frame
  */
-function retirePending(frame) {
-  const tabId = state.active;
-  if (!tabId) return;
+function retirePending(tabId, frame) {
+  const shown = tabId === state.active;
 
   if (frame.type === "agent_settled") {
-    state.queued = 0;
+    if (shown) state.queued = 0;
     heldQueues.set(tabId, { steering: [], followUp: [] });
     pending.delete(tabId);
-    renderQueue();
+    if (shown) renderQueue();
     return;
   }
 
@@ -2270,6 +2278,8 @@ function retirePending(frame) {
     if (items && items.length === 0) pending.delete(tabId);
   }
 
+  if (!shown) return;
+
   // Pi only says how many messages it holds when it is asked, and a message
   // that has just landed in the chat came out of that number. So the number is
   // asked for again rather than counted down here: the messages a run is now
@@ -2277,6 +2287,67 @@ function retirePending(frame) {
   // no copy of them to subtract.
   if (state.queued > 0) ask("get_state");
   renderQueue();
+}
+
+/**
+ * A chat looked at again hands over its whole transcript, and every line of it
+ * is a message that arrived. This page's memory of sending one is only good
+ * until then, which is what clears the strip of a chat that was steered while
+ * nobody was looking at it: the frames that would have said so went by on a
+ * stream this page had already closed.
+ *
+ * @param {string} tabId
+ * @param {unknown[]} messages
+ */
+function retireTranscribed(tabId, messages) {
+  /** @type {Map<string, number>} */
+  const landed = new Map();
+  for (const item of messages) {
+    const message = /** @type {{role?: string, content?: unknown}} */ (item ?? {});
+    if (message.role !== "user") continue;
+    const text = withoutPiNotes(flatten(message.content)).trim();
+    landed.set(text, (landed.get(text) ?? 0) + 1);
+  }
+  if (landed.size === 0) return;
+
+  const items = pending.get(tabId);
+  if (items) {
+    const copies = new Map(landed);
+    for (let index = items.length - 1; index >= 0; index -= 1) {
+      const text = items[index].text.trim();
+      const count = copies.get(text) ?? 0;
+      if (count === 0) continue;
+      copies.set(text, count - 1);
+      items.splice(index, 1);
+    }
+    if (items.length === 0) pending.delete(tabId);
+  }
+
+  const held = heldQueues.get(tabId);
+  if (held) {
+    held.steering = takeOut(held.steering, landed);
+    held.followUp = takeOut(held.followUp, landed);
+  }
+  renderQueue();
+}
+
+/**
+ * The texts a chat has taken, one delivery of each counting once.
+ *
+ * @param {string[]} texts
+ * @param {Map<string, number>} landed
+ * @returns {string[]}
+ */
+function takeOut(texts, landed) {
+  const left = [...texts];
+  for (let index = left.length - 1; index >= 0; index -= 1) {
+    const text = left[index].trim();
+    const count = landed.get(text) ?? 0;
+    if (count === 0) continue;
+    landed.set(text, count - 1);
+    left.splice(index, 1);
+  }
+  return left;
 }
 
 function interrupt() {

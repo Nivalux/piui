@@ -150,13 +150,19 @@ test("escape closes the picker without opening anything", { skip: blocked }, asy
 test("a highlighted folder name stays one word", { skip: blocked }, async () => {
   await page.click("#new-project");
   await page.waitForSelector("#dir-field");
+  await page.waitForFunction(() => document.querySelectorAll("#dir-list .dir-row").length > 0, null, {
+    timeout: 15000,
+  });
+  const listed = await page.locator("#dir-list .dir-row").count();
+
   await page.fill("#dir-field", `${root}/sc`);
   await page.waitForFunction(
-    () =>
-      [...document.querySelectorAll("#dir-list .dir-row")].some((row) =>
-        String(row.getAttribute("data-path")).endsWith("/src"),
-      ),
-    null,
+    /** @param {number} whole */
+    (whole) => {
+      const rows = [...document.querySelectorAll("#dir-list .dir-row")];
+      return rows.length < whole && rows.some((row) => String(row.getAttribute("data-path")).endsWith("/src"));
+    },
+    listed,
     { timeout: 15000 },
   );
 
